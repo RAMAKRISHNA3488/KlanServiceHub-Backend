@@ -1,0 +1,187 @@
+import { serve } from '@hono/node-server';
+import { Hono } from 'hono';
+import { cors } from 'hono/cors';
+import 'dotenv/config';
+
+import auth from './features/auth/server/route.js';
+import members from './features/members/server/route.js';
+import projects from './features/projects/server/route.js';
+import tasks from './features/tasks/server/route.js';
+import workspaces from './features/workspaces/server/route.js';
+
+// Enterprise Jira Modules
+import company from './features/company/server/route.js';
+import users from './features/users/server/route.js';
+import roles from './features/roles/server/route.js';
+import teams from './features/teams/server/route.js';
+import workflows from './features/workflows/server/route.js';
+import issueTypes from './features/issue-types/server/route.js';
+import sprints from './features/sprints/server/route.js';
+import boards from './features/boards/server/route.js';
+import dashboards from './features/dashboards/server/route.js';
+import reports from './features/reports/server/route.js';
+import automations from './features/automations/server/route.js';
+import notifications from './features/notifications/server/route.js';
+import integrations from './features/integrations/server/route.js';
+import apiTokens from './features/api-tokens/server/route.js';
+import security from './features/security/server/route.js';
+import auditLogs from './features/audit-logs/server/route.js';
+import billing from './features/billing/server/route.js';
+import data from './features/data/server/route.js';
+import releases from './features/releases/server/route.js';
+import invitations from './features/invitations/server/route.js';
+import groups from './features/groups/server/route.js';
+import components from './features/components/server/route.js';
+import worklogs from './features/worklogs/server/route.js';
+import filters from './features/filters/server/route.js';
+import activity from './features/activity/server/route.js';
+import customFields from './features/custom-fields/server/route.js';
+import schemes from './features/schemes/server/route.js';
+import sla from './features/sla/server/route.js';
+import webhooks from './features/webhooks/server/route.js';
+import favorites from './features/favorites/server/route.js';
+import dependencies from './features/dependencies/server/route.js';
+import capacity from './features/capacity/server/route.js';
+import governance from './features/governance/server/route.js';
+import serviceManagement from './features/service-management/server/route.js';
+import assets from './features/assets/server/route.js';
+import deployments from './features/deployments/server/route.js';
+import portfolio from './features/portfolio/server/route.js';
+import search from './features/search/server/route.js';
+
+const app = new Hono();
+
+const allowedOrigin = process.env.FRONTEND_URL || 'http://localhost:3000';
+
+app.use(
+  '*',
+  cors({
+    origin: (origin) => {
+      if (!origin) return allowedOrigin;
+      if (
+        origin === allowedOrigin ||
+        origin.startsWith('http://localhost:') ||
+        origin.startsWith('http://127.0.0.1:') ||
+        origin.endsWith('.pages.dev') ||
+        origin.endsWith('.workers.dev') ||
+        origin.includes('klanservicehub') ||
+        origin.includes('jira')
+      ) {
+        return origin;
+      }
+      return allowedOrigin;
+    },
+    credentials: true,
+    allowMethods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowHeaders: ['Content-Type', 'Authorization', 'Cookie'],
+    exposeHeaders: ['Set-Cookie'],
+  }),
+);
+
+app.get('/health', (ctx) => {
+  return ctx.json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
+const api = new Hono().basePath('/api');
+
+api
+  .route('/auth', auth)
+  .route('/members', members)
+  .route('/projects', projects)
+  .route('/tasks', tasks)
+  .route('/workspaces', workspaces)
+  .route('/company', company)
+  .route('/users', users)
+  .route('/roles', roles)
+  .route('/teams', teams)
+  .route('/workflows', workflows)
+  .route('/issue-types', issueTypes)
+  .route('/sprints', sprints)
+  .route('/boards', boards)
+  .route('/dashboards', dashboards)
+  .route('/reports', reports)
+  .route('/analytics', reports)
+  .route('/organizations/:workspaceId/analytics', reports)
+  .route('/automations', automations)
+  .route('/notifications', notifications)
+  .route('/integrations', integrations)
+  .route('/api-tokens', apiTokens)
+  .route('/security', security)
+  .route('/audit-logs', auditLogs)
+  .route('/billing', billing)
+  .route('/data', data)
+  .route('/releases', releases)
+  .route('/invitations', invitations)
+  .route('/groups', groups)
+  .route('/components', components)
+  .route('/worklogs', worklogs)
+  .route('/filters', filters)
+  .route('/activity', activity)
+  .route('/custom-fields', customFields)
+  .route('/schemes', schemes)
+  .route('/sla', sla)
+  .route('/webhooks', webhooks)
+  .route('/users/me', favorites)
+  .route('/dependencies', dependencies)
+  .route('/capacity', capacity)
+  .route('/governance', governance)
+  .route('/service-management', serviceManagement)
+  .route('/assets', assets)
+  .route('/deployments', deployments)
+  .route('/portfolio', portfolio)
+  .route('/search', search)
+  .route('/enterprise', search);
+
+const apiV1 = new Hono().basePath('/api/v1');
+apiV1
+  .route('/auth', auth)
+  .route('/organizations', company)
+  .route('/projects', projects)
+  .route('/tasks', tasks)
+  .route('/members', members)
+  .route('/invitations', invitations)
+  .route('/groups', groups)
+  .route('/roles', roles)
+  .route('/sprints', sprints)
+  .route('/reports', reports)
+  .route('/analytics', reports)
+  .route('/releases', releases)
+  .route('/components', components)
+  .route('/worklogs', worklogs)
+  .route('/filters', filters)
+  .route('/activity', activity)
+  .route('/custom-fields', customFields)
+  .route('/schemes', schemes)
+  .route('/sla', sla)
+  .route('/webhooks', webhooks)
+  .route('/users/me', favorites)
+  .route('/dependencies', dependencies)
+  .route('/capacity', capacity)
+  .route('/governance', governance)
+  .route('/service-management', serviceManagement)
+  .route('/assets', assets)
+  .route('/deployments', deployments)
+  .route('/portfolio', portfolio)
+  .route('/search', search)
+  .route('/enterprise', search);
+
+app.route('/', api);
+app.route('/', apiV1);
+
+import { backfillProjectAndTaskKeys } from './lib/issue-key.js';
+
+// Ensure all projects and tasks have unique, project-wise keys
+backfillProjectAndTaskKeys();
+
+const port = Number(process.env.PORT) || 5000;
+const isDirectRun = process.argv[1] && (process.argv[1].endsWith('index.js') || process.argv[1].endsWith('src/index.js') || process.argv[1].endsWith('src\\index.js'));
+
+if (isDirectRun && process.env.TEST_MODE !== 'true') {
+  console.log(`🚀 Backend server is running on http://localhost:${port}`);
+  serve({
+    fetch: app.fetch,
+    port,
+  });
+}
+
+export default app;
