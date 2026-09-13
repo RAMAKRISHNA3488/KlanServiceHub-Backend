@@ -36,12 +36,13 @@ try {
 if (!dbInstance || typeof dbInstance.exec !== 'function') {
   const dummyStatement = {
     all: () => [],
-    get: () => null,
+    get: () => ({ c: 0 }),
     run: () => ({ changes: 0, lastInsertRowid: 0 }),
   };
   dbInstance = {
     exec: () => {},
     prepare: () => dummyStatement,
+    transaction: (fn) => fn,
   };
 }
 
@@ -1648,22 +1649,26 @@ try {
     },
   ];
 
-  const wsList = db.prepare('SELECT id, user_id FROM workspaces').all();
-  for (const ws of wsList) {
-    const existing = db.prepare('SELECT COUNT(*) as c FROM dashboards WHERE workspace_id = ?').get(ws.id).c;
-    if (existing === 0) {
-      for (const tpl of DEFAULT_DASH_TPLS) {
-        const dashId = randomUUID();
-        db.prepare(`
-          INSERT INTO dashboards (id, workspace_id, name, description, layout, is_default, created_by)
-          VALUES (?, ?, ?, ?, ?, ?, ?)
-        `).run(dashId, ws.id, tpl.name, tpl.description, tpl.layout, tpl.is_default, ws.user_id);
-
-        for (const g of tpl.gadgets) {
+  if (db && typeof db.prepare === 'function') {
+    const wsList = db.prepare('SELECT id, user_id FROM workspaces').all() || [];
+    for (const ws of wsList) {
+      if (!ws || !ws.id) continue;
+      const row = db.prepare('SELECT COUNT(*) as c FROM dashboards WHERE workspace_id = ?').get(ws.id);
+      const existing = row?.c ?? 0;
+      if (existing === 0) {
+        for (const tpl of DEFAULT_DASH_TPLS) {
+          const dashId = randomUUID();
           db.prepare(`
-            INSERT INTO dashboard_gadgets (id, dashboard_id, workspace_id, gadget_type, title, column_index, position, settings)
-            VALUES (?, ?, ?, ?, ?, ?, ?, '{}')
-          `).run(randomUUID(), dashId, ws.id, g.gadget_type, g.title, g.column_index, g.position);
+            INSERT INTO dashboards (id, workspace_id, name, description, layout, is_default, created_by)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+          `).run(dashId, ws.id, tpl.name, tpl.description, tpl.layout, tpl.is_default, ws.user_id);
+
+          for (const g of tpl.gadgets) {
+            db.prepare(`
+              INSERT INTO dashboard_gadgets (id, dashboard_id, workspace_id, gadget_type, title, column_index, position, settings)
+              VALUES (?, ?, ?, ?, ?, ?, ?, '{}')
+            `).run(randomUUID(), dashId, ws.id, g.gadget_type, g.title, g.column_index, g.position);
+          }
         }
       }
     }

@@ -188,7 +188,11 @@ app.route('/', apiV1);
 import { backfillProjectAndTaskKeys } from './lib/issue-key.js';
 
 // Ensure all projects and tasks have unique, project-wise keys
-backfillProjectAndTaskKeys();
+try {
+  backfillProjectAndTaskKeys();
+} catch (e) {
+  // Ignore in serverless isolate
+}
 
 const port = Number(process.env.PORT) || 5000;
 const isDirectRun = process.argv[1] && (process.argv[1].endsWith('index.js') || process.argv[1].endsWith('src/index.js') || process.argv[1].endsWith('src\\index.js'));
