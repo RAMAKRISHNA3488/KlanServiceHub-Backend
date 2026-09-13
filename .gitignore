@@ -1,0 +1,28 @@
+# Node dependencies
+node_modules/
+package-lock.json
+
+# Local database files
+*.db
+*.db-shm
+*.db-wal
+
+# Build and dist
+dist/
+.wrangler/
+
+# Environment files
+.env
+.env.local
+.env.production
+.dev.vars
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS & IDE
+.DS_Store
+.vscode/
+.idea/
+Thumbs.db

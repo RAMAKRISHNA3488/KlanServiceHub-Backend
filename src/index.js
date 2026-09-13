@@ -48,6 +48,7 @@ import assets from './features/assets/server/route.js';
 import deployments from './features/deployments/server/route.js';
 import portfolio from './features/portfolio/server/route.js';
 import search from './features/search/server/route.js';
+import { cacheMiddleware, autoInvalidateCacheMiddleware, cacheStore } from './lib/cache.js';
 
 const app = new Hono();
 
@@ -73,13 +74,29 @@ app.use(
     },
     credentials: true,
     allowMethods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowHeaders: ['Content-Type', 'Authorization', 'Cookie'],
-    exposeHeaders: ['Set-Cookie'],
+    allowHeaders: ['Content-Type', 'Authorization', 'Cookie', 'If-None-Match'],
+    exposeHeaders: ['Set-Cookie', 'ETag', 'X-Cache-Status'],
   }),
 );
 
+// Auto-invalidate cache tags on mutating HTTP requests (POST, PUT, PATCH, DELETE)
+app.use('*', autoInvalidateCacheMiddleware());
+
+// In-memory query cache & ETag conditional validation (304 Not Modified) for API routes
+app.use('/api/*', cacheMiddleware({ ttlSeconds: 30 }));
+
 app.get('/health', (ctx) => {
   return ctx.json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
+// Cache management & telemetry endpoints
+app.get('/api/cache/stats', (ctx) => {
+  return ctx.json({ status: 'ok', ...cacheStore.getStats() });
+});
+
+app.post('/api/cache/purge', (ctx) => {
+  cacheStore.clear();
+  return ctx.json({ success: true, message: 'Cache purged successfully' });
 });
 
 const api = new Hono().basePath('/api');

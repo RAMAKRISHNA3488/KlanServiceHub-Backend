@@ -4,16 +4,41 @@ import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { randomUUID } from 'node:crypto';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const dbPath = path.resolve(__dirname, '../jira.db');
+let dbPath = ':memory:';
+try {
+  const metaUrl = typeof import.meta !== 'undefined' ? import.meta?.url : undefined;
+  if (metaUrl && typeof metaUrl === 'string' && metaUrl.startsWith('file:')) {
+    const __dirname = path.dirname(fileURLToPath(metaUrl));
+    dbPath = path.resolve(__dirname, '../jira.db');
+  } else if (typeof process !== 'undefined' && process.cwd && typeof path?.resolve === 'function') {
+    dbPath = path.resolve(process.cwd(), 'jira.db');
+  }
+} catch (e) {
+  dbPath = ':memory:';
+}
 
-export const db = new DatabaseSync(dbPath);
+let dbInstance;
+try {
+  dbInstance = new DatabaseSync(dbPath);
+} catch (e) {
+  try {
+    dbInstance = new DatabaseSync(':memory:');
+  } catch (err) {
+    console.error('[DB_INIT_ERROR]:', err);
+  }
+}
+
+export const db = dbInstance;
 
 // Enable WAL mode, busy timeout, and foreign keys
-db.exec('PRAGMA journal_mode = WAL;');
-db.exec('PRAGMA synchronous = NORMAL;');
-db.exec('PRAGMA busy_timeout = 5000;');
-db.exec('PRAGMA foreign_keys = ON;');
+try {
+  db.exec('PRAGMA journal_mode = WAL;');
+  db.exec('PRAGMA synchronous = NORMAL;');
+  db.exec('PRAGMA busy_timeout = 5000;');
+  db.exec('PRAGMA foreign_keys = ON;');
+} catch (e) {
+  // Ignored in environments that don't support PRAGMA or memory db
+}
 
 // Helper to safely add column if it doesn't exist
 function safeAddColumn(table, columnDef) {
