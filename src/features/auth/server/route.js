@@ -91,10 +91,8 @@ const app = new Hono()
         success: true,
         message: mailResult.success
           ? `Verification code sent to ${cleanEmail}`
-          : `Verification code generated for ${cleanEmail} (email delivery: ${mailResult.error || 'failed'})`,
+          : `Verification code generated for ${cleanEmail}`,
         emailSent: mailResult.success,
-        // For development/demo convenience, return simulated OTP
-        simulatedOtp: otpCode,
       });
     },
   )
@@ -233,7 +231,7 @@ const app = new Hono()
       VALUES (?, ?, ?, ?, 0, 0)
     `).run(randomUUID(), cleanEmail, otpHash, expiresAt);
 
-    return ctx.json({ success: true, message: `Verification code sent to ${cleanEmail}`, simulatedOtp: otpCode });
+    return ctx.json({ success: true, message: `Verification code sent to ${cleanEmail}` });
   })
   .post('/verify-email', async (ctx) => {
     const { email, code, otp } = await ctx.req.json();
@@ -490,10 +488,9 @@ const app = new Hono()
         success: true,
         message: mailResult.success
           ? `Password reset code and link sent to ${cleanEmail}`
-          : `Reset code generated for ${cleanEmail} (email delivery: ${mailResult.error || 'Check SMTP configuration'})`,
+          : `Password reset request registered for ${cleanEmail}`,
         emailSent: mailResult.success,
         token,
-        simulatedOtp: otpCode,
         resetUrl,
       });
     },

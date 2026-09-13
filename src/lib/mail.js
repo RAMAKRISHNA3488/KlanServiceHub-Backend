@@ -1,25 +1,137 @@
 import 'dotenv/config';
 import nodemailer from 'nodemailer';
 
-export function getTransporter() {
+/**
+ * Universal email dispatcher supporting:
+ * 1. Cloudflare Workers compatible HTTPS REST APIs (Resend, Brevo, SendGrid)
+ * 2. Standard SMTP / Gmail App Password via Nodemailer in Node environments
+ */
+async function dispatchEmail({ to, subject, text, html }) {
+  const fromEmail = process.env.SMTP_FROM || `"KlanServiceHub" <${process.env.SMTP_USER || 'notifications@klanservicehub.dev'}>`;
+
+  // 1. Resend REST API (Cloudflare Workers Native)
+  if (process.env.RESEND_API_KEY) {
+    try {
+      const res = await fetch('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${process.env.RESEND_API_KEY}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          from: fromEmail,
+          to: [to],
+          subject,
+          text,
+          html,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        console.log(`✉️ [Mail/Resend] Sent successfully to ${to} (id: ${data.id})`);
+        return { success: true, messageId: data.id };
+      }
+      console.warn(`[Mail/Resend] Error:`, data);
+    } catch (e) {
+      console.error(`[Mail/Resend] Exception:`, e.message);
+    }
+  }
+
+  // 2. Brevo (Sendinblue) REST API (Cloudflare Workers Native)
+  if (process.env.BREVO_API_KEY) {
+    try {
+      const res = await fetch('https://api.brevo.com/v3/smtp/email', {
+        method: 'POST',
+        headers: {
+          'api-key': process.env.BREVO_API_KEY,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          sender: { name: 'KlanServiceHub', email: process.env.SMTP_USER || 'no-reply@klanservicehub.com' },
+          to: [{ email: to }],
+          subject,
+          textContent: text,
+          htmlContent: html,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        console.log(`✉️ [Mail/Brevo] Sent successfully to ${to}`);
+        return { success: true, messageId: data.messageId || 'brevo-ok' };
+      }
+      console.warn(`[Mail/Brevo] Error:`, data);
+    } catch (e) {
+      console.error(`[Mail/Brevo] Exception:`, e.message);
+    }
+  }
+
+  // 3. SendGrid REST API (Cloudflare Workers Native)
+  if (process.env.SENDGRID_API_KEY) {
+    try {
+      const res = await fetch('https://api.sendgrid.com/v3/mail/send', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${process.env.SENDGRID_API_KEY}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          personalizations: [{ to: [{ email: to }] }],
+          from: { email: process.env.SMTP_USER || 'notifications@klanservicehub.dev', name: 'KlanServiceHub' },
+          subject,
+          content: [
+            { type: 'text/plain', value: text || '' },
+            { type: 'text/html', value: html || '' },
+          ],
+        }),
+      });
+      if (res.ok || res.status === 202) {
+        console.log(`✉️ [Mail/SendGrid] Sent successfully to ${to}`);
+        return { success: true };
+      }
+    } catch (e) {
+      console.error(`[Mail/SendGrid] Exception:`, e.message);
+    }
+  }
+
+  // 4. Standard SMTP / Gmail via Nodemailer
+  const user = process.env.SMTP_USER;
+  const pass = process.env.SMTP_PASS;
   const host = process.env.SMTP_HOST || 'smtp.gmail.com';
   const port = Number(process.env.SMTP_PORT) || 587;
   const secure = process.env.SMTP_SECURE === 'true' || port === 465;
-  const user = process.env.SMTP_USER;
-  const pass = process.env.SMTP_PASS;
 
-  return nodemailer.createTransport({
-    host,
-    port,
-    secure,
-    auth: user && pass ? { user, pass } : undefined,
-    tls: {
-      rejectUnauthorized: false, // Prevents self-signed or proxy TLS issues
-    },
-  });
+  if (user && pass) {
+    try {
+      const transporter = nodemailer.createTransport({
+        host,
+        port,
+        secure,
+        auth: { user, pass },
+        connectionTimeout: 8000,
+        greetingTimeout: 8000,
+        socketTimeout: 10000,
+        tls: { rejectUnauthorized: false },
+      });
+
+      const info = await transporter.sendMail({
+        from: fromEmail,
+        to,
+        subject,
+        text,
+        html,
+      });
+
+      console.log(`✉️ [Mail/SMTP] Delivered to ${to}: ${info.messageId}`);
+      return { success: true, messageId: info.messageId };
+    } catch (smtpErr) {
+      console.error(`❌ [Mail/SMTP] Delivery error to ${to}:`, smtpErr.message);
+      return { success: false, error: smtpErr.message };
+    }
+  }
+
+  console.warn(`[Mail] No active email delivery credentials configured.`);
+  return { success: false, error: 'Email service credentials not configured.' };
 }
-
-export const transporter = getTransporter();
 
 /**
  * Verify SMTP connection configuration
@@ -29,16 +141,20 @@ export async function verifySmtpConnection() {
   const pass = process.env.SMTP_PASS;
 
   if (!user || !pass) {
-    console.warn('[Mail] SMTP credentials not configured (SMTP_USER / SMTP_PASS missing).');
+    console.warn('[Mail] SMTP credentials not configured.');
     return false;
   }
   try {
-    const t = getTransporter();
-    await t.verify();
+    const transporter = nodemailer.createTransport({
+      host: process.env.SMTP_HOST || 'smtp.gmail.com',
+      port: Number(process.env.SMTP_PORT) || 587,
+      auth: { user, pass },
+    });
+    await transporter.verify();
     console.log('✅ [Mail] SMTP transporter verified successfully.');
     return true;
   } catch (error) {
-    console.error('❌ [Mail] SMTP verification failed:', error.message);
+    console.error('❌ [Mail] SMTP verification check:', error.message);
     return false;
   }
 }
@@ -51,9 +167,8 @@ export async function sendOtpEmail({ to, otpCode }) {
     throw new Error('Recipient email and OTP code are required.');
   }
 
-  const user = process.env.SMTP_USER;
-  const defaultFrom = process.env.SMTP_FROM || `"klanservicehub" <${user || 'no-reply@example.com'}>`;
-  const t = getTransporter();
+  const subject = `Your KlanServiceHub Verification Code: ${otpCode}`;
+  const text = `Your KlanServiceHub verification code is: ${otpCode}. It is valid for 10 minutes.`;
 
   const html = `
     <!DOCTYPE html>
@@ -61,52 +176,40 @@ export async function sendOtpEmail({ to, otpCode }) {
       <head>
         <meta charset="utf-8">
         <style>
-          body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #f4f5f7; margin: 0; padding: 20px; color: #172b4d; }
-          .container { max-width: 540px; margin: 0 auto; background: #ffffff; border-radius: 8px; border: 1px solid #dfe1e6; overflow: hidden; }
-          .header { background: #0052cc; padding: 24px; text-align: center; }
-          .header h1 { color: #ffffff; margin: 0; font-size: 24px; font-weight: 700; letter-spacing: -0.5px; }
-          .content { padding: 32px 24px; }
-          .title { font-size: 18px; font-weight: 600; margin-top: 0; margin-bottom: 12px; }
-          .code-box { background: #f4f5f7; border: 2px dashed #0052cc; border-radius: 8px; text-align: center; padding: 18px; margin: 24px 0; }
-          .code { font-family: 'Courier New', Courier, monospace; font-size: 36px; font-weight: bold; letter-spacing: 8px; color: #0052cc; }
-          .footer { padding: 16px 24px; background: #fafbfc; border-top: 1px solid #ebecf0; font-size: 12px; color: #6b778c; text-align: center; }
+          body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #0b0f19; margin: 0; padding: 24px; color: #f1f5f9; }
+          .container { max-width: 520px; margin: 0 auto; background: #1e293b; border-radius: 16px; border: 1px solid #334155; overflow: hidden; box-shadow: 0 20px 40px rgba(0,0,0,0.5); }
+          .header { background: linear-gradient(135deg, #2563eb 0%, #4f46e5 100%); padding: 28px 24px; text-align: center; }
+          .header h1 { color: #ffffff; margin: 0; font-size: 24px; font-weight: 800; letter-spacing: -0.5px; }
+          .content { padding: 32px 28px; text-align: center; }
+          .title { font-size: 20px; font-weight: 700; margin-top: 0; margin-bottom: 12px; color: #ffffff; }
+          .desc { font-size: 14px; color: #94a3b8; line-height: 1.6; margin-bottom: 24px; }
+          .code-box { background: #0f172a; border: 2px dashed #3b82f6; border-radius: 12px; text-align: center; padding: 20px; margin: 24px auto; max-width: 300px; }
+          .code { font-family: 'Courier New', Courier, monospace; font-size: 38px; font-weight: 800; letter-spacing: 10px; color: #60a5fa; }
+          .footer { padding: 20px 24px; background: #0f172a; border-top: 1px solid #334155; font-size: 12px; color: #64748b; text-align: center; }
         </style>
       </head>
       <body>
         <div class="container">
           <div class="header">
-            <h1>klanservicehub</h1>
+            <h1>KlanServiceHub</h1>
           </div>
           <div class="content">
-            <h2 class="title">Verify your email address</h2>
-            <p>You recently requested a one-time verification code to sign in or register your account.</p>
+            <h2 class="title">Verify Your Email Address</h2>
+            <p class="desc">You requested a one-time verification code to securely access your KlanServiceHub account.</p>
             <div class="code-box">
               <span class="code">${otpCode}</span>
             </div>
-            <p style="color: #6b778c; font-size: 14px;">This code is valid for <strong>10 minutes</strong>. If you did not request this verification code, please disregard this email.</p>
+            <p style="color: #64748b; font-size: 13px; margin-top: 24px;">This code is valid for <strong>10 minutes</strong>. If you did not request this code, you can safely ignore this message.</p>
           </div>
           <div class="footer">
-            &copy; ${new Date().getFullYear()} klanservicehub. All rights reserved.
+            &copy; ${new Date().getFullYear()} KlanServiceHub. All rights reserved.
           </div>
         </div>
       </body>
     </html>
   `;
 
-  try {
-    const info = await t.sendMail({
-      from: defaultFrom,
-      to,
-      subject: `Your klanservicehub Verification Code: ${otpCode}`,
-      text: `Your klanservicehub verification code is: ${otpCode}. It is valid for 10 minutes.`,
-      html,
-    });
-    console.log(`✉️ [Mail] Verification code sent to ${to}: ${info.messageId}`);
-    return { success: true, messageId: info.messageId };
-  } catch (error) {
-    console.error(`❌ [Mail] Failed to send OTP to ${to}:`, error.message);
-    return { success: false, error: error.message };
-  }
+  return await dispatchEmail({ to, subject, text, html });
 }
 
 /**
@@ -114,7 +217,7 @@ export async function sendOtpEmail({ to, otpCode }) {
  */
 export async function sendInvitationEmail({
   to,
-  inviterName = 'A team member',
+  inviterName = 'A team administrator',
   organizationName = 'Workspace',
   projectName,
   role = 'Member',
@@ -124,11 +227,9 @@ export async function sendInvitationEmail({
     throw new Error('Recipient email and invite URL are required.');
   }
 
-  const user = process.env.SMTP_USER;
-  const defaultFrom = process.env.SMTP_FROM || `"klanservicehub" <${user || 'no-reply@example.com'}>`;
-  const t = getTransporter();
-
   const roleText = projectName ? `${role} in project "${projectName}"` : `${role} in "${organizationName}"`;
+  const subject = `Invitation to join ${organizationName} on KlanServiceHub`;
+  const text = `${inviterName} has invited you to collaborate as a ${roleText} on KlanServiceHub. Accept invitation here: ${inviteUrl}`;
 
   const html = `
     <!DOCTYPE html>
@@ -136,54 +237,42 @@ export async function sendInvitationEmail({
       <head>
         <meta charset="utf-8">
         <style>
-          body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #f4f5f7; margin: 0; padding: 20px; color: #172b4d; }
-          .container { max-width: 540px; margin: 0 auto; background: #ffffff; border-radius: 8px; border: 1px solid #dfe1e6; overflow: hidden; }
-          .header { background: #0052cc; padding: 24px; text-align: center; }
-          .header h1 { color: #ffffff; margin: 0; font-size: 24px; font-weight: 700; letter-spacing: -0.5px; }
-          .content { padding: 32px 24px; text-align: center; }
-          .title { font-size: 20px; font-weight: 600; margin-top: 0; margin-bottom: 16px; color: #172b4d; }
-          .cta-btn { display: inline-block; background-color: #0052cc; color: #ffffff !important; padding: 12px 28px; font-size: 15px; font-weight: 600; text-decoration: none; border-radius: 4px; margin: 20px 0; }
-          .cta-btn:hover { background-color: #0747a6; }
-          .footer { padding: 16px 24px; background: #fafbfc; border-top: 1px solid #ebecf0; font-size: 12px; color: #6b778c; text-align: center; }
+          body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #0b0f19; margin: 0; padding: 24px; color: #f1f5f9; }
+          .container { max-width: 540px; margin: 0 auto; background: #1e293b; border-radius: 16px; border: 1px solid #334155; overflow: hidden; box-shadow: 0 20px 40px rgba(0,0,0,0.5); }
+          .header { background: linear-gradient(135deg, #2563eb 0%, #4f46e5 100%); padding: 28px 24px; text-align: center; }
+          .header h1 { color: #ffffff; margin: 0; font-size: 24px; font-weight: 800; letter-spacing: -0.5px; }
+          .content { padding: 36px 28px; text-align: center; }
+          .title { font-size: 22px; font-weight: 700; margin-top: 0; margin-bottom: 16px; color: #ffffff; }
+          .desc { font-size: 14px; color: #94a3b8; line-height: 1.6; margin-bottom: 28px; }
+          .cta-btn { display: inline-block; background: linear-gradient(135deg, #2563eb 0%, #3b82f6 100%); color: #ffffff !important; padding: 14px 32px; font-size: 15px; font-weight: 700; text-decoration: none; border-radius: 10px; margin: 10px 0 24px; box-shadow: 0 10px 20px rgba(37,99,235,0.3); }
+          .link-box { word-break: break-all; font-size: 12px; color: #60a5fa; margin-top: 8px; }
+          .footer { padding: 20px 24px; background: #0f172a; border-top: 1px solid #334155; font-size: 12px; color: #64748b; text-align: center; }
         </style>
       </head>
       <body>
         <div class="container">
           <div class="header">
-            <h1>klanservicehub</h1>
+            <h1>KlanServiceHub</h1>
           </div>
           <div class="content">
-            <h2 class="title">You've been invited to join ${organizationName}!</h2>
-            <p><strong>${inviterName}</strong> has invited you to collaborate as a <strong>${roleText}</strong> on klanservicehub.</p>
-            <a href="${inviteUrl}" class="cta-btn" target="_blank">Accept Invitation</a>
-            <p style="color: #6b778c; font-size: 13px; margin-top: 24px;">
+            <h2 class="title">You're Invited to Join ${organizationName}!</h2>
+            <p class="desc"><strong>${inviterName}</strong> has invited you to collaborate as a <strong>${roleText}</strong> on KlanServiceHub.</p>
+            <a href="${inviteUrl}" class="cta-btn" target="_blank">Accept Invitation & Join Team</a>
+            <p style="color: #64748b; font-size: 12px; margin-top: 24px;">
               Or copy and paste this link into your browser:<br>
-              <a href="${inviteUrl}" style="color: #0052cc; word-break: break-all;">${inviteUrl}</a>
+              <a href="${inviteUrl}" class="link-box">${inviteUrl}</a>
             </p>
-            <p style="color: #8993a4; font-size: 12px;">This invitation will expire in 7 days.</p>
+            <p style="color: #475569; font-size: 11px; margin-top: 20px;">This invitation is valid for 7 days.</p>
           </div>
           <div class="footer">
-            &copy; ${new Date().getFullYear()} klanservicehub. All rights reserved.
+            &copy; ${new Date().getFullYear()} KlanServiceHub. All rights reserved.
           </div>
         </div>
       </body>
     </html>
   `;
 
-  try {
-    const info = await t.sendMail({
-      from: defaultFrom,
-      to,
-      subject: `Invitation: Join ${organizationName} on klanservicehub`,
-      text: `${inviterName} invited you to join ${organizationName} on klanservicehub. Click here to accept: ${inviteUrl}`,
-      html,
-    });
-    console.log(`✉️ [Mail] Invitation email sent to ${to}: ${info.messageId}`);
-    return { success: true, messageId: info.messageId };
-  } catch (error) {
-    console.error(`❌ [Mail] Failed to send invitation email to ${to}:`, error.message);
-    return { success: false, error: error.message };
-  }
+  return await dispatchEmail({ to, subject, text, html });
 }
 
 /**
@@ -199,9 +288,8 @@ export async function sendPasswordResetEmail({
     throw new Error('Recipient email, OTP code, and reset URL are required.');
   }
 
-  const user = process.env.SMTP_USER;
-  const defaultFrom = process.env.SMTP_FROM || `"klanservicehub" <${user || 'no-reply@example.com'}>`;
-  const t = getTransporter();
+  const subject = `Reset Your KlanServiceHub Password: Code ${otpCode}`;
+  const text = `Hi ${userName},\n\nYour KlanServiceHub password reset verification code is: ${otpCode}.\n\nDirect reset link: ${resetUrl}\n\nThis code and link are valid for 15 minutes.`;
 
   const html = `
     <!DOCTYPE html>
@@ -209,32 +297,31 @@ export async function sendPasswordResetEmail({
       <head>
         <meta charset="utf-8">
         <style>
-          body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #f4f5f7; margin: 0; padding: 20px; color: #172b4d; }
-          .container { max-width: 540px; margin: 0 auto; background: #ffffff; border-radius: 8px; border: 1px solid #dfe1e6; overflow: hidden; }
-          .header { background: #0052cc; padding: 24px; text-align: center; }
-          .header h1 { color: #ffffff; margin: 0; font-size: 24px; font-weight: 700; letter-spacing: -0.5px; }
-          .content { padding: 32px 24px; text-align: center; }
-          .title { font-size: 20px; font-weight: 600; margin-top: 0; margin-bottom: 12px; color: #172b4d; }
-          .sub { color: #5e6c84; font-size: 14px; margin-bottom: 24px; line-height: 1.5; }
-          .code-box { background: #f4f5f7; border: 2px dashed #0052cc; border-radius: 8px; text-align: center; padding: 16px; margin: 20px auto; max-width: 320px; }
-          .code-label { font-size: 11px; font-weight: 700; color: #5e6c84; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 4px; }
-          .code { font-family: 'Courier New', Courier, monospace; font-size: 34px; font-weight: bold; letter-spacing: 6px; color: #0052cc; }
-          .cta-btn { display: inline-block; background-color: #0052cc; color: #ffffff !important; padding: 12px 28px; font-size: 14px; font-weight: 600; text-decoration: none; border-radius: 4px; margin: 18px 0; }
-          .cta-btn:hover { background-color: #0747a6; }
-          .link-box { word-break: break-all; font-size: 12px; color: #0052cc; margin-top: 8px; }
-          .footer { padding: 16px 24px; background: #fafbfc; border-top: 1px solid #ebecf0; font-size: 12px; color: #6b778c; text-align: center; }
+          body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #0b0f19; margin: 0; padding: 24px; color: #f1f5f9; }
+          .container { max-width: 540px; margin: 0 auto; background: #1e293b; border-radius: 16px; border: 1px solid #334155; overflow: hidden; box-shadow: 0 20px 40px rgba(0,0,0,0.5); }
+          .header { background: linear-gradient(135deg, #2563eb 0%, #4f46e5 100%); padding: 28px 24px; text-align: center; }
+          .header h1 { color: #ffffff; margin: 0; font-size: 24px; font-weight: 800; letter-spacing: -0.5px; }
+          .content { padding: 36px 28px; text-align: center; }
+          .title { font-size: 22px; font-weight: 700; margin-top: 0; margin-bottom: 12px; color: #ffffff; }
+          .sub { color: #94a3b8; font-size: 14px; margin-bottom: 24px; line-height: 1.6; }
+          .code-box { background: #0f172a; border: 2px dashed #3b82f6; border-radius: 12px; text-align: center; padding: 18px; margin: 20px auto; max-width: 300px; }
+          .code-label { font-size: 11px; font-weight: 700; color: #64748b; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 6px; }
+          .code { font-family: 'Courier New', Courier, monospace; font-size: 36px; font-weight: 800; letter-spacing: 8px; color: #60a5fa; }
+          .cta-btn { display: inline-block; background: linear-gradient(135deg, #2563eb 0%, #3b82f6 100%); color: #ffffff !important; padding: 14px 32px; font-size: 15px; font-weight: 700; text-decoration: none; border-radius: 10px; margin: 16px 0 20px; box-shadow: 0 10px 20px rgba(37,99,235,0.3); }
+          .link-box { word-break: break-all; font-size: 12px; color: #60a5fa; margin-top: 8px; }
+          .footer { padding: 20px 24px; background: #0f172a; border-top: 1px solid #334155; font-size: 12px; color: #64748b; text-align: center; }
         </style>
       </head>
       <body>
         <div class="container">
           <div class="header">
-            <h1>klanservicehub</h1>
+            <h1>KlanServiceHub</h1>
           </div>
           <div class="content">
             <h2 class="title">Reset Your Password</h2>
             <p class="sub">
               Hi ${userName},<br>
-              We received a request to reset the password for your klanservicehub account. Use the verification code below or click the direct reset link.
+              We received a request to reset the password for your KlanServiceHub account. Use the verification OTP code below or click the direct reset link.
             </p>
 
             <div class="code-box">
@@ -242,38 +329,25 @@ export async function sendPasswordResetEmail({
               <div class="code">${otpCode}</div>
             </div>
 
-            <p style="font-size: 13px; color: #5e6c84; margin: 16px 0 6px;">Or click the button to reset immediately:</p>
+            <p style="font-size: 13px; color: #94a3b8; margin: 20px 0 8px;">Or click the button below to reset immediately:</p>
             <a href="${resetUrl}" class="cta-btn" target="_blank">Reset Password Now</a>
 
-            <p style="color: #6b778c; font-size: 12px; margin-top: 20px;">
+            <p style="color: #64748b; font-size: 12px; margin-top: 24px;">
               Direct link:<br>
               <a href="${resetUrl}" class="link-box">${resetUrl}</a>
             </p>
 
-            <p style="color: #8993a4; font-size: 11px; margin-top: 20px;">
-              This code and link are valid for <strong>15 minutes</strong>. If you did not request a password reset, you can safely ignore this email.
+            <p style="color: #475569; font-size: 11px; margin-top: 20px;">
+              This code and link are valid for <strong>15 minutes</strong>. If you did not request a password reset, you can safely ignore this message.
             </p>
           </div>
           <div class="footer">
-            &copy; ${new Date().getFullYear()} klanservicehub. All rights reserved.
+            &copy; ${new Date().getFullYear()} KlanServiceHub. All rights reserved.
           </div>
         </div>
       </body>
     </html>
   `;
 
-  try {
-    const info = await t.sendMail({
-      from: defaultFrom,
-      to,
-      subject: `Reset your klanservicehub password: Code ${otpCode}`,
-      text: `Your klanservicehub password reset code is: ${otpCode}. Reset link: ${resetUrl}. This link expires in 15 minutes.`,
-      html,
-    });
-    console.log(`✉️ [Mail] Password reset email sent to ${to}: ${info.messageId}`);
-    return { success: true, messageId: info.messageId };
-  } catch (error) {
-    console.error(`❌ [Mail] Failed to send password reset email to ${to}:`, error.message);
-    return { success: false, error: error.message };
-  }
+  return await dispatchEmail({ to, subject, text, html });
 }
