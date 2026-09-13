@@ -181,6 +181,11 @@ apiV1
   .route('/search', search)
   .route('/enterprise', search);
 
+app.route('/api', api);
+app.route('/api/v1', apiV1);
+app.route('/api/auth', auth);
+app.route('/', api);
+
 import { formatErrorResponse } from './lib/errors.js';
 
 // Global 404 Route Handler
