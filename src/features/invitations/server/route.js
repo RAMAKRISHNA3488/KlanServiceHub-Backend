@@ -5,6 +5,7 @@ import { sessionMiddleware } from '../../../lib/session-middleware.js';
 import { db, formatDoc, logAudit, createNotification, ensureWorkspaceDefaults } from '../../../db.js';
 import { broadcastWorkspaceEvent } from '../../../lib/events.js';
 import { sendInvitationEmail } from '../../../lib/mail.js';
+import { getFrontendUrl } from '../../../lib/config.js';
 
 const app = new Hono()
   .get('/token/:token', async (ctx) => {
@@ -210,7 +211,7 @@ const app = new Hono()
 
       const workspace = db.prepare('SELECT name FROM workspaces WHERE id = ?').get(workspaceId);
       const project = projId ? db.prepare('SELECT name FROM projects WHERE id = ?').get(projId) : null;
-      const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+      const frontendUrl = getFrontendUrl(ctx);
       const fullInviteUrl = `${frontendUrl}/invite/${token}`;
 
       await sendInvitationEmail({

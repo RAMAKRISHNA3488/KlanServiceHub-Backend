@@ -50,13 +50,13 @@ import portfolio from './features/portfolio/server/route.js';
 import search from './features/search/server/route.js';
 import { cacheMiddleware, autoInvalidateCacheMiddleware, cacheStore } from './lib/cache.js';
 
+import { getFrontendUrl } from './lib/config.js';
+
 const app = new Hono();
 
-const allowedOrigin = process.env.FRONTEND_URL || 'http://localhost:3000';
-
-app.use(
-  '*',
-  cors({
+app.use('*', async (c, next) => {
+  const allowedOrigin = getFrontendUrl(c);
+  return cors({
     origin: (origin) => {
       if (!origin) return allowedOrigin;
       if (
@@ -76,8 +76,8 @@ app.use(
     allowMethods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowHeaders: ['Content-Type', 'Authorization', 'Cookie', 'If-None-Match'],
     exposeHeaders: ['Set-Cookie', 'ETag', 'X-Cache-Status'],
-  }),
-);
+  })(c, next);
+});
 
 // Auto-invalidate cache tags on mutating HTTP requests (POST, PUT, PATCH, DELETE)
 app.use('*', autoInvalidateCacheMiddleware());

@@ -10,6 +10,7 @@ import { signInFormSchema, signUpFormSchema } from '../schema.js';
 import { sessionMiddleware } from '../../../lib/session-middleware.js';
 import { db, formatDoc, logAudit, ensureWorkspaceDefaults } from '../../../db.js';
 import { sendOtpEmail, sendPasswordResetEmail } from '../../../lib/mail.js';
+import { getFrontendUrl } from '../../../lib/config.js';
 
 const app = new Hono()
   .post(
@@ -477,7 +478,7 @@ const app = new Hono()
 
       console.log(`[KLANSERVICEHUB RESET OTP] Password reset code for ${cleanEmail}: ${otpCode}`);
 
-      const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+      const frontendUrl = getFrontendUrl(ctx);
       const resetUrl = `${frontendUrl}/reset-password?token=${token}&email=${encodeURIComponent(cleanEmail)}`;
 
       const mailResult = await sendPasswordResetEmail({

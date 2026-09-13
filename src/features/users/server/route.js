@@ -5,6 +5,7 @@ import { sessionMiddleware } from '../../../lib/session-middleware.js';
 import { db, formatDoc, logAudit, createNotification } from '../../../db.js';
 import { hasPermission } from '../../../lib/permissions.js';
 import { sendInvitationEmail } from '../../../lib/mail.js';
+import { getFrontendUrl } from '../../../lib/config.js';
 
 const app = new Hono()
   .get('/:workspaceId', sessionMiddleware, async (ctx) => {
@@ -131,7 +132,7 @@ const app = new Hono()
 
     // Fetch workspace details for email
     const workspace = db.prepare('SELECT name FROM workspaces WHERE id = ?').get(workspaceId);
-    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+    const frontendUrl = getFrontendUrl(ctx);
     const fullInviteUrl = `${frontendUrl}/invite/${token}`;
 
     // Send real invitation email via Gmail SMTP
