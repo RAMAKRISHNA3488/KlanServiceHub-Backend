@@ -12,6 +12,20 @@ import { db, formatDoc, logAudit, ensureWorkspaceDefaults } from '../../../db.js
 import { sendOtpEmail, sendPasswordResetEmail } from '../../../lib/mail.js';
 import { getFrontendUrl } from '../../../lib/config.js';
 
+function setAuthCookie(ctx, sessionSecret) {
+  const reqUrl = ctx.req.url || '';
+  const isLocalhost = reqUrl.includes('localhost') || reqUrl.includes('127.0.0.1');
+  const isProduction = !isLocalhost;
+
+  setCookie(ctx, AUTH_COOKIE, sessionSecret, {
+    path: '/',
+    httpOnly: true,
+    secure: isProduction,
+    sameSite: isProduction ? 'none' : 'lax',
+    maxAge: SESSION_MAX_AGE_SECONDS,
+  });
+}
+
 const app = new Hono()
   .post(
     '/check-email',
@@ -154,16 +168,12 @@ const app = new Hono()
         INSERT INTO sessions (id, user_id, secret, expires_at) VALUES (?, ?, ?, ?)
       `).run(randomUUID(), user.id, sessionSecret, expiresAt);
 
-      setCookie(ctx, AUTH_COOKIE, sessionSecret, {
-        path: '/',
-        httpOnly: true,
-        secure: process.env.NODE_ENV === 'production',
-        sameSite: 'lax',
-        maxAge: SESSION_MAX_AGE_SECONDS,
-      });
+      setAuthCookie(ctx, sessionSecret);
 
       return ctx.json({
         success: true,
+        token: sessionSecret,
+        sessionSecret,
         user: formatDoc(user),
         workspaceId: ws.id,
       });
@@ -281,16 +291,12 @@ const app = new Hono()
         INSERT INTO sessions (id, user_id, secret, expires_at) VALUES (?, ?, ?, ?)
       `).run(randomUUID(), userId, sessionSecret, expiresAt);
 
-      setCookie(ctx, AUTH_COOKIE, sessionSecret, {
-        path: '/',
-        httpOnly: true,
-        secure: process.env.NODE_ENV === 'production',
-        sameSite: 'lax',
-        maxAge: SESSION_MAX_AGE_SECONDS,
-      });
+      setAuthCookie(ctx, sessionSecret);
 
       return ctx.json({
         success: true,
+        token: sessionSecret,
+        sessionSecret,
         user: { id: userId, name, email: cleanEmail, onboardingStatus: 'COMPLETED' },
         workspaceId: wsId,
       });
@@ -338,16 +344,12 @@ const app = new Hono()
         INSERT INTO sessions (id, user_id, secret, expires_at) VALUES (?, ?, ?, ?)
       `).run(randomUUID(), user.id, sessionSecret, expiresAt);
 
-      setCookie(ctx, AUTH_COOKIE, sessionSecret, {
-        path: '/',
-        httpOnly: true,
-        secure: process.env.NODE_ENV === 'production',
-        sameSite: 'lax',
-        maxAge: SESSION_MAX_AGE_SECONDS,
-      });
+      setAuthCookie(ctx, sessionSecret);
 
       return ctx.json({ 
         success: true, 
+        token: sessionSecret,
+        sessionSecret,
         user: formatDoc(user),
         workspaceId: ws.id,
       });
@@ -424,16 +426,12 @@ const app = new Hono()
           INSERT INTO sessions (id, user_id, secret, expires_at) VALUES (?, ?, ?, ?)
         `).run(randomUUID(), user.id, sessionSecret, expiresAt);
 
-        setCookie(ctx, AUTH_COOKIE, sessionSecret, {
-          path: '/',
-          httpOnly: true,
-          secure: process.env.NODE_ENV === 'production',
-          sameSite: 'lax',
-          maxAge: SESSION_MAX_AGE_SECONDS,
-        });
+        setAuthCookie(ctx, sessionSecret);
 
         return ctx.json({
           success: true,
+          token: sessionSecret,
+          sessionSecret,
           user: formatDoc(user),
           workspaceId: ws.id,
           provider,
@@ -596,13 +594,7 @@ const app = new Hono()
         INSERT INTO sessions (id, user_id, secret, expires_at) VALUES (?, ?, ?, ?)
       `).run(randomUUID(), reset.user_id, sessionSecret, sessionExpires);
 
-      setCookie(ctx, AUTH_COOKIE, sessionSecret, {
-        path: '/',
-        httpOnly: true,
-        secure: process.env.NODE_ENV === 'production',
-        sameSite: 'lax',
-        maxAge: SESSION_MAX_AGE_SECONDS,
-      });
+      setAuthCookie(ctx, sessionSecret);
 
       // Find user's workspace
       const ws = db.prepare(`
@@ -615,6 +607,8 @@ const app = new Hono()
       return ctx.json({
         success: true,
         message: 'Password reset successfully!',
+        token: sessionSecret,
+        sessionSecret,
         workspaceId: ws?.id,
       });
     },

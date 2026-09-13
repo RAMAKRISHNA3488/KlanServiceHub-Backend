@@ -1,4 +1,3 @@
-import { serve } from '@hono/node-server';
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import 'dotenv/config';
@@ -195,13 +194,17 @@ try {
 }
 
 const port = Number(process.env.PORT) || 5000;
-const isDirectRun = process.argv[1] && (process.argv[1].endsWith('index.js') || process.argv[1].endsWith('src/index.js') || process.argv[1].endsWith('src\\index.js'));
+const isDirectRun = typeof process !== 'undefined' && process.argv && process.argv[1] && (process.argv[1].endsWith('index.js') || process.argv[1].endsWith('src/index.js') || process.argv[1].endsWith('src\\index.js'));
 
 if (isDirectRun && process.env.TEST_MODE !== 'true') {
   console.log(`🚀 Backend server is running on http://localhost:${port}`);
-  serve({
-    fetch: app.fetch,
-    port,
+  import('@hono/node-server').then(({ serve }) => {
+    serve({
+      fetch: app.fetch,
+      port,
+    });
+  }).catch((err) => {
+    console.error('[SERVER_START_ERROR]:', err);
   });
 }
 
