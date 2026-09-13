@@ -1,5 +1,5 @@
 -- ==============================================================================
--- Jira Clone - Complete Database Schema for Cloudflare D1 / SQLite
+-- Enterprise Ticketing Platform - Complete Database Schema for Cloudflare D1 / SQLite
 -- Includes Multi-Assignee Support, RBAC, Projects, Tasks, Sprints, Workflows, etc.
 -- ==============================================================================
 

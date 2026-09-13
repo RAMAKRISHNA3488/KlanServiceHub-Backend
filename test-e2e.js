@@ -6,7 +6,7 @@ import { randomUUID } from 'node:crypto';
 
 async function runMasterE2ETestSuite() {
   console.log('========================================================================');
-  console.log('🚀 MASTER ENTERPRISE JIRA CLONE COMPREHENSIVE VERIFICATION SUITE');
+  console.log('🚀 MASTER ENTERPRISE TICKETING PLATFORM COMPREHENSIVE VERIFICATION SUITE');
   console.log('========================================================================\n');
 
   let passed = 0;
