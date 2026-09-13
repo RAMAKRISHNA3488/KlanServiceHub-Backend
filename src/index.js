@@ -181,8 +181,27 @@ apiV1
   .route('/search', search)
   .route('/enterprise', search);
 
-app.route('/', api);
-app.route('/', apiV1);
+import { formatErrorResponse } from './lib/errors.js';
+
+// Global 404 Route Handler
+app.notFound((c) => {
+  return c.json({
+    success: false,
+    error: `Route not found: ${c.req.method} ${c.req.path}`,
+    code: 'NOT_FOUND',
+    statusCode: 404,
+    path: c.req.path,
+    method: c.req.method,
+    timestamp: new Date().toISOString(),
+  }, 404);
+});
+
+// Centralized Enterprise Exception Handler
+app.onError((err, c) => {
+  console.error(`[API_EXCEPTION] ${c.req.method} ${c.req.path} ->`, err.message || err);
+  const errorPayload = formatErrorResponse(err, c.req);
+  return c.json(errorPayload, errorPayload.statusCode);
+});
 
 import { backfillProjectAndTaskKeys } from './lib/issue-key.js';
 
