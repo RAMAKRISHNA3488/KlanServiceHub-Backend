@@ -17,6 +17,298 @@ try {
   dbPath = ':memory:';
 }
 
+class MemoryDb {
+  constructor() {
+    this.tables = new Map();
+  }
+
+  getTable(name) {
+    const clean = name.toLowerCase().replace(/[`"']/g, '').trim();
+    if (!this.tables.has(clean)) {
+      this.tables.set(clean, []);
+    }
+    return this.tables.get(clean);
+  }
+
+  exec(sql) {
+    if (!sql || typeof sql !== 'string') return;
+    const statements = sql.split(';').map((s) => s.trim()).filter(Boolean);
+    for (const stmt of statements) {
+      if (/^PRAGMA/i.test(stmt)) continue;
+      if (/^CREATE TABLE/i.test(stmt)) {
+        const match = stmt.match(/CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?([^\s(]+)/i);
+        if (match) this.getTable(match[1]);
+        continue;
+      }
+      if (/^ALTER TABLE/i.test(stmt)) {
+        continue;
+      }
+      try {
+        this.prepare(stmt).run();
+      } catch (e) {
+        // ignore init errors
+      }
+    }
+  }
+
+  transaction(fn) {
+    return (...args) => fn(...args);
+  }
+
+  prepare(rawSql) {
+    const memDb = this;
+    const sql = rawSql.trim();
+
+    return {
+      run(...params) {
+        return memDb._executeWrite(sql, params);
+      },
+      get(...params) {
+        const rows = memDb._executeSelect(sql, params);
+        return rows.length > 0 ? rows[0] : undefined;
+      },
+      all(...params) {
+        return memDb._executeSelect(sql, params);
+      },
+    };
+  }
+
+  _executeWrite(sql, params) {
+    const insertMatch = sql.match(/INSERT\s+(?:OR\s+IGNORE\s+|OR\s+REPLACE\s+)?INTO\s+([^\s(]+)\s*\(([^)]+)\)\s*VALUES\s*\(([^)]+)\)/i);
+    if (insertMatch) {
+      const tableName = insertMatch[1].toLowerCase().replace(/[`"']/g, '').trim();
+      const cols = insertMatch[2].split(',').map((c) => c.trim().replace(/[`"']/g, ''));
+      const table = this.getTable(tableName);
+      
+      const newRow = {
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+      
+      let paramIdx = 0;
+      for (const col of cols) {
+        if (paramIdx < params.length) {
+          newRow[col] = params[paramIdx++];
+        } else {
+          newRow[col] = null;
+        }
+      }
+
+      if (!newRow.id && cols.includes('id')) {
+        newRow.id = randomUUID();
+      }
+
+      if (newRow.id) {
+        const existingIdx = table.findIndex((r) => r.id === newRow.id);
+        if (existingIdx !== -1) {
+          table[existingIdx] = { ...table[existingIdx], ...newRow };
+          return { changes: 1, lastInsertRowid: existingIdx + 1 };
+        }
+      }
+
+      table.push(newRow);
+      return { changes: 1, lastInsertRowid: table.length };
+    }
+
+    const updateMatch = sql.match(/UPDATE\s+([^\s]+)\s+SET\s+(.+?)(?:\s+WHERE\s+(.+))?$/i);
+    if (updateMatch) {
+      const tableName = updateMatch[1].toLowerCase().replace(/[`"']/g, '').trim();
+      const setClause = updateMatch[2];
+      const whereClause = updateMatch[3];
+      const table = this.getTable(tableName);
+
+      const setAssignments = setClause.split(',').map((s) => s.trim());
+      const setCols = [];
+      let setValuesCount = 0;
+      for (const assign of setAssignments) {
+        const parts = assign.split('=');
+        if (parts.length === 2) {
+          const col = parts[0].trim().replace(/[`"']/g, '');
+          const valExpr = parts[1].trim();
+          setCols.push({ col, valExpr });
+          if (valExpr === '?') setValuesCount++;
+        }
+      }
+
+      const setParams = params.slice(0, setValuesCount);
+      const whereParams = params.slice(setValuesCount);
+
+      let changed = 0;
+      for (let i = 0; i < table.length; i++) {
+        const row = table[i];
+        if (!whereClause || this._rowMatchesWhere(row, whereClause, whereParams)) {
+          let pIdx = 0;
+          for (const s of setCols) {
+            if (s.valExpr === '?') {
+              row[s.col] = setParams[pIdx++];
+            } else if (s.valExpr === 'CURRENT_TIMESTAMP') {
+              row[s.col] = new Date().toISOString();
+            } else if (/^[0-9]+$/.test(s.valExpr)) {
+              row[s.col] = Number(s.valExpr);
+            } else {
+              row[s.col] = s.valExpr.replace(/^['"]|['"]$/g, '');
+            }
+          }
+          row.updated_at = new Date().toISOString();
+          changed++;
+        }
+      }
+      return { changes: changed, lastInsertRowid: 0 };
+    }
+
+    const deleteMatch = sql.match(/DELETE\s+FROM\s+([^\s]+)(?:\s+WHERE\s+(.+))?$/i);
+    if (deleteMatch) {
+      const tableName = deleteMatch[1].toLowerCase().replace(/[`"']/g, '').trim();
+      const whereClause = deleteMatch[2];
+      const table = this.getTable(tableName);
+
+      if (!whereClause) {
+        const count = table.length;
+        this.tables.set(tableName, []);
+        return { changes: count, lastInsertRowid: 0 };
+      }
+
+      const initialLength = table.length;
+      const remaining = table.filter((row) => !this._rowMatchesWhere(row, whereClause, params));
+      this.tables.set(tableName, remaining);
+      return { changes: initialLength - remaining.length, lastInsertRowid: 0 };
+    }
+
+    return { changes: 0, lastInsertRowid: 0 };
+  }
+
+  _executeSelect(sql, params) {
+    const isCount = /SELECT\s+COUNT\s*\(/i.test(sql);
+
+    const fromMatch = sql.match(/FROM\s+([^\s,]+)(?:\s+(?:AS\s+)?([^\s,]+))?(?:\s+JOIN\s+([^\s,]+)(?:\s+(?:AS\s+)?([^\s,]+))?\s+ON\s+([^\s]+)\s*=\s*([^\s]+))?(?:\s+WHERE\s+(.+?))?(?:\s+GROUP\s+BY\s+.+?)?(?:\s+ORDER\s+BY\s+(.+?))?(?:\s+LIMIT\s+([0-9]+|\?))?$/i);
+    
+    if (!fromMatch) {
+      return [];
+    }
+
+    const table1Name = fromMatch[1].toLowerCase().replace(/[`"']/g, '').trim();
+    const table1Alias = fromMatch[2] ? fromMatch[2].toLowerCase().replace(/[`"']/g, '').trim() : table1Name;
+    const table2Name = fromMatch[3] ? fromMatch[3].toLowerCase().replace(/[`"']/g, '').trim() : null;
+    const table2Alias = fromMatch[4] ? fromMatch[4].toLowerCase().replace(/[`"']/g, '').trim() : table2Name;
+    const joinCol1 = fromMatch[5];
+    const joinCol2 = fromMatch[6];
+    const whereClause = fromMatch[7];
+    const orderByClause = fromMatch[8];
+    const limitClause = fromMatch[9];
+
+    let rows = [];
+    const t1 = this.getTable(table1Name);
+
+    if (table2Name) {
+      const t2 = this.getTable(table2Name);
+      for (const r1 of t1) {
+        for (const r2 of t2) {
+          const combined = { ...r1, ...r2 };
+          let joinMatch = true;
+          if (joinCol1 && joinCol2) {
+            const getVal = (colExpr) => {
+              const parts = colExpr.split('.');
+              const col = parts.length > 1 ? parts[1].replace(/[`"']/g, '') : parts[0].replace(/[`"']/g, '');
+              const alias = parts.length > 1 ? parts[0].toLowerCase() : null;
+              if (alias === table1Alias) return r1[col];
+              if (alias === table2Alias) return r2[col];
+              return r1[col] ?? r2[col];
+            };
+            joinMatch = getVal(joinCol1) == getVal(joinCol2);
+          }
+          if (joinMatch) {
+            rows.push(combined);
+          }
+        }
+      }
+    } else {
+      rows = t1.map((r) => ({ ...r }));
+    }
+
+    if (whereClause) {
+      rows = rows.filter((row) => this._rowMatchesWhere(row, whereClause, params));
+    }
+
+    if (isCount) {
+      return [{ count: rows.length, c: rows.length, 'count(*)': rows.length }];
+    }
+
+    if (orderByClause) {
+      const isDesc = /DESC/i.test(orderByClause);
+      const orderCol = orderByClause.replace(/ASC|DESC/gi, '').split(',')[0].trim().replace(/[`"']/g, '');
+      const cleanCol = orderCol.includes('.') ? orderCol.split('.')[1] : orderCol;
+      rows.sort((a, b) => {
+        const valA = a[cleanCol] ?? '';
+        const valB = b[cleanCol] ?? '';
+        if (valA < valB) return isDesc ? 1 : -1;
+        if (valA > valB) return isDesc ? -1 : 1;
+        return 0;
+      });
+    }
+
+    if (limitClause) {
+      const limitNum = limitClause === '?' ? Number(params[params.length - 1]) : Number(limitClause);
+      if (!isNaN(limitNum) && limitNum > 0) {
+        rows = rows.slice(0, limitNum);
+      }
+    }
+
+    return rows;
+  }
+
+  _rowMatchesWhere(row, whereClause, params) {
+    if (!whereClause) return true;
+    
+    let pIdx = 0;
+    const conditions = whereClause.split(/\s+AND\s+/i);
+
+    for (const cond of conditions) {
+      const trimmed = cond.trim();
+      if (!trimmed) continue;
+
+      if (/datetime\(expires_at\)\s*>\s*datetime\('now'\)/i.test(trimmed)) {
+        if (!row.expires_at || new Date(row.expires_at).getTime() <= Date.now()) {
+          return false;
+        }
+        continue;
+      }
+
+      const eqMatch = trimmed.match(/([^\s=!<]+)\s*(=|!=|<>|LIKE|IS)\s*(.+)/i);
+      if (eqMatch) {
+        let col = eqMatch[1].trim().replace(/[`"']/g, '');
+        if (col.includes('.')) col = col.split('.')[1];
+        const op = eqMatch[2].toUpperCase();
+        let target = eqMatch[3].trim();
+
+        let expectedValue;
+        if (target === '?') {
+          expectedValue = params[pIdx++];
+        } else if (/^[0-9]+$/.test(target)) {
+          expectedValue = Number(target);
+        } else if (/^NULL$/i.test(target)) {
+          expectedValue = null;
+        } else {
+          expectedValue = target.replace(/^['"]|['"]$/g, '');
+        }
+
+        const actualValue = row[col];
+
+        if (op === '=' || op === 'IS') {
+          if (expectedValue === null) {
+            if (actualValue !== null && actualValue !== undefined) return false;
+          } else {
+            if (String(actualValue ?? '').toLowerCase() !== String(expectedValue ?? '').toLowerCase()) return false;
+          }
+        } else if (op === '!=' || op === '<>') {
+          if (String(actualValue ?? '').toLowerCase() === String(expectedValue ?? '').toLowerCase()) return false;
+        }
+      }
+    }
+
+    return true;
+  }
+}
+
 let dbInstance;
 try {
   if (typeof DatabaseSync === 'function') {
@@ -32,18 +324,8 @@ try {
   }
 }
 
-// Fallback dummy db for Cloudflare Workers / serverless isolates
 if (!dbInstance || typeof dbInstance.exec !== 'function') {
-  const dummyStatement = {
-    all: () => [],
-    get: () => ({ c: 0 }),
-    run: () => ({ changes: 0, lastInsertRowid: 0 }),
-  };
-  dbInstance = {
-    exec: () => {},
-    prepare: () => dummyStatement,
-    transaction: (fn) => fn,
-  };
+  dbInstance = new MemoryDb();
 }
 
 export const db = dbInstance;
