@@ -222,14 +222,17 @@ export async function sendInvitationEmail({
   projectName,
   role = 'Member',
   inviteUrl,
+  password,
 }) {
   if (!to || !inviteUrl) {
     throw new Error('Recipient email and invite URL are required.');
   }
 
   const roleText = projectName ? `${role} in project "${projectName}"` : `${role} in "${organizationName}"`;
-  const subject = `Invitation to join ${organizationName} on KlanServiceHub`;
-  const text = `${inviterName} has invited you to collaborate as a ${roleText} on KlanServiceHub. Accept invitation here: ${inviteUrl}`;
+  const subject = `You're invited to join ${organizationName} on KlanServiceHub`;
+  const text = `${inviterName} has invited you to collaborate as a ${roleText} on KlanServiceHub.\n\n` +
+    (password ? `Your login credentials:\nEmail: ${to}\nTemporary Password: ${password}\n\n` : '') +
+    `Accept invitation & log in here: ${inviteUrl}`;
 
   const html = `
     <!DOCTYPE html>
@@ -243,8 +246,13 @@ export async function sendInvitationEmail({
           .header h1 { color: #ffffff; margin: 0; font-size: 24px; font-weight: 800; letter-spacing: -0.5px; }
           .content { padding: 36px 28px; text-align: center; }
           .title { font-size: 22px; font-weight: 700; margin-top: 0; margin-bottom: 16px; color: #ffffff; }
-          .desc { font-size: 14px; color: #94a3b8; line-height: 1.6; margin-bottom: 28px; }
-          .cta-btn { display: inline-block; background: linear-gradient(135deg, #2563eb 0%, #3b82f6 100%); color: #ffffff !important; padding: 14px 32px; font-size: 15px; font-weight: 700; text-decoration: none; border-radius: 10px; margin: 10px 0 24px; box-shadow: 0 10px 20px rgba(37,99,235,0.3); }
+          .desc { font-size: 14px; color: #94a3b8; line-height: 1.6; margin-bottom: 24px; }
+          .cred-box { background: #0f172a; border: 1px solid #3b82f6; border-radius: 12px; padding: 20px; margin: 20px 0; text-align: left; }
+          .cred-title { font-size: 11px; font-weight: 700; color: #60a5fa; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 12px; }
+          .cred-row { margin-bottom: 8px; font-size: 13px; color: #cbd5e1; }
+          .cred-label { color: #94a3b8; font-size: 12px; }
+          .cred-val { font-family: 'Courier New', Courier, monospace; font-size: 15px; font-weight: 700; color: #ffffff; background: #1e293b; padding: 4px 8px; border-radius: 6px; display: inline-block; margin-top: 2px; }
+          .cta-btn { display: inline-block; background: linear-gradient(135deg, #2563eb 0%, #3b82f6 100%); color: #ffffff !important; padding: 14px 32px; font-size: 15px; font-weight: 700; text-decoration: none; border-radius: 10px; margin: 16px 0 20px; box-shadow: 0 10px 20px rgba(37,99,235,0.3); }
           .link-box { word-break: break-all; font-size: 12px; color: #60a5fa; margin-top: 8px; }
           .footer { padding: 20px 24px; background: #0f172a; border-top: 1px solid #334155; font-size: 12px; color: #64748b; text-align: center; }
         </style>
@@ -257,7 +265,23 @@ export async function sendInvitationEmail({
           <div class="content">
             <h2 class="title">You're Invited to Join ${organizationName}!</h2>
             <p class="desc"><strong>${inviterName}</strong> has invited you to collaborate as a <strong>${roleText}</strong> on KlanServiceHub.</p>
-            <a href="${inviteUrl}" class="cta-btn" target="_blank">Accept Invitation & Join Team</a>
+            
+            ${password ? `
+            <div class="cred-box">
+              <div class="cred-title">🔑 Your Account Credentials</div>
+              <div class="cred-row">
+                <div class="cred-label">Login Email:</div>
+                <div class="cred-val">${to}</div>
+              </div>
+              <div class="cred-row" style="margin-top: 10px;">
+                <div class="cred-label">Temporary Password:</div>
+                <div class="cred-val" style="color: #60a5fa; border: 1px dashed #3b82f6;">${password}</div>
+              </div>
+              <p style="font-size: 11px; color: #64748b; margin: 10px 0 0 0;">You can change your password anytime after logging in from your profile settings.</p>
+            </div>
+            ` : ''}
+
+            <a href="${inviteUrl}" class="cta-btn" target="_blank">Accept Invitation & Log In</a>
             <p style="color: #64748b; font-size: 12px; margin-top: 24px;">
               Or copy and paste this link into your browser:<br>
               <a href="${inviteUrl}" class="link-box">${inviteUrl}</a>

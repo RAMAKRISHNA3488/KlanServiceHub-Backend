@@ -75,7 +75,7 @@ const app = new Hono()
   .post('/:workspaceId/invite', sessionMiddleware, async (ctx) => {
     const actor = ctx.get('user');
     const { workspaceId } = ctx.req.param();
-    const { email, name, roleName = 'Developer', jobTitle = 'Software Engineer', department = 'Engineering' } = await ctx.req.json();
+    const { email, name, roleName = 'Developer', jobTitle = 'Software Engineer', department = 'Engineering', password } = await ctx.req.json();
 
     if (!hasPermission({ workspaceId, userId: actor.$id, permissionCode: 'USER_MANAGE' })) {
       return ctx.json({ error: 'Forbidden: Missing USER_MANAGE permission.' }, 403);
@@ -85,29 +85,46 @@ const app = new Hono()
       return ctx.json({ error: 'Email is required.' }, 400);
     }
 
+    const generateTempPassword = () => {
+      const chars = 'abcdefghjkmnpqrstuvwxyz23456789';
+      let rand = '';
+      for (let i = 0; i < 6; i++) {
+        rand += chars.charAt(Math.floor(Math.random() * chars.length));
+      }
+      return `Klan@${rand}2026!`;
+    };
+
     const cleanEmail = email.toLowerCase().trim();
+    const memberPassword = password && password.trim().length >= 6
+      ? password.trim()
+      : generateTempPassword();
+    const passwordHash = bcrypt.hashSync(memberPassword, 10);
+
     let user = db.prepare('SELECT * FROM users WHERE email = ?').get(cleanEmail);
     let userId;
 
     if (!user) {
       userId = randomUUID();
-      const defaultHash = bcrypt.hashSync('Password@123', 10);
       db.prepare(`
-        INSERT INTO users (id, name, email, password_hash, job_title, department)
-        VALUES (?, ?, ?, ?, ?, ?)
-      `).run(userId, name || cleanEmail.split('@')[0], cleanEmail, defaultHash, jobTitle, department);
+        INSERT INTO users (id, name, email, password_hash, job_title, department, onboarding_status, status)
+        VALUES (?, ?, ?, ?, ?, ?, 'ONBOARDING_COMPLETED', 'ACTIVE')
+      `).run(userId, name || cleanEmail.split('@')[0], cleanEmail, passwordHash, jobTitle, department);
     } else {
       userId = user.id;
+      if (password) {
+        db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(passwordHash, userId);
+      }
     }
 
     // Check if already in workspace
     const existingMember = db.prepare('SELECT id FROM members WHERE workspace_id = ? AND user_id = ?').get(workspaceId, userId);
     if (!existingMember) {
       const memberId = randomUUID();
+      const orgRole = roleName === 'Company Admin' ? 'COMPANY_ADMIN' : 'MEMBER';
       db.prepare(`
-        INSERT INTO members (id, workspace_id, user_id, role, status)
-        VALUES (?, ?, ?, 'MEMBER', 'ACTIVE')
-      `).run(memberId, workspaceId, userId);
+        INSERT INTO members (id, workspace_id, user_id, role, status, organization_role)
+        VALUES (?, ?, ?, 'MEMBER', 'ACTIVE', ?)
+      `).run(memberId, workspaceId, userId, orgRole);
     }
 
     // Find or assign role
@@ -135,13 +152,14 @@ const app = new Hono()
     const frontendUrl = getFrontendUrl(ctx);
     const fullInviteUrl = `${frontendUrl}/invite/${token}`;
 
-    // Send real invitation email via Gmail SMTP
+    // Send real invitation email with credentials
     const mailResult = await sendInvitationEmail({
       to: cleanEmail,
       inviterName: actor.name || 'Company Owner',
       organizationName: workspace?.name || 'Company Workspace',
       role: roleName,
       inviteUrl: fullInviteUrl,
+      password: memberPassword,
     });
 
     logAudit({
@@ -164,10 +182,11 @@ const app = new Hono()
     return ctx.json({
       success: true,
       userId,
+      password: memberPassword,
       emailSent: mailResult.success,
       inviteUrl: fullInviteUrl,
       message: mailResult.success
-        ? `Invitation email sent to ${cleanEmail}`
+        ? `Invitation email with login credentials sent to ${cleanEmail}`
         : `User added, but email delivery encountered an issue: ${mailResult.error || 'Check SMTP configuration'}`,
     });
   })
