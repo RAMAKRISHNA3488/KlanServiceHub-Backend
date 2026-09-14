@@ -48,10 +48,22 @@ import deployments from './features/deployments/server/route.js';
 import portfolio from './features/portfolio/server/route.js';
 import search from './features/search/server/route.js';
 import { cacheMiddleware, autoInvalidateCacheMiddleware, cacheStore } from './lib/cache.js';
-
 import { getFrontendUrl } from './lib/config.js';
+import { initOrSyncD1 } from './db.js';
 
 const app = new Hono();
+
+// Cloudflare D1 Database synchronization and hydration middleware
+app.use('*', async (c, next) => {
+  if (c.env && c.env.DB) {
+    try {
+      await initOrSyncD1(c.env.DB, c.executionCtx);
+    } catch (err) {
+      console.error('[D1_MIDDLEWARE_SYNC_ERROR]:', err);
+    }
+  }
+  return next();
+});
 
 app.use('*', async (c, next) => {
   const allowedOrigin = getFrontendUrl(c);

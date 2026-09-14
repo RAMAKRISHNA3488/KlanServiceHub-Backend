@@ -17,9 +17,12 @@ try {
   dbPath = ':memory:';
 }
 
-class MemoryDb {
+export class MemoryDb {
   constructor() {
     this.tables = new Map();
+    this.activeD1 = null;
+    this.activeCtx = null;
+    this.isD1Synced = false;
   }
 
   getTable(name) {
@@ -74,6 +77,20 @@ class MemoryDb {
   }
 
   _executeWrite(sql, params) {
+    // Cloudflare D1 live asynchronous mirroring
+    if (this.activeD1 && typeof this.activeD1.prepare === 'function') {
+      try {
+        const d1Promise = this.activeD1.prepare(sql).bind(...params).run().catch((err) => {
+          console.warn('[D1_WRITE_SYNC_ERROR]:', err?.message || err, 'SQL:', sql);
+        });
+        if (this.activeCtx && typeof this.activeCtx.waitUntil === 'function') {
+          this.activeCtx.waitUntil(d1Promise);
+        }
+      } catch (e) {
+        console.warn('[D1_PREPARE_ERROR]:', e?.message || e);
+      }
+    }
+
     const insertMatch = sql.match(/INSERT\s+(?:OR\s+IGNORE\s+|OR\s+REPLACE\s+)?INTO\s+([^\s(]+)\s*\(([^)]+)\)\s*VALUES\s*\(([^)]+)\)/i);
     if (insertMatch) {
       const tableName = insertMatch[1].toLowerCase().replace(/[`"']/g, '').trim();
@@ -273,7 +290,39 @@ class MemoryDb {
         continue;
       }
 
-      const eqMatch = trimmed.match(/([^\s=!<]+)\s*(=|!=|<>|LIKE|IS)\s*(.+)/i);
+      // Check IS NOT NULL
+      const isNotNullMatch = trimmed.match(/([^\s]+)\s+IS\s+NOT\s+NULL/i);
+      if (isNotNullMatch) {
+        let col = isNotNullMatch[1].trim().replace(/[`"']/g, '');
+        if (col.includes('.')) col = col.split('.')[1];
+        if (row[col] === null || row[col] === undefined) return false;
+        continue;
+      }
+
+      // Check IS NULL
+      const isNullMatch = trimmed.match(/([^\s]+)\s+IS\s+NULL/i);
+      if (isNullMatch) {
+        let col = isNullMatch[1].trim().replace(/[`"']/g, '');
+        if (col.includes('.')) col = col.split('.')[1];
+        if (row[col] !== null && row[col] !== undefined) return false;
+        continue;
+      }
+
+      // Check IN (...)
+      const inMatch = trimmed.match(/([^\s]+)\s+IN\s*\(([^)]+)\)/i);
+      if (inMatch) {
+        let col = inMatch[1].trim().replace(/[`"']/g, '');
+        if (col.includes('.')) col = col.split('.')[1];
+        const inside = inMatch[2].split(',').map(s => s.trim());
+        const allowed = inside.map(item => {
+          if (item === '?') return params[pIdx++];
+          return item.replace(/^['"]|['"]$/g, '');
+        });
+        if (!allowed.map(String).includes(String(row[col] ?? ''))) return false;
+        continue;
+      }
+
+      const eqMatch = trimmed.match(/([^\s=!<]+)\s*(=|!=|<>|LIKE|<|<=|>|>=)\s*(.+)/i);
       if (eqMatch) {
         let col = eqMatch[1].trim().replace(/[`"']/g, '');
         if (col.includes('.')) col = col.split('.')[1];
@@ -293,7 +342,7 @@ class MemoryDb {
 
         const actualValue = row[col];
 
-        if (op === '=' || op === 'IS') {
+        if (op === '=') {
           if (expectedValue === null) {
             if (actualValue !== null && actualValue !== undefined) return false;
           } else {
@@ -301,6 +350,18 @@ class MemoryDb {
           }
         } else if (op === '!=' || op === '<>') {
           if (String(actualValue ?? '').toLowerCase() === String(expectedValue ?? '').toLowerCase()) return false;
+        } else if (op === 'LIKE') {
+          const pattern = String(expectedValue ?? '').replace(/%/g, '.*');
+          const regex = new RegExp(`^${pattern}$`, 'i');
+          if (!regex.test(String(actualValue ?? ''))) return false;
+        } else if (op === '>') {
+          if (Number(actualValue) <= Number(expectedValue)) return false;
+        } else if (op === '>=') {
+          if (Number(actualValue) < Number(expectedValue)) return false;
+        } else if (op === '<') {
+          if (Number(actualValue) >= Number(expectedValue)) return false;
+        } else if (op === '<=') {
+          if (Number(actualValue) > Number(expectedValue)) return false;
         }
       }
     }
@@ -330,6 +391,88 @@ if (!dbInstance || typeof dbInstance.exec !== 'function') {
 
 export const db = dbInstance;
 
+let d1SyncPromise = null;
+
+// Helper to bind and sync Cloudflare D1 with the application
+export async function initOrSyncD1(d1, executionCtx) {
+  if (!d1) return;
+
+  if (db instanceof MemoryDb) {
+    db.activeD1 = d1;
+    db.activeCtx = executionCtx;
+  }
+
+  if (d1SyncPromise) {
+    return d1SyncPromise;
+  }
+
+  d1SyncPromise = (async () => {
+    try {
+      // 1. Check if core tables exist in Cloudflare D1
+      let tableCheck = null;
+      try {
+        tableCheck = await d1.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name = 'users'").first();
+      } catch (e) {
+        tableCheck = null;
+      }
+
+      if (!tableCheck) {
+        console.log('[D1_INIT] Initializing schema on remote D1 database...');
+        const statements = SCHEMA_SQL.split(';')
+          .map((s) => s.trim())
+          .filter((s) => s.length > 0 && !s.startsWith('--') && !s.toUpperCase().startsWith('PRAGMA'));
+
+        for (const stmt of statements) {
+          try {
+            await d1.prepare(stmt).run();
+          } catch (e) {
+            // Ignore minor duplicate/create errors
+          }
+        }
+      }
+
+      // 2. Hydrate in-memory tables from D1
+      if (db instanceof MemoryDb) {
+        const ALL_TABLE_NAMES = [
+          'users', 'sessions', 'email_verifications', 'workspaces', 'members',
+          'invitations', 'roles', 'permissions', 'role_permissions', 'user_roles',
+          'teams', 'team_members', 'team_projects', 'projects', 'issue_types',
+          'workflows', 'workflow_statuses', 'workflow_transitions', 'sprints',
+          'boards', 'dashboards', 'dashboard_gadgets', 'tasks', 'task_assignees',
+          'task_comments', 'task_watchers', 'task_history', 'task_attachments',
+          'task_links', 'activities', 'work_logs', 'project_components',
+          'saved_filters', 'custom_fields', 'task_custom_field_values',
+          'issue_type_schemes', 'priority_schemes', 'sla_definitions', 'sla_records',
+          'webhooks', 'webhook_deliveries', 'user_favorites', 'user_recent_items',
+          'api_tokens', 'audit_logs', 'notifications', 'automations', 'automation_logs',
+          'releases', 'project_groups', 'group_members', 'user_security',
+          'security_events', 'trusted_devices', 'two_factor_auth', 'sso_configurations',
+          'ip_allowlists', 'integrations', 'integration_sync_logs', 'billing_subscriptions',
+          'billing_invoices', 'data_exports', 'data_backups', 'data_imports',
+          'retention_policies', 'retention_execution_logs'
+        ];
+
+        for (const tbl of ALL_TABLE_NAMES) {
+          try {
+            const res = await d1.prepare(`SELECT * FROM ${tbl}`).all();
+            if (res && Array.isArray(res.results)) {
+              db.tables.set(tbl, res.results);
+            }
+          } catch (e) {
+            // Table might not exist yet, ignore
+          }
+        }
+        db.isD1Synced = true;
+        console.log('[D1_INIT] Successfully hydrated tables from D1 into isolate memory.');
+      }
+    } catch (err) {
+      console.error('[D1_HYDRATION_ERROR]:', err);
+    }
+  })();
+
+  return d1SyncPromise;
+}
+
 // Enable WAL mode, busy timeout, and foreign keys
 try {
   if (db && typeof db.exec === 'function') {
@@ -353,11 +496,8 @@ function safeAddColumn(table, columnDef) {
   }
 }
 
-// Initialize tables from schema
-const initSchema = () => {
-  try {
-    if (!db || typeof db.exec !== 'function') return;
-    db.exec(`
+// Master Schema Definitions
+export const SCHEMA_SQL = `
     CREATE TABLE IF NOT EXISTS users (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
@@ -1216,63 +1356,7 @@ const initSchema = () => {
     CREATE INDEX IF NOT EXISTS idx_task_assignees_member_id ON task_assignees(member_id);
     CREATE INDEX IF NOT EXISTS idx_audit_logs_workspace ON audit_logs(workspace_id);
     CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_id, workspace_id);
-  `);
 
-  // Run safe column additions for existing tables
-  safeAddColumn('users', "avatar_url TEXT");
-  safeAddColumn('users', "phone TEXT");
-  safeAddColumn('users', "job_title TEXT");
-  safeAddColumn('users', "department TEXT");
-  safeAddColumn('users', "status TEXT NOT NULL DEFAULT 'ACTIVE'");
-
-  safeAddColumn('sessions', "ip_address TEXT DEFAULT '127.0.0.1'");
-  safeAddColumn('sessions', "user_agent TEXT DEFAULT 'Web Browser'");
-  safeAddColumn('sessions', "device_info TEXT DEFAULT 'Desktop Device'");
-
-  safeAddColumn('workspaces', "description TEXT DEFAULT ''");
-  safeAddColumn('workspaces', "website TEXT DEFAULT ''");
-  safeAddColumn('workspaces', "email TEXT DEFAULT ''");
-  safeAddColumn('workspaces', "phone TEXT DEFAULT ''");
-  safeAddColumn('workspaces', "address TEXT DEFAULT ''");
-  safeAddColumn('workspaces', "timezone TEXT DEFAULT 'UTC'");
-  safeAddColumn('workspaces', "language TEXT DEFAULT 'en-US'");
-  safeAddColumn('workspaces', "date_format TEXT DEFAULT 'YYYY-MM-DD'");
-  safeAddColumn('workspaces', "currency TEXT DEFAULT 'USD'");
-  safeAddColumn('workspaces', "status TEXT DEFAULT 'ACTIVE'");
-
-  safeAddColumn('members', "status TEXT NOT NULL DEFAULT 'ACTIVE'");
-
-  safeAddColumn('projects', "key TEXT DEFAULT 'PROJ'");
-  safeAddColumn('projects', "description TEXT DEFAULT ''");
-  safeAddColumn('projects', "category TEXT DEFAULT 'Software'");
-  safeAddColumn('projects', "lead_id TEXT");
-  safeAddColumn('projects', "is_archived INTEGER DEFAULT 0");
-
-  safeAddColumn('tasks', "reporter_id TEXT");
-  safeAddColumn('tasks', "sprint_id TEXT");
-  safeAddColumn('tasks', "issue_type TEXT NOT NULL DEFAULT 'Task'");
-  safeAddColumn('tasks', "key TEXT");
-  safeAddColumn('tasks', "priority TEXT NOT NULL DEFAULT 'MEDIUM'");
-  safeAddColumn('tasks', "labels TEXT DEFAULT '[]'");
-  safeAddColumn('tasks', "story_points REAL DEFAULT 1");
-  safeAddColumn('tasks', "epic_id TEXT");
-  safeAddColumn('tasks', "parent_task_id TEXT");
-  safeAddColumn('tasks', "release_id TEXT");
-  safeAddColumn('tasks', "original_estimate_hours REAL DEFAULT 0");
-  safeAddColumn('tasks', "logged_hours REAL DEFAULT 0");
-  safeAddColumn('tasks', "components TEXT DEFAULT '[]'");
-  safeAddColumn('password_resets', 'user_id TEXT');
-  safeAddColumn('password_resets', 'attempt_count INTEGER DEFAULT 0');
-  safeAddColumn('service_requests', "description TEXT DEFAULT ''");
-  safeAddColumn('service_requests', "sla_due_at DATETIME");
-  safeAddColumn('service_requests', "sla_first_response_due_at DATETIME");
-  safeAddColumn('service_requests', "sla_breached INTEGER DEFAULT 0");
-  safeAddColumn('service_requests', "resolved_at DATETIME");
-  safeAddColumn('service_requests', "satisfaction_rating INTEGER");
-  safeAddColumn('service_requests', "assigned_agent_id TEXT");
-  safeAddColumn('service_requests', "customer_org_id TEXT");
-
-  db.exec(`
     CREATE TABLE IF NOT EXISTS email_verifications (
       id TEXT PRIMARY KEY,
       email TEXT NOT NULL,
@@ -1351,7 +1435,67 @@ const initSchema = () => {
       status TEXT NOT NULL DEFAULT 'UNRELEASED', -- UNRELEASED, RELEASED, ARCHIVED
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
-  `);
+`;
+
+// Initialize tables from schema
+const initSchema = () => {
+  try {
+    if (!db || typeof db.exec !== 'function') return;
+    db.exec(SCHEMA_SQL);
+
+  // Run safe column additions for existing tables
+  safeAddColumn('users', "avatar_url TEXT");
+  safeAddColumn('users', "phone TEXT");
+  safeAddColumn('users', "job_title TEXT");
+  safeAddColumn('users', "department TEXT");
+  safeAddColumn('users', "status TEXT NOT NULL DEFAULT 'ACTIVE'");
+
+  safeAddColumn('sessions', "ip_address TEXT DEFAULT '127.0.0.1'");
+  safeAddColumn('sessions', "user_agent TEXT DEFAULT 'Web Browser'");
+  safeAddColumn('sessions', "device_info TEXT DEFAULT 'Desktop Device'");
+
+  safeAddColumn('workspaces', "description TEXT DEFAULT ''");
+  safeAddColumn('workspaces', "website TEXT DEFAULT ''");
+  safeAddColumn('workspaces', "email TEXT DEFAULT ''");
+  safeAddColumn('workspaces', "phone TEXT DEFAULT ''");
+  safeAddColumn('workspaces', "address TEXT DEFAULT ''");
+  safeAddColumn('workspaces', "timezone TEXT DEFAULT 'UTC'");
+  safeAddColumn('workspaces', "language TEXT DEFAULT 'en-US'");
+  safeAddColumn('workspaces', "date_format TEXT DEFAULT 'YYYY-MM-DD'");
+  safeAddColumn('workspaces', "currency TEXT DEFAULT 'USD'");
+  safeAddColumn('workspaces', "status TEXT DEFAULT 'ACTIVE'");
+
+  safeAddColumn('members', "status TEXT NOT NULL DEFAULT 'ACTIVE'");
+
+  safeAddColumn('projects', "key TEXT DEFAULT 'PROJ'");
+  safeAddColumn('projects', "description TEXT DEFAULT ''");
+  safeAddColumn('projects', "category TEXT DEFAULT 'Software'");
+  safeAddColumn('projects', "lead_id TEXT");
+  safeAddColumn('projects', "is_archived INTEGER DEFAULT 0");
+
+  safeAddColumn('tasks', "reporter_id TEXT");
+  safeAddColumn('tasks', "sprint_id TEXT");
+  safeAddColumn('tasks', "issue_type TEXT NOT NULL DEFAULT 'Task'");
+  safeAddColumn('tasks', "key TEXT");
+  safeAddColumn('tasks', "priority TEXT NOT NULL DEFAULT 'MEDIUM'");
+  safeAddColumn('tasks', "labels TEXT DEFAULT '[]'");
+  safeAddColumn('tasks', "story_points REAL DEFAULT 1");
+  safeAddColumn('tasks', "epic_id TEXT");
+  safeAddColumn('tasks', "parent_task_id TEXT");
+  safeAddColumn('tasks', "release_id TEXT");
+  safeAddColumn('tasks', "original_estimate_hours REAL DEFAULT 0");
+  safeAddColumn('tasks', "logged_hours REAL DEFAULT 0");
+  safeAddColumn('tasks', "components TEXT DEFAULT '[]'");
+  safeAddColumn('password_resets', 'user_id TEXT');
+  safeAddColumn('password_resets', 'attempt_count INTEGER DEFAULT 0');
+  safeAddColumn('service_requests', "description TEXT DEFAULT ''");
+  safeAddColumn('service_requests', "sla_due_at DATETIME");
+  safeAddColumn('service_requests', "sla_first_response_due_at DATETIME");
+  safeAddColumn('service_requests', "sla_breached INTEGER DEFAULT 0");
+  safeAddColumn('service_requests', "resolved_at DATETIME");
+  safeAddColumn('service_requests', "satisfaction_rating INTEGER");
+  safeAddColumn('service_requests', "assigned_agent_id TEXT");
+  safeAddColumn('service_requests', "customer_org_id TEXT");
 
   // Run safe column additions for existing tables
   safeAddColumn('users', "avatar_url TEXT");
