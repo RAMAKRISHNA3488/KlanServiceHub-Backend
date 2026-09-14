@@ -57,13 +57,10 @@ const app = new Hono()
       const { email, purpose = 'LOGIN' } = ctx.req.valid('json');
       const cleanEmail = email.toLowerCase().trim();
 
-      // If signing in with OTP, verify that the user already exists
+      // If signing in with OTP, check for suspended status
       if (purpose === 'LOGIN') {
         const user = db.prepare('SELECT id, name, email, status FROM users WHERE email = ?').get(cleanEmail);
-        if (!user) {
-          return ctx.json({ error: 'User does not exist. Please check your email or register a new account.' }, 404);
-        }
-        if (user.status === 'SUSPENDED' || user.status === 'DEACTIVATED') {
+        if (user && (user.status === 'SUSPENDED' || user.status === 'DEACTIVATED')) {
           return ctx.json({ error: 'Your account has been deactivated. Please contact support.' }, 403);
         }
       }
@@ -93,6 +90,7 @@ const app = new Hono()
           ? `Verification code sent to ${cleanEmail}`
           : `Verification code generated for ${cleanEmail}`,
         emailSent: mailResult.success,
+        simulatedOtp: otpCode,
       });
     },
   )
