@@ -518,11 +518,11 @@ const app = new Hono()
 
       const reset = db.prepare(`
         SELECT * FROM password_resets 
-        WHERE email = ? AND used = 0 AND datetime(expires_at) > datetime('now')
+        WHERE email = ? AND used = 0
         ORDER BY created_at DESC LIMIT 1
       `).get(cleanEmail);
 
-      if (!reset) {
+      if (!reset || (reset.expires_at && new Date(reset.expires_at).getTime() < Date.now())) {
         return ctx.json({ error: 'Reset code has expired or is invalid. Please request a new code.' }, 400);
       }
 
@@ -561,11 +561,11 @@ const app = new Hono()
 
       const reset = db.prepare(`
         SELECT * FROM password_resets 
-        WHERE email = ? AND used = 0 AND datetime(expires_at) > datetime('now')
+        WHERE email = ? AND used = 0
         ORDER BY created_at DESC LIMIT 1
       `).get(cleanEmail);
 
-      if (!reset) {
+      if (!reset || (reset.expires_at && new Date(reset.expires_at).getTime() < Date.now())) {
         return ctx.json({ error: 'Password reset request has expired or is invalid. Please request a new code.' }, 400);
       }
 
