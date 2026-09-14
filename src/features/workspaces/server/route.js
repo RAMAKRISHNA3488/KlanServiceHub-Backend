@@ -15,31 +15,52 @@ import { db, formatDoc, ensureWorkspaceDefaults } from '../../../db.js';
 const app = new Hono()
   .get('/', sessionMiddleware, async (ctx) => {
     const user = ctx.get('user');
+    const userId = user.$id || user.id;
 
     const rows = db.prepare(`
-      SELECT w.*, 
-             m.role as user_role, 
-             m.organization_role,
+      SELECT DISTINCT w.*, 
+             COALESCE(m.role, 'ADMIN') as user_role, 
+             COALESCE(m.organization_role, 'COMPANY_OWNER') as organization_role,
              (SELECT COUNT(*) FROM members WHERE workspace_id = w.id) as member_count,
              (SELECT COUNT(*) FROM projects WHERE workspace_id = w.id) as project_count,
              (SELECT COUNT(*) FROM tasks WHERE workspace_id = w.id) as task_count
       FROM workspaces w
-      JOIN members m ON w.id = m.workspace_id
-      WHERE m.user_id = ?
+      LEFT JOIN members m ON w.id = m.workspace_id AND m.user_id = ?
+      WHERE m.user_id = ? OR w.user_id = ?
       ORDER BY w.created_at DESC
-    `).all(user.$id);
+    `).all(userId, userId, userId);
 
-    const documents = rows.map((row) => {
+    let documents = rows.map((row) => {
       const doc = formatDoc(row);
       doc.userRole = row.user_role || 'MEMBER';
       doc.organizationRole = row.organization_role || 'MEMBER';
-      doc.isOwner = row.user_id === user.$id;
-      doc.isAdmin = row.user_id === user.$id || row.user_role === 'ADMIN' || row.organization_role === 'COMPANY_OWNER' || row.organization_role === 'COMPANY_ADMIN';
+      doc.isOwner = row.user_id === userId;
+      doc.isAdmin = row.user_id === userId || row.user_role === 'ADMIN' || row.organization_role === 'COMPANY_OWNER' || row.organization_role === 'COMPANY_ADMIN';
       doc.memberCount = row.member_count || 1;
       doc.projectCount = row.project_count || 0;
       doc.taskCount = row.task_count || 0;
       return doc;
     });
+
+    if (documents.length === 0) {
+      const wsId = randomUUID();
+      const wsName = `${(user.name || user.email || 'My').split(' ')[0]}'s Workspace`;
+      const inviteCode = generateInviteCode(6);
+      db.prepare('INSERT INTO workspaces (id, name, user_id, invite_code) VALUES (?, ?, ?, ?)').run(wsId, wsName, userId, inviteCode);
+      db.prepare("INSERT INTO members (id, workspace_id, user_id, role, status) VALUES (?, ?, ?, 'ADMIN', 'ACTIVE')").run(randomUUID(), wsId, userId);
+      ensureWorkspaceDefaults(wsId, userId);
+
+      const newWs = db.prepare('SELECT * FROM workspaces WHERE id = ?').get(wsId);
+      const doc = formatDoc(newWs);
+      doc.userRole = 'ADMIN';
+      doc.organizationRole = 'COMPANY_OWNER';
+      doc.isOwner = true;
+      doc.isAdmin = true;
+      doc.memberCount = 1;
+      doc.projectCount = 0;
+      doc.taskCount = 0;
+      documents.push(doc);
+    }
 
     return ctx.json({
       data: {
