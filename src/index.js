@@ -72,10 +72,33 @@ app.use('*', async (c, next) => {
       return allowedOrigin;
     },
     credentials: true,
-    allowMethods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowHeaders: ['Content-Type', 'Authorization', 'Cookie', 'If-None-Match'],
+    allowMethods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS', 'HEAD'],
+    allowHeaders: [
+      'Content-Type',
+      'Authorization',
+      'authorization',
+      'Cookie',
+      'cookie',
+      'If-None-Match',
+      'x-session-token',
+      'X-Session-Token',
+      'x-auth-token',
+      'X-Auth-Token',
+      'x-workspace-id',
+      'X-Workspace-Id',
+      'x-requested-with',
+      'X-Requested-With',
+      'Accept',
+      'Origin',
+    ],
     exposeHeaders: ['Set-Cookie', 'ETag', 'X-Cache-Status'],
+    maxAge: 86400,
   })(c, next);
+});
+
+// Explicit OPTIONS preflight handler
+app.options('*', (c) => {
+  return c.text('', 204);
 });
 
 // Auto-invalidate cache tags on mutating HTTP requests (POST, PUT, PATCH, DELETE)
