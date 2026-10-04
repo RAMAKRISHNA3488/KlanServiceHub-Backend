@@ -5,7 +5,7 @@ import { db, formatDoc, logAudit } from '../../../db.js';
 
 const defaultEnterpriseGroups = [
   {
-    name: 'jira-administrators',
+    name: 'klanservicehub-administrators',
     description: 'System administrators with unrestricted global configuration, permission management, and directory control privileges.',
     is_default: 0,
     is_system: 1,
@@ -13,7 +13,7 @@ const defaultEnterpriseGroups = [
     role_mapping: 'ADMIN',
   },
   {
-    name: 'jira-software-users',
+    name: 'klanservicehub-software-users',
     description: 'Standard software development members with full access to project backlogs, agile boards, sprints, and task tracking.',
     is_default: 1,
     is_system: 1,
@@ -21,7 +21,7 @@ const defaultEnterpriseGroups = [
     role_mapping: 'MEMBER',
   },
   {
-    name: 'jira-servicemanagement-users',
+    name: 'klanservicehub-servicemanagement-users',
     description: 'Customer service, IT support agents, and incident response personnel managing customer tickets and SLA queues.',
     is_default: 0,
     is_system: 1,
@@ -69,9 +69,9 @@ function seedDefaultGroupsIfEmpty(workspaceId) {
 
     // Auto-populate members into standard groups
     for (const m of members) {
-      if (item.name === 'jira-administrators' && (m.role === 'ADMIN' || m.role === 'OWNER')) {
+      if (item.name === 'klanservicehub-administrators' && (m.role === 'ADMIN' || m.role === 'OWNER')) {
         db.prepare('INSERT OR IGNORE INTO group_members (group_id, user_id) VALUES (?, ?)').run(groupId, m.user_id);
-      } else if (item.name === 'jira-software-users' || item.name === 'engineering-core') {
+      } else if (item.name === 'klanservicehub-software-users' || item.name === 'engineering-core') {
         db.prepare('INSERT OR IGNORE INTO group_members (group_id, user_id) VALUES (?, ?)').run(groupId, m.user_id);
       }
     }
@@ -336,8 +336,8 @@ const app = new Hono()
     const group = db.prepare('SELECT * FROM groups WHERE id = ? AND workspace_id = ?').get(groupId, workspaceId);
     if (!group) return ctx.json({ error: 'Group not found.' }, 404);
 
-    if (group.is_system === 1 && group.name === 'jira-administrators') {
-      return ctx.json({ error: 'The core system group "jira-administrators" cannot be deleted.' }, 400);
+    if (group.is_system === 1 && group.name === 'klanservicehub-administrators') {
+      return ctx.json({ error: 'The core system group "klanservicehub-administrators" cannot be deleted.' }, 400);
     }
 
     db.prepare('DELETE FROM group_members WHERE group_id = ?').run(groupId);

@@ -6,7 +6,7 @@ import { randomUUID } from 'node:crypto';
 
 async function runMasterE2ETestSuite() {
   console.log('========================================================================');
-  console.log('🚀 MASTER ENTERPRISE JIRA CLONE COMPREHENSIVE VERIFICATION SUITE');
+  console.log('🚀 MASTER ENTERPRISE KLANSERVICEHUB CLONE COMPREHENSIVE VERIFICATION SUITE');
   console.log('========================================================================\n');
 
   let passed = 0;
@@ -51,7 +51,7 @@ async function runMasterE2ETestSuite() {
   ensureWorkspaceDefaults(wsId, userId);
 
   const authHeaders = {
-    'Cookie': `jira-clone-session=${sessionSecret}`,
+    'Cookie': `klanservicehub-session=${sessionSecret}`,
     'Content-Type': 'application/json',
   };
 
@@ -153,9 +153,9 @@ async function runMasterE2ETestSuite() {
   console.log('\n--- [5. User Access Groups (Atlassian Groups)] ---');
   res = await request(`/api/groups/${wsId}`, {
     method: 'POST',
-    body: JSON.stringify({ name: 'jira-administrators', description: 'System administrators group' }),
+    body: JSON.stringify({ name: 'klanservicehub-administrators', description: 'System administrators group' }),
   });
-  assert(res.status === 200 && res.data.data.name === 'jira-administrators', 'Create User Group');
+  assert(res.status === 200 && res.data.data.name === 'klanservicehub-administrators', 'Create User Group');
   const testGroupId = res.data.data.id;
 
   res = await request(`/api/groups/${wsId}/${testGroupId}/members`, {
@@ -173,8 +173,8 @@ async function runMasterE2ETestSuite() {
   assert(res.status === 200 && res.data.data.roles.length >= 8, 'List 8 Standard System Roles');
   assert(res.data.data.allPermissions.length >= 70, 'Catalog All 72 Granular System Permissions');
 
-  // [7. Projects, Tasks & Jira Issue Keys]
-  console.log('\n--- [7. Projects, Tasks & Jira Issue Keys] ---');
+  // [7. Projects, Tasks & KlanserviceHub Issue Keys]
+  console.log('\n--- [7. Projects, Tasks & KlanserviceHub Issue Keys] ---');
   const projId = randomUUID();
   db.prepare(`
     INSERT INTO projects (id, name, workspace_id, key) VALUES (?, 'E-Commerce Platform', ?, 'ECOM')
@@ -192,7 +192,7 @@ async function runMasterE2ETestSuite() {
       storyPoints: 5,
     }),
   });
-  assert(res.status === 200 && res.data.data.key.startsWith('ECOM-'), 'Auto-Generate Jira Key (ECOM-101)');
+  assert(res.status === 200 && res.data.data.key.startsWith('ECOM-'), 'Auto-Generate KlanserviceHub Key (ECOM-101)');
   const createdTaskId = res.data.data.id;
 
   const ownerMember = db.prepare('SELECT id FROM members WHERE workspace_id = ? AND user_id = ?').get(wsId, userId);
@@ -313,7 +313,7 @@ async function runMasterE2ETestSuite() {
     method: 'POST',
     body: JSON.stringify({ name: 'CI Token', scopes: ['*'], expiresDays: 30 }),
   });
-  assert(res.status === 200 && res.data.data.cleartextToken.startsWith('jira_live_'), 'Generate Masked Scoped API Token');
+  assert(res.status === 200 && res.data.data.cleartextToken.startsWith('klanservicehub_live_'), 'Generate Masked Scoped API Token');
 
   res = await request(`/api/security/${wsId}`);
   assert(res.status === 200 && res.data.data.policy !== undefined, 'Query Security Policies');
@@ -371,7 +371,7 @@ async function runMasterE2ETestSuite() {
   console.log('\n--- [22. Enterprise Webhooks & Ping Delivery] ---');
   res = await request(`/api/webhooks/${wsId}`, {
     method: 'POST',
-    body: JSON.stringify({ name: 'CI/CD Webhook', url: 'https://ci.acme.io/jira-webhook' }),
+    body: JSON.stringify({ name: 'CI/CD Webhook', url: 'https://ci.acme.io/klanservicehub-webhook' }),
   });
   assert(res.status === 200 && res.data.data.secret.startsWith('whsec_'), 'Register Enterprise Webhook');
   const webhookId = res.data.data.id;
@@ -456,8 +456,8 @@ async function runMasterE2ETestSuite() {
   });
   assert(res.status === 200 && res.data.status === 'APPROVED', 'Authorize Change Approval Workflow');
 
-  // [28. Jira Service Management: Requests & Support Queues]
-  console.log('\n--- [28. Jira Service Management: Requests & Support Queues] ---');
+  // [28. KlanserviceHub Service Management: Requests & Support Queues]
+  console.log('\n--- [28. KlanserviceHub Service Management: Requests & Support Queues] ---');
   res = await request(`/api/service-management/${wsId}/requests`, {
     method: 'POST',
     body: JSON.stringify({ summary: 'VPN Connection Failure', requestType: 'INCIDENT', priority: 'HIGH', projectId: projId }),
@@ -527,7 +527,7 @@ async function runMasterE2ETestSuite() {
   assert(res.status === 200 && res.data.data.totalMatches >= 1, 'Execute Global Enterprise Search Across Entities');
 
   res = await request(`/api/enterprise/home?workspaceId=${wsId}`);
-  assert(res.status === 200 && res.data.data.recentProjects.length >= 1, 'Load Personalized Jira Enterprise Home');
+  assert(res.status === 200 && res.data.data.recentProjects.length >= 1, 'Load Personalized KlanserviceHub Enterprise Home');
 
   console.log('\n========================================================================');
   console.log(`MASTER VERIFICATION SUITE: ${passed} Passed, ${failed} Failed`);

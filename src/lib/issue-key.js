@@ -116,7 +116,7 @@ export function getNextTaskKeyForProject(projectId) {
   }
 
   // Next number: if maxNum > 0, next is maxNum + 1. Otherwise start at 1 (or 101 if preferred).
-  // In Jira, projects typically start from 1: KEY-1, KEY-2...
+  // In KlanserviceHub, projects typically start from 1: KEY-1, KEY-2...
   let nextNum = maxNum > 0 ? maxNum + 1 : 1;
   let candidateKey = `${projKey}-${nextNum}`;
 

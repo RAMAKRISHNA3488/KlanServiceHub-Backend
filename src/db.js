@@ -5,7 +5,7 @@ import { fileURLToPath } from 'url';
 import { randomUUID } from 'node:crypto';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const dbPath = path.resolve(__dirname, '../jira.db');
+const dbPath = path.resolve(__dirname, '../klanservicehub.db');
 
 export const db = new DatabaseSync(dbPath);
 

@@ -9,7 +9,7 @@ import projects from './features/projects/server/route.js';
 import tasks from './features/tasks/server/route.js';
 import workspaces from './features/workspaces/server/route.js';
 
-// Enterprise Jira Modules
+// Enterprise KlanserviceHub Modules
 import company from './features/company/server/route.js';
 import users from './features/users/server/route.js';
 import roles from './features/roles/server/route.js';

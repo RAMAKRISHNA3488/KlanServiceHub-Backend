@@ -1,5 +1,5 @@
 -- =======================================================================
--- CLOUDFLARE D1 / SQLITE MASTER SCHEMA FOR ENTERPRISE JIRA CLONE
+-- CLOUDFLARE D1 / SQLITE MASTER SCHEMA FOR ENTERPRISE KLANSERVICEHUB CLONE
 -- Single Master Database Schema File
 -- =======================================================================
 
@@ -642,7 +642,7 @@ CREATE TABLE IF NOT EXISTS change_requests (
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
--- 31. JIRA SERVICE MANAGEMENT (JSM) / KSM & CUSTOMER ORGANIZATIONS
+-- 31. KLANSERVICEHUB SERVICE MANAGEMENT (JSM) / KSM & CUSTOMER ORGANIZATIONS
 CREATE TABLE IF NOT EXISTS service_requests (
   id TEXT PRIMARY KEY,
   workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,

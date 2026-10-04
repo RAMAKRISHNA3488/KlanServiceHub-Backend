@@ -472,7 +472,7 @@ const app = new Hono()
       return ctx.json({ error: 'Unauthorized.' }, 401);
     }
 
-    // Auto-generate project-wise unique Jira issue key (e.g. SW-1, IE-2, KLAN-101)
+    // Auto-generate project-wise unique KlanserviceHub issue key (e.g. SW-1, IE-2, KLAN-101)
     const key = getNextTaskKeyForProject(projectId);
 
     const highestPos = db.prepare(`
