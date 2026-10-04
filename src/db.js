@@ -4,7 +4,18 @@ import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { randomUUID } from 'node:crypto';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const getDirname = () => {
+  try {
+    if (typeof import.meta !== 'undefined' && import.meta && import.meta.url) {
+      return path.dirname(fileURLToPath(import.meta.url));
+    }
+  } catch (e) {
+    // Fallback if import.meta.url is undefined in Cloudflare Workers / bundler environment
+  }
+  return process.cwd();
+};
+
+const __dirname = getDirname();
 const dbPath = path.resolve(__dirname, '../klanservicehub.db');
 
 export const db = new DatabaseSync(dbPath);
