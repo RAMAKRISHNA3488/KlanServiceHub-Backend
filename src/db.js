@@ -18,13 +18,29 @@ const getDirname = () => {
 const __dirname = getDirname();
 const dbPath = path.resolve(__dirname, '../klanservicehub.db');
 
-export const db = new DatabaseSync(dbPath);
+let realDb = null;
+try {
+  if (typeof DatabaseSync === 'function') {
+    realDb = new DatabaseSync(dbPath);
+    realDb.exec('PRAGMA journal_mode = WAL;');
+    realDb.exec('PRAGMA synchronous = NORMAL;');
+    realDb.exec('PRAGMA busy_timeout = 5000;');
+    realDb.exec('PRAGMA foreign_keys = ON;');
+  }
+} catch (e) {
+  // DatabaseSync is not supported / stubbed in Cloudflare Workers unenv runtime
+}
 
-// Enable WAL mode, busy timeout, and foreign keys
-db.exec('PRAGMA journal_mode = WAL;');
-db.exec('PRAGMA synchronous = NORMAL;');
-db.exec('PRAGMA busy_timeout = 5000;');
-db.exec('PRAGMA foreign_keys = ON;');
+const mockDb = {
+  exec: () => {},
+  prepare: () => ({
+    run: () => ({ changes: 0, lastInsertRowid: 0 }),
+    get: () => null,
+    all: () => [],
+  }),
+};
+
+export const db = realDb || mockDb;
 
 // Helper to safely add column if it doesn't exist
 function safeAddColumn(table, columnDef) {
