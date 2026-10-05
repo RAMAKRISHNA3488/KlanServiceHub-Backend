@@ -51,13 +51,13 @@ import search from './features/search/server/route.js';
 
 const app = new Hono();
 
-const allowedOrigin = process.env.FRONTEND_URL || 'http://localhost:3000';
+const allowedOrigin = process.env.FRONTEND_URL || 'https://klanservicehub-frontend.klanservicehub.workers.dev';
 
 app.use(
-  '/api/*',
+  '*',
   cors({
     origin: (origin) => {
-      if (!origin || origin === allowedOrigin || origin.startsWith('http://localhost:')) {
+      if (!origin || origin === allowedOrigin || origin.startsWith('http://localhost:') || origin.endsWith('.workers.dev') || origin.endsWith('.pages.dev')) {
         return origin || allowedOrigin;
       }
       return allowedOrigin;
@@ -68,6 +68,18 @@ app.use(
     exposeHeaders: ['Set-Cookie'],
   }),
 );
+
+app.get('/', (ctx) => {
+  return ctx.json({
+    status: 'online',
+    message: 'KlanServiceHub Enterprise API',
+    version: '1.0.0',
+    endpoints: {
+      health: '/health',
+      api: '/api',
+    },
+  });
+});
 
 app.get('/health', (ctx) => {
   return ctx.json({ status: 'ok', timestamp: new Date().toISOString() });
