@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "node --watch src/index.js",
     "start": "node src/index.js",
-    "build": "echo 'Build completed'"
+    "build": "echo 'Build completed'",
+    "deploy": "wrangler deploy"
   },
   "dependencies": {
     "@hono/node-server": "^1.13.7",
@@ -22,6 +23,7 @@
   "devDependencies": {
     "@types/node": "^22.0.0",
     "tsx": "^4.19.2",
-    "typescript": "^5.6.3"
+    "typescript": "^5.6.3",
+    "wrangler": "^4.147.0"
   }
 }
