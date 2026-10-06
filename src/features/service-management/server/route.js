@@ -287,47 +287,47 @@ const app = new Hono()
 
     const allOpen = db.prepare(`
       SELECT COUNT(*) as c FROM service_requests WHERE workspace_id = ? AND status NOT IN ('RESOLVED', 'CLOSED')
-    `).get(workspaceId).c;
+    `).get(workspaceId)?.c ?? 0;
 
     const critical = db.prepare(`
       SELECT COUNT(*) as c FROM service_requests 
       WHERE workspace_id = ? AND priority IN ('HIGH', 'CRITICAL') AND status NOT IN ('RESOLVED', 'CLOSED')
-    `).get(workspaceId).c;
+    `).get(workspaceId)?.c ?? 0;
 
     const incidents = db.prepare(`
       SELECT COUNT(*) as c FROM service_requests 
       WHERE workspace_id = ? AND request_type = 'INCIDENT' AND status NOT IN ('RESOLVED', 'CLOSED')
-    `).get(workspaceId).c;
+    `).get(workspaceId)?.c ?? 0;
 
     const serviceRequests = db.prepare(`
       SELECT COUNT(*) as c FROM service_requests 
       WHERE workspace_id = ? AND request_type = 'SERVICE_REQUEST' AND status NOT IN ('RESOLVED', 'CLOSED')
-    `).get(workspaceId).c;
+    `).get(workspaceId)?.c ?? 0;
 
     const changes = db.prepare(`
       SELECT COUNT(*) as c FROM service_requests 
       WHERE workspace_id = ? AND request_type = 'CHANGE' AND status NOT IN ('RESOLVED', 'CLOSED')
-    `).get(workspaceId).c;
+    `).get(workspaceId)?.c ?? 0;
 
     const problems = db.prepare(`
       SELECT COUNT(*) as c FROM service_requests 
       WHERE workspace_id = ? AND request_type = 'PROBLEM' AND status NOT IN ('RESOLVED', 'CLOSED')
-    `).get(workspaceId).c;
+    `).get(workspaceId)?.c ?? 0;
 
     const slaAtRisk = db.prepare(`
       SELECT COUNT(*) as c FROM service_requests 
       WHERE workspace_id = ? AND datetime(sla_due_at) < datetime('now', '+2 hours') AND status NOT IN ('RESOLVED', 'CLOSED')
-    `).get(workspaceId).c;
+    `).get(workspaceId)?.c ?? 0;
 
     const waitingCustomer = db.prepare(`
       SELECT COUNT(*) as c FROM service_requests 
       WHERE workspace_id = ? AND status = 'WAITING_FOR_CUSTOMER'
-    `).get(workspaceId).c;
+    `).get(workspaceId)?.c ?? 0;
 
     const resolvedClosed = db.prepare(`
       SELECT COUNT(*) as c FROM service_requests 
       WHERE workspace_id = ? AND status IN ('RESOLVED', 'CLOSED')
-    `).get(workspaceId).c;
+    `).get(workspaceId)?.c ?? 0;
 
     return ctx.json({
       data: [
@@ -348,12 +348,12 @@ const app = new Hono()
   .get('/:workspaceId/slas', sessionMiddleware, async (ctx) => {
     const { workspaceId } = ctx.req.param();
 
-    const total = db.prepare('SELECT COUNT(*) as c FROM service_requests WHERE workspace_id = ?').get(workspaceId).c;
-    const resolved = db.prepare("SELECT COUNT(*) as c FROM service_requests WHERE workspace_id = ? AND status IN ('RESOLVED', 'CLOSED')").get(workspaceId).c;
+    const total = db.prepare('SELECT COUNT(*) as c FROM service_requests WHERE workspace_id = ?').get(workspaceId)?.c ?? 0;
+    const resolved = db.prepare("SELECT COUNT(*) as c FROM service_requests WHERE workspace_id = ? AND status IN ('RESOLVED', 'CLOSED')").get(workspaceId)?.c ?? 0;
     const breached = db.prepare(`
       SELECT COUNT(*) as c FROM service_requests 
       WHERE workspace_id = ? AND (sla_breached = 1 OR (datetime(sla_due_at) < datetime('now') AND status NOT IN ('RESOLVED', 'CLOSED')))
-    `).get(workspaceId).c;
+    `).get(workspaceId)?.c ?? 0;
 
     const slaMetRate = total > 0 ? Math.max(0, Math.round(((total - breached) / total) * 100)) : 100;
 

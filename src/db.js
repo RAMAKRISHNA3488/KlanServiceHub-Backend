@@ -21,7 +21,11 @@ const dbPath = path.resolve(__dirname, '../klanservicehub.db');
 let realDb = null;
 try {
   if (typeof DatabaseSync === 'function') {
-    realDb = new DatabaseSync(dbPath);
+    try {
+      realDb = new DatabaseSync(dbPath);
+    } catch (fileErr) {
+      realDb = new DatabaseSync(':memory:');
+    }
     realDb.exec('PRAGMA journal_mode = WAL;');
     realDb.exec('PRAGMA synchronous = NORMAL;');
     realDb.exec('PRAGMA busy_timeout = 5000;');
@@ -31,16 +35,120 @@ try {
   // DatabaseSync is not supported / stubbed in Cloudflare Workers unenv runtime
 }
 
-const mockDb = {
-  exec: () => {},
-  prepare: () => ({
-    run: () => ({ changes: 0, lastInsertRowid: 0 }),
-    get: () => null,
-    all: () => [],
-  }),
-};
+function createMemoryDb() {
+  const tables = new Map();
 
-export const db = realDb || mockDb;
+  const getTable = (name) => {
+    const key = name.toLowerCase().trim();
+    if (!tables.has(key)) {
+      tables.set(key, []);
+    }
+    return tables.get(key);
+  };
+
+  return {
+    exec: (sql) => {
+      const matches = sql.matchAll(/CREATE TABLE (?:IF NOT EXISTS )?([a-zA-Z0-9_]+)/gi);
+      for (const m of matches) {
+        getTable(m[1]);
+      }
+    },
+    prepare: (sql) => {
+      const cleanSql = sql.replace(/\s+/g, ' ').trim();
+      return {
+        run: (...params) => {
+          const insertMatch = cleanSql.match(/INSERT (?:OR IGNORE )?INTO ([a-zA-Z0-9_]+)\s*\(([^)]+)\)\s*VALUES\s*\(([^)]+)\)/i);
+          if (insertMatch) {
+            const tableName = insertMatch[1];
+            const cols = insertMatch[2].split(',').map((c) => c.trim());
+            const valTokens = insertMatch[3].split(',').map((v) => v.trim());
+            const table = getTable(tableName);
+            const row = {};
+            let paramIdx = 0;
+            cols.forEach((col, idx) => {
+              const token = valTokens[idx];
+              if (token === '?') {
+                row[col] = params[paramIdx] !== undefined ? params[paramIdx] : null;
+                paramIdx++;
+              } else if (token && (token.startsWith("'") || token.startsWith('"'))) {
+                row[col] = token.slice(1, -1);
+              } else if (token && !isNaN(Number(token))) {
+                row[col] = Number(token);
+              } else {
+                row[col] = params[paramIdx] !== undefined ? params[paramIdx] : null;
+                paramIdx++;
+              }
+            });
+            if (!row.created_at) row.created_at = new Date().toISOString();
+            if (!row.updated_at) row.updated_at = new Date().toISOString();
+            table.push(row);
+            return { changes: 1, lastInsertRowid: table.length };
+          }
+
+          const deleteMatch = cleanSql.match(/DELETE FROM ([a-zA-Z0-9_]+)(?:\s+WHERE\s+([a-zA-Z0-9_]+)\s*=\s*\?)?/i);
+          if (deleteMatch) {
+            const tableName = deleteMatch[1];
+            const col = deleteMatch[2];
+            if (col && params.length > 0) {
+              const table = getTable(tableName);
+              const initialLen = table.length;
+              const filtered = table.filter((r) => String(r[col]) !== String(params[0]));
+              tables.set(tableName.toLowerCase().trim(), filtered);
+              return { changes: initialLen - filtered.length, lastInsertRowid: 0 };
+            }
+          }
+
+          return { changes: 1, lastInsertRowid: 1 };
+        },
+        get: (...params) => {
+          const countMatch = cleanSql.match(/SELECT COUNT\([^)]*\)\s*(?:as ([a-zA-Z0-9_]+))?\s*FROM ([a-zA-Z0-9_]+)/i);
+          if (countMatch) {
+            const alias = countMatch[1] || 'c';
+            const tableName = countMatch[2];
+            const table = getTable(tableName);
+            const whereMatch = cleanSql.match(/WHERE\s+([a-zA-Z0-9_]+)\s*=\s*\?/i);
+            let count = table.length;
+            if (whereMatch && params.length > 0) {
+              const col = whereMatch[1];
+              count = table.filter((r) => String(r[col]) === String(params[0])).length;
+            }
+            return { [alias]: count, c: count, count };
+          }
+
+          const selectMatch = cleanSql.match(/SELECT\s+(.+?)\s+FROM\s+([a-zA-Z0-9_]+)(?:\s+WHERE\s+([a-zA-Z0-9_]+)\s*=\s*\?)?/i);
+          if (selectMatch) {
+            const tableName = selectMatch[2];
+            const col = selectMatch[3];
+            const table = getTable(tableName);
+            if (col && params.length > 0) {
+              return table.find((r) => String(r[col]).toLowerCase() === String(params[0]).toLowerCase()) || null;
+            }
+            return table[0] || null;
+          }
+
+          return { c: 0, count: 0 };
+        },
+        all: (...params) => {
+          const selectMatch = cleanSql.match(/SELECT\s+(.+?)\s+FROM\s+([a-zA-Z0-9_]+)/i);
+          if (selectMatch) {
+            const tableName = selectMatch[2];
+            const table = getTable(tableName);
+            const whereMatch = cleanSql.match(/WHERE\s+([a-zA-Z0-9_]+)\s*=\s*\?/i);
+            if (whereMatch && params.length > 0) {
+              const col = whereMatch[1];
+              return table.filter((r) => String(r[col]).toLowerCase() === String(params[0]).toLowerCase());
+            }
+            return [...table];
+          }
+          return [];
+        },
+      };
+    },
+  };
+}
+
+export const db = realDb || createMemoryDb();
+
 
 // Helper to safely add column if it doesn't exist
 function safeAddColumn(table, columnDef) {
@@ -1450,7 +1558,7 @@ export function ensureWorkspaceDefaults(workspaceId, ownerUserId) {
 
   // 6. Default Teams if none exist
   const existingTeamCount = db.prepare('SELECT COUNT(*) as c FROM teams WHERE workspace_id = ?').get(workspaceId);
-  if (existingTeamCount.c === 0) {
+  if ((existingTeamCount?.c ?? 0) === 0) {
     const defaultTeams = [
       { name: 'Backend Engineering', desc: 'Core APIs, microservices, databases, and system architecture' },
       { name: 'Frontend & UI/UX', desc: 'Web applications, design systems, client state, and responsive UX' },
@@ -1616,9 +1724,9 @@ try {
   ];
 
   const wsList = db.prepare('SELECT id, user_id FROM workspaces').all();
-  for (const ws of wsList) {
-    const existing = db.prepare('SELECT COUNT(*) as c FROM dashboards WHERE workspace_id = ?').get(ws.id).c;
-    if (existing === 0) {
+  for (const ws of wsList || []) {
+    const existing = db.prepare('SELECT COUNT(*) as c FROM dashboards WHERE workspace_id = ?').get(ws.id);
+    if ((existing?.c ?? 0) === 0) {
       for (const tpl of DEFAULT_DASH_TPLS) {
         const dashId = randomUUID();
         db.prepare(`

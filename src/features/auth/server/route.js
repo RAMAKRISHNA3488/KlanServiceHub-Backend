@@ -618,9 +618,24 @@ const app = new Hono()
       });
     },
   )
-  .get('/current', sessionMiddleware, (ctx) => {
-    const user = ctx.get('user');
-    const fullUser = db.prepare('SELECT * FROM users WHERE id = ?').get(user.$id);
+  .get('/current', (ctx) => {
+    const sessionSecret = getCookie(ctx, AUTH_COOKIE);
+    if (!sessionSecret) {
+      return ctx.json({ data: null }, 200);
+    }
+
+    const session = db.prepare(`
+      SELECT * FROM sessions WHERE secret = ? AND datetime(expires_at) > datetime('now')
+    `).get(sessionSecret);
+
+    if (!session) {
+      return ctx.json({ data: null }, 200);
+    }
+
+    const user = db.prepare('SELECT * FROM users WHERE id = ?').get(session.user_id);
+    if (!user) {
+      return ctx.json({ data: null }, 200);
+    }
 
     // Fetch all organizations/workspaces this user belongs to
     const workspaces = db.prepare(`
@@ -628,14 +643,14 @@ const app = new Hono()
       FROM members m
       JOIN workspaces w ON m.workspace_id = w.id
       WHERE m.user_id = ? AND m.status = 'ACTIVE'
-    `).all(user.$id, user.$id);
+    `).all(user.id, user.id);
 
     return ctx.json({
       data: {
-        ...formatDoc(fullUser),
-        workspaces,
+        ...formatDoc(user),
+        workspaces: workspaces || [],
       },
-    });
+    }, 200);
   })
   .post('/logout', sessionMiddleware, async (ctx) => {
     const sessionSecret = getCookie(ctx, AUTH_COOKIE);

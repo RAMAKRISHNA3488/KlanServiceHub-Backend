@@ -46,8 +46,8 @@ const DEFAULT_DASHBOARD_TEMPLATES = [
 ];
 
 function ensureDefaultDashboards(workspaceId, userId) {
-  const existing = db.prepare('SELECT COUNT(*) as c FROM dashboards WHERE workspace_id = ?').get(workspaceId).c;
-  if (existing > 0) return;
+  const existing = db.prepare('SELECT COUNT(*) as c FROM dashboards WHERE workspace_id = ?').get(workspaceId);
+  if ((existing?.c ?? 0) > 0) return;
 
   for (const tpl of DEFAULT_DASHBOARD_TEMPLATES) {
     const dashId = randomUUID();

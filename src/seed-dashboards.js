@@ -44,9 +44,9 @@ const DEFAULT_TEMPLATES = [
 
 export function seedAllWorkspaces() {
   const workspaces = db.prepare('SELECT id, user_id FROM workspaces').all();
-  for (const ws of workspaces) {
-    const existingCount = db.prepare('SELECT COUNT(*) as c FROM dashboards WHERE workspace_id = ?').get(ws.id).c;
-    if (existingCount === 0) {
+  for (const ws of workspaces || []) {
+    const existingCount = db.prepare('SELECT COUNT(*) as c FROM dashboards WHERE workspace_id = ?').get(ws.id);
+    if ((existingCount?.c ?? 0) === 0) {
       for (const tpl of DEFAULT_TEMPLATES) {
         const dashId = randomUUID();
         db.prepare(`

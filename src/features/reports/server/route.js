@@ -156,16 +156,16 @@ app.get('/:workspaceId/overview', sessionMiddleware, async (ctx) => {
   const { whereSql, params } = buildTaskFilter(query, workspaceId, 't');
 
   // Total projects in workspace
-  const totalProjects = db.prepare('SELECT COUNT(*) as c FROM projects WHERE workspace_id = ? AND is_archived = 0').get(workspaceId).c;
+  const totalProjects = db.prepare('SELECT COUNT(*) as c FROM projects WHERE workspace_id = ? AND is_archived = 0').get(workspaceId)?.c ?? 0;
   const activeProjects = db.prepare(`
     SELECT COUNT(DISTINCT p.id) as c FROM projects p
     JOIN tasks t ON p.id = t.project_id
     WHERE p.workspace_id = ? AND p.is_archived = 0 AND t.status NOT IN ${TERMINAL_STATUSES}
-  `).get(workspaceId).c;
+  `).get(workspaceId)?.c ?? 0;
 
   // Total teams & members
-  const totalTeams = db.prepare('SELECT COUNT(*) as c FROM teams WHERE workspace_id = ?').get(workspaceId).c;
-  const totalMembers = db.prepare("SELECT COUNT(*) as c FROM members WHERE workspace_id = ? AND status = 'ACTIVE'").get(workspaceId).c;
+  const totalTeams = db.prepare('SELECT COUNT(*) as c FROM teams WHERE workspace_id = ?').get(workspaceId)?.c ?? 0;
+  const totalMembers = db.prepare("SELECT COUNT(*) as c FROM members WHERE workspace_id = ? AND status = 'ACTIVE'").get(workspaceId)?.c ?? 0;
 
   // Filtered task counts
   const kpiStats = db.prepare(`
@@ -436,7 +436,7 @@ app.get('/:workspaceId/teams', sessionMiddleware, async (ctx) => {
     ORDER BY t.name ASC
   `).all(workspaceId);
 
-  const totalWorkspaceTasks = db.prepare('SELECT COUNT(*) as c FROM tasks WHERE workspace_id = ?').get(workspaceId).c || 1;
+  const totalWorkspaceTasks = db.prepare('SELECT COUNT(*) as c FROM tasks WHERE workspace_id = ?').get(workspaceId)?.c || 1;
 
   const teamAnalytics = teams.map((team) => {
     const members = db.prepare(`
@@ -1129,7 +1129,7 @@ app.get('/:workspaceId/drilldown', sessionMiddleware, async (ctx) => {
       LIMIT ? OFFSET ?
     `).all(workspaceId, limit, offset);
 
-    const totalCount = db.prepare('SELECT COUNT(*) as c FROM projects WHERE workspace_id = ? AND is_archived = 0').get(workspaceId).c;
+    const totalCount = db.prepare('SELECT COUNT(*) as c FROM projects WHERE workspace_id = ? AND is_archived = 0').get(workspaceId)?.c ?? 0;
 
     return ctx.json({
       data: {
@@ -1211,7 +1211,7 @@ app.get('/:workspaceId/drilldown', sessionMiddleware, async (ctx) => {
       LIMIT ? OFFSET ?
     `).all(workspaceId, limit, offset);
 
-    const totalCount = db.prepare('SELECT COUNT(*) as c FROM teams WHERE workspace_id = ?').get(workspaceId).c;
+    const totalCount = db.prepare('SELECT COUNT(*) as c FROM teams WHERE workspace_id = ?').get(workspaceId)?.c ?? 0;
 
     return ctx.json({
       data: {
@@ -1246,7 +1246,7 @@ app.get('/:workspaceId/drilldown', sessionMiddleware, async (ctx) => {
       LIMIT ? OFFSET ?
     `).all(workspaceId, limit, offset);
 
-    const totalCount = db.prepare("SELECT COUNT(*) as c FROM members WHERE workspace_id = ? AND status = 'ACTIVE'").get(workspaceId).c;
+    const totalCount = db.prepare("SELECT COUNT(*) as c FROM members WHERE workspace_id = ? AND status = 'ACTIVE'").get(workspaceId)?.c ?? 0;
 
     return ctx.json({
       data: {
