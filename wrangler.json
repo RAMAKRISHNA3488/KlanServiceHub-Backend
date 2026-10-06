@@ -5,5 +5,12 @@
   "compatibility_date": "2024-10-01",
   "compatibility_flags": [
     "nodejs_compat"
+  ],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "klanservicehub_db",
+      "database_id": "e4065dbf-b85b-4d17-8334-f07f19109c70"
+    }
   ]
 }

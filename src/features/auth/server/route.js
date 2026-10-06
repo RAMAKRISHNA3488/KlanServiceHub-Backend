@@ -149,6 +149,16 @@ const app = new Hono()
       const sessionSecret = randomUUID();
       const expiresAt = new Date(Date.now() + SESSION_MAX_AGE_MS).toISOString();
 
+      if (ctx.env?.DB) {
+        try {
+          await ctx.env.DB.prepare(`
+            INSERT INTO sessions (id, user_id, secret, expires_at) VALUES (?, ?, ?, ?)
+          `).bind(randomUUID(), user.id, sessionSecret, expiresAt).run();
+        } catch (e) {
+          console.error('[D1_OTP_SESSION_ERROR]:', e);
+        }
+      }
+
       db.prepare(`
         INSERT INTO sessions (id, user_id, secret, expires_at) VALUES (?, ?, ?, ?)
       `).run(randomUUID(), user.id, sessionSecret, expiresAt);
@@ -156,13 +166,14 @@ const app = new Hono()
       setCookie(ctx, AUTH_COOKIE, sessionSecret, {
         path: '/',
         httpOnly: true,
-        secure: process.env.NODE_ENV === 'production',
-        sameSite: 'lax',
+        secure: true,
+        sameSite: 'none',
         maxAge: SESSION_MAX_AGE_SECONDS,
       });
 
       return ctx.json({
         success: true,
+        token: sessionSecret,
         user: formatDoc(user),
         workspaceId: ws.id,
       });
@@ -252,7 +263,18 @@ const app = new Hono()
       const { name, email, password } = ctx.req.valid('json');
       const cleanEmail = email.toLowerCase().trim();
 
-      const existingUser = db.prepare('SELECT id FROM users WHERE email = ?').get(cleanEmail);
+      let existingUser = null;
+      if (ctx.env?.DB) {
+        try {
+          existingUser = await ctx.env.DB.prepare('SELECT id FROM users WHERE email = ?').bind(cleanEmail).first();
+        } catch (e) {
+          console.error('[D1_CHECK_EXISTING_USER_ERROR]:', e);
+        }
+      }
+      if (!existingUser) {
+        existingUser = db.prepare('SELECT id FROM users WHERE email = ?').get(cleanEmail);
+      }
+
       if (existingUser) {
         return ctx.json({ error: 'A user with this email already exists.' }, 400);
       }
@@ -260,6 +282,19 @@ const app = new Hono()
       const userId = randomUUID();
       const passwordHash = bcrypt.hashSync(password, 10);
 
+      // Save to Cloudflare D1 if available
+      if (ctx.env?.DB) {
+        try {
+          await ctx.env.DB.prepare(`
+            INSERT INTO users (id, name, email, password_hash, onboarding_status, status) 
+            VALUES (?, ?, ?, ?, 'COMPLETED', 'ACTIVE')
+          `).bind(userId, name, cleanEmail, passwordHash).run();
+        } catch (e) {
+          console.error('[D1_INSERT_USER_ERROR]:', e);
+        }
+      }
+
+      // Also save to local memory db
       db.prepare(`
         INSERT INTO users (id, name, email, password_hash, onboarding_status, status) 
         VALUES (?, ?, ?, ?, 'COMPLETED', 'ACTIVE')
@@ -269,12 +304,32 @@ const app = new Hono()
       const wsId = randomUUID();
       const wsName = `${name.split(' ')[0]}'s Workspace`;
       const inviteCode = randomUUID().slice(0, 6).toUpperCase();
+
+      if (ctx.env?.DB) {
+        try {
+          await ctx.env.DB.prepare('INSERT INTO workspaces (id, name, user_id, invite_code) VALUES (?, ?, ?, ?)').bind(wsId, wsName, userId, inviteCode).run();
+          await ctx.env.DB.prepare("INSERT INTO members (id, workspace_id, user_id, role, status) VALUES (?, ?, ?, 'ADMIN', 'ACTIVE')").bind(randomUUID(), wsId, userId).run();
+        } catch (e) {
+          console.error('[D1_WORKSPACE_CREATE_ERROR]:', e);
+        }
+      }
+
       db.prepare('INSERT INTO workspaces (id, name, user_id, invite_code) VALUES (?, ?, ?, ?)').run(wsId, wsName, userId, inviteCode);
       db.prepare("INSERT INTO members (id, workspace_id, user_id, role, status) VALUES (?, ?, ?, 'ADMIN', 'ACTIVE')").run(randomUUID(), wsId, userId);
       ensureWorkspaceDefaults(wsId, userId);
 
       const sessionSecret = randomUUID();
       const expiresAt = new Date(Date.now() + SESSION_MAX_AGE_MS).toISOString();
+
+      if (ctx.env?.DB) {
+        try {
+          await ctx.env.DB.prepare(`
+            INSERT INTO sessions (id, user_id, secret, expires_at) VALUES (?, ?, ?, ?)
+          `).bind(randomUUID(), userId, sessionSecret, expiresAt).run();
+        } catch (e) {
+          console.error('[D1_SESSION_CREATE_ERROR]:', e);
+        }
+      }
 
       db.prepare(`
         INSERT INTO sessions (id, user_id, secret, expires_at) VALUES (?, ?, ?, ?)
@@ -283,13 +338,14 @@ const app = new Hono()
       setCookie(ctx, AUTH_COOKIE, sessionSecret, {
         path: '/',
         httpOnly: true,
-        secure: process.env.NODE_ENV === 'production',
-        sameSite: 'lax',
+        secure: true,
+        sameSite: 'none',
         maxAge: SESSION_MAX_AGE_SECONDS,
       });
 
       return ctx.json({
         success: true,
+        token: sessionSecret,
         user: { id: userId, name, email: cleanEmail, onboardingStatus: 'COMPLETED' },
         workspaceId: wsId,
       });
@@ -303,7 +359,18 @@ const app = new Hono()
       const { email, password } = ctx.req.valid('json');
       const cleanEmail = email.toLowerCase().trim();
 
-      const user = db.prepare('SELECT * FROM users WHERE email = ?').get(cleanEmail);
+      let user = null;
+      if (ctx.env?.DB) {
+        try {
+          user = await ctx.env.DB.prepare('SELECT * FROM users WHERE email = ?').bind(cleanEmail).first();
+        } catch (e) {
+          console.error('[D1_FIND_USER_ERROR]:', e);
+        }
+      }
+      if (!user) {
+        user = db.prepare('SELECT * FROM users WHERE email = ?').get(cleanEmail);
+      }
+
       if (!user || !bcrypt.compareSync(password, user.password_hash)) {
         return ctx.json({ error: 'Invalid email or password.' }, 400);
       }
@@ -313,17 +380,42 @@ const app = new Hono()
       }
 
       // Check if user has any workspace, if not auto-provision one
-      let ws = db.prepare(`
-        SELECT w.id FROM workspaces w 
-        JOIN members m ON w.id = m.workspace_id 
-        WHERE m.user_id = ? AND m.status = 'ACTIVE'
-        LIMIT 1
-      `).get(user.id);
+      let ws = null;
+      if (ctx.env?.DB) {
+        try {
+          ws = await ctx.env.DB.prepare(`
+            SELECT w.id FROM workspaces w 
+            JOIN members m ON w.id = m.workspace_id 
+            WHERE m.user_id = ? AND m.status = 'ACTIVE'
+            LIMIT 1
+          `).bind(user.id).first();
+        } catch (e) {
+          console.error('[D1_FIND_WORKSPACE_ERROR]:', e);
+        }
+      }
+      if (!ws) {
+        ws = db.prepare(`
+          SELECT w.id FROM workspaces w 
+          JOIN members m ON w.id = m.workspace_id 
+          WHERE m.user_id = ? AND m.status = 'ACTIVE'
+          LIMIT 1
+        `).get(user.id);
+      }
 
       if (!ws) {
         const wsId = randomUUID();
         const wsName = `${(user.name || 'My').split(' ')[0]}'s Workspace`;
         const inviteCode = randomUUID().slice(0, 6).toUpperCase();
+
+        if (ctx.env?.DB) {
+          try {
+            await ctx.env.DB.prepare('INSERT INTO workspaces (id, name, user_id, invite_code) VALUES (?, ?, ?, ?)').bind(wsId, wsName, user.id, inviteCode).run();
+            await ctx.env.DB.prepare("INSERT INTO members (id, workspace_id, user_id, role, status) VALUES (?, ?, ?, 'ADMIN', 'ACTIVE')").bind(randomUUID(), wsId, user.id).run();
+          } catch (e) {
+            console.error('[D1_AUTO_WORKSPACE_ERROR]:', e);
+          }
+        }
+
         db.prepare('INSERT INTO workspaces (id, name, user_id, invite_code) VALUES (?, ?, ?, ?)').run(wsId, wsName, user.id, inviteCode);
         db.prepare("INSERT INTO members (id, workspace_id, user_id, role, status) VALUES (?, ?, ?, 'ADMIN', 'ACTIVE')").run(randomUUID(), wsId, user.id);
         ensureWorkspaceDefaults(wsId, user.id);
@@ -333,6 +425,16 @@ const app = new Hono()
       const sessionSecret = randomUUID();
       const expiresAt = new Date(Date.now() + SESSION_MAX_AGE_MS).toISOString();
 
+      if (ctx.env?.DB) {
+        try {
+          await ctx.env.DB.prepare(`
+            INSERT INTO sessions (id, user_id, secret, expires_at) VALUES (?, ?, ?, ?)
+          `).bind(randomUUID(), user.id, sessionSecret, expiresAt).run();
+        } catch (e) {
+          console.error('[D1_LOGIN_SESSION_ERROR]:', e);
+        }
+      }
+
       db.prepare(`
         INSERT INTO sessions (id, user_id, secret, expires_at) VALUES (?, ?, ?, ?)
       `).run(randomUUID(), user.id, sessionSecret, expiresAt);
@@ -340,13 +442,14 @@ const app = new Hono()
       setCookie(ctx, AUTH_COOKIE, sessionSecret, {
         path: '/',
         httpOnly: true,
-        secure: process.env.NODE_ENV === 'production',
-        sameSite: 'lax',
+        secure: true,
+        sameSite: 'none',
         maxAge: SESSION_MAX_AGE_SECONDS,
       });
 
       return ctx.json({ 
         success: true, 
+        token: sessionSecret,
         user: formatDoc(user),
         workspaceId: ws.id,
       });
@@ -355,6 +458,7 @@ const app = new Hono()
       return ctx.json({ error: error.message || 'Failed to login' }, 400);
     }
   })
+
   .post(
     '/social-login',
     zValidator(
@@ -419,6 +523,16 @@ const app = new Hono()
         const sessionSecret = randomUUID();
         const expiresAt = new Date(Date.now() + SESSION_MAX_AGE_MS).toISOString();
 
+        if (ctx.env?.DB) {
+          try {
+            await ctx.env.DB.prepare(`
+              INSERT INTO sessions (id, user_id, secret, expires_at) VALUES (?, ?, ?, ?)
+            `).bind(randomUUID(), user.id, sessionSecret, expiresAt).run();
+          } catch (e) {
+            console.error('[D1_SOCIAL_SESSION_ERROR]:', e);
+          }
+        }
+
         db.prepare(`
           INSERT INTO sessions (id, user_id, secret, expires_at) VALUES (?, ?, ?, ?)
         `).run(randomUUID(), user.id, sessionSecret, expiresAt);
@@ -426,13 +540,14 @@ const app = new Hono()
         setCookie(ctx, AUTH_COOKIE, sessionSecret, {
           path: '/',
           httpOnly: true,
-          secure: process.env.NODE_ENV === 'production',
-          sameSite: 'lax',
+          secure: true,
+          sameSite: 'none',
           maxAge: SESSION_MAX_AGE_SECONDS,
         });
 
         return ctx.json({
           success: true,
+          token: sessionSecret,
           user: formatDoc(user),
           workspaceId: ws.id,
           provider,
@@ -618,32 +733,68 @@ const app = new Hono()
       });
     },
   )
-  .get('/current', (ctx) => {
-    const sessionSecret = getCookie(ctx, AUTH_COOKIE);
+  .get('/current', async (ctx) => {
+    const authHeader = ctx.req.header('authorization') || ctx.req.header('Authorization');
+    const bearerToken = authHeader?.replace(/^[Bb]earer\s+/i, '')?.trim();
+    const sessionSecret = getCookie(ctx, AUTH_COOKIE) || bearerToken;
+
     if (!sessionSecret) {
       return ctx.json({ data: null }, 200);
     }
 
-    const session = db.prepare(`
-      SELECT * FROM sessions WHERE secret = ? AND datetime(expires_at) > datetime('now')
-    `).get(sessionSecret);
+    let session = null;
+    let user = null;
+    let workspaces = [];
 
+    // Query Cloudflare D1 first
+    if (ctx.env?.DB) {
+      try {
+        session = await ctx.env.DB.prepare(`
+          SELECT * FROM sessions WHERE secret = ? AND datetime(expires_at) > datetime('now')
+        `).bind(sessionSecret).first();
+
+        if (session) {
+          user = await ctx.env.DB.prepare(`
+            SELECT id, name, email, created_at, updated_at FROM users WHERE id = ?
+          `).bind(session.user_id).first();
+
+          if (user) {
+            const wsQuery = await ctx.env.DB.prepare(`
+              SELECT w.id, w.name, w.domain_slug, w.image_url, m.role, m.organization_role, m.status, w.user_id = ? as is_owner
+              FROM members m
+              JOIN workspaces w ON m.workspace_id = w.id
+              WHERE m.user_id = ? AND m.status = 'ACTIVE'
+            `).bind(user.id, user.id).all();
+            workspaces = wsQuery?.results || [];
+          }
+        }
+      } catch (e) {
+        console.error('[D1_GET_CURRENT_ERROR]:', e);
+      }
+    }
+
+    // Fallback to local db if not in D1
     if (!session) {
-      return ctx.json({ data: null }, 200);
+      session = db.prepare(`
+        SELECT * FROM sessions WHERE secret = ? AND datetime(expires_at) > datetime('now')
+      `).get(sessionSecret);
+
+      if (session) {
+        user = db.prepare('SELECT id, name, email, created_at, updated_at FROM users WHERE id = ?').get(session.user_id);
+        if (user) {
+          workspaces = db.prepare(`
+            SELECT w.id, w.name, w.domain_slug, w.image_url, m.role, m.organization_role, m.status, w.user_id = ? as is_owner
+            FROM members m
+            JOIN workspaces w ON m.workspace_id = w.id
+            WHERE m.user_id = ? AND m.status = 'ACTIVE'
+          `).all(user.id, user.id);
+        }
+      }
     }
 
-    const user = db.prepare('SELECT * FROM users WHERE id = ?').get(session.user_id);
-    if (!user) {
+    if (!session || !user) {
       return ctx.json({ data: null }, 200);
     }
-
-    // Fetch all organizations/workspaces this user belongs to
-    const workspaces = db.prepare(`
-      SELECT w.id, w.name, w.domain_slug, w.image_url, m.role, m.organization_role, m.status, w.user_id = ? as is_owner
-      FROM members m
-      JOIN workspaces w ON m.workspace_id = w.id
-      WHERE m.user_id = ? AND m.status = 'ACTIVE'
-    `).all(user.id, user.id);
 
     return ctx.json({
       data: {
@@ -652,14 +803,25 @@ const app = new Hono()
       },
     }, 200);
   })
-  .post('/logout', sessionMiddleware, async (ctx) => {
-    const sessionSecret = getCookie(ctx, AUTH_COOKIE);
+  .post('/logout', async (ctx) => {
+    const authHeader = ctx.req.header('authorization') || ctx.req.header('Authorization');
+    const bearerToken = authHeader?.replace(/^[Bb]earer\s+/i, '')?.trim();
+    const sessionSecret = getCookie(ctx, AUTH_COOKIE) || bearerToken;
+
     if (sessionSecret) {
+      if (ctx.env?.DB) {
+        try {
+          await ctx.env.DB.prepare('DELETE FROM sessions WHERE secret = ?').bind(sessionSecret).run();
+        } catch (e) {
+          console.error('[D1_DELETE_SESSION_ERROR]:', e);
+        }
+      }
       db.prepare('DELETE FROM sessions WHERE secret = ?').run(sessionSecret);
     }
 
     deleteCookie(ctx, AUTH_COOKIE);
     return ctx.json({ success: true });
   });
+
 
 export default app;
