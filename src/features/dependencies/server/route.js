@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { randomUUID } from 'node:crypto';
 import { sessionMiddleware } from '../../../lib/session-middleware.js';
-import { db, formatDoc, logActivity } from '../../../db.js';
+import { db, d1All, d1First, d1Run, getD1Database, formatDoc, logActivity } from '../../../db.js';
 
 const app = new Hono()
   // 1. GET FULL WORKSPACE DEPENDENCY TOPOLOGY GRAPH
@@ -9,6 +9,7 @@ const app = new Hono()
     const { workspaceId } = ctx.req.param();
     const query = ctx.req.query();
     const projectId = query.projectId;
+    const d1 = ctx.env?.DB || getD1Database();
 
     // Fetch rich tasks
     let taskSql = `
@@ -28,10 +29,10 @@ const app = new Hono()
       taskParams.push(projectId);
     }
 
-    const tasks = db.prepare(taskSql).all(...taskParams);
+    const tasks = await d1All(taskSql, taskParams, d1);
 
     // Fetch all dependency links
-    const links = db.prepare(`
+    const links = await d1All(`
       SELECT l.id, l.source_task_id, l.target_task_id, l.relationship_type, l.created_at,
              st.key as source_key, st.name as source_name, st.status as source_status, st.priority as source_priority,
              st.project_id as source_project_id, sp.name as source_project_name, sp.key as source_project_key,
@@ -46,7 +47,7 @@ const app = new Hono()
       LEFT JOIN users u ON l.created_by = u.id
       WHERE st.workspace_id = ?
       ORDER BY l.created_at DESC
-    `).all(workspaceId);
+    `, [workspaceId], d1);
 
     const blockedNodes = new Set();
     const blockingNodes = new Set();
@@ -153,8 +154,9 @@ const app = new Hono()
   // 2. GET PROJECT-SPECIFIC DEPENDENCY LINKS
   .get('/project/:projectId', sessionMiddleware, async (ctx) => {
     const { projectId } = ctx.req.param();
+    const d1 = ctx.env?.DB || getD1Database();
 
-    const links = db.prepare(`
+    const links = await d1All(`
       SELECT l.*, st.key as source_key, st.name as source_name, st.status as source_status,
              tt.key as target_key, tt.name as target_name, tt.status as target_status,
              sp.name as source_project, tp.name as target_project
@@ -165,7 +167,7 @@ const app = new Hono()
       JOIN projects tp ON tt.project_id = tp.id
       WHERE st.project_id = ? OR tt.project_id = ?
       ORDER BY l.created_at DESC
-    `).all(projectId, projectId);
+    `, [projectId, projectId], d1);
 
     return ctx.json({ data: links.map(formatDoc) });
   })
@@ -174,6 +176,7 @@ const app = new Hono()
   .post('/', sessionMiddleware, async (ctx) => {
     const user = ctx.get('user');
     const { sourceTaskId, targetTaskId, relationshipType = 'blocks' } = await ctx.req.json();
+    const d1 = ctx.env?.DB || getD1Database();
 
     if (!sourceTaskId || !targetTaskId) {
       return ctx.json({ error: 'sourceTaskId and targetTaskId are required.' }, 400);
@@ -184,36 +187,36 @@ const app = new Hono()
     }
 
     // Check if tasks exist
-    const sourceTask = db.prepare('SELECT * FROM tasks WHERE id = ?').get(sourceTaskId);
-    const targetTask = db.prepare('SELECT * FROM tasks WHERE id = ?').get(targetTaskId);
+    const sourceTask = await d1First('SELECT * FROM tasks WHERE id = ?', [sourceTaskId], d1);
+    const targetTask = await d1First('SELECT * FROM tasks WHERE id = ?', [targetTaskId], d1);
 
     if (!sourceTask || !targetTask) {
       return ctx.json({ error: 'Source or target task not found.' }, 404);
     }
 
     // Check duplicate link
-    const existing = db.prepare(`
+    const existing = await d1First(`
       SELECT id FROM task_links WHERE source_task_id = ? AND target_task_id = ?
-    `).get(sourceTaskId, targetTaskId);
+    `, [sourceTaskId, targetTaskId], d1);
 
     if (existing) {
       return ctx.json({ error: 'This dependency relationship already exists.' }, 400);
     }
 
     // Circular dependency check
-    const existingOpposite = db.prepare(`
+    const existingOpposite = await d1First(`
       SELECT id FROM task_links WHERE source_task_id = ? AND target_task_id = ?
-    `).get(targetTaskId, sourceTaskId);
+    `, [targetTaskId, sourceTaskId], d1);
 
     if (existingOpposite) {
       return ctx.json({ error: 'Circular dependency detected. Target issue already links back to source issue.' }, 400);
     }
 
     const id = randomUUID();
-    db.prepare(`
+    await d1Run(`
       INSERT INTO task_links (id, source_task_id, target_task_id, relationship_type, created_by)
       VALUES (?, ?, ?, ?, ?)
-    `).run(id, sourceTaskId, targetTaskId, relationshipType, user.$id);
+    `, [id, sourceTaskId, targetTaskId, relationshipType, user.$id], d1);
 
     try {
       logActivity({
@@ -239,13 +242,14 @@ const app = new Hono()
   // 4. DELETE A DEPENDENCY LINK
   .delete('/:id', sessionMiddleware, async (ctx) => {
     const { id } = ctx.req.param();
-    const link = db.prepare('SELECT * FROM task_links WHERE id = ?').get(id);
+    const d1 = ctx.env?.DB || getD1Database();
 
+    const link = await d1First('SELECT * FROM task_links WHERE id = ?', [id], d1);
     if (!link) {
       return ctx.json({ error: 'Dependency link not found.' }, 404);
     }
 
-    db.prepare('DELETE FROM task_links WHERE id = ?').run(id);
+    await d1Run('DELETE FROM task_links WHERE id = ?', [id], d1);
 
     return ctx.json({ success: true, message: 'Dependency link removed.' });
   })
@@ -254,10 +258,11 @@ const app = new Hono()
   .post('/seed-demo/:workspaceId', sessionMiddleware, async (ctx) => {
     const { workspaceId } = ctx.req.param();
     const user = ctx.get('user');
+    const d1 = ctx.env?.DB || getD1Database();
 
-    const tasks = db.prepare(`
+    const tasks = await d1All(`
       SELECT id, project_id, status FROM tasks WHERE workspace_id = ? LIMIT 20
-    `).all(workspaceId);
+    `, [workspaceId], d1);
 
     if (tasks.length < 2) {
       return ctx.json({ error: 'Need at least 2 tasks in workspace to generate sample links.' }, 400);
@@ -268,18 +273,18 @@ const app = new Hono()
       const source = tasks[i];
       const target = tasks[i + 1];
       if (source.id !== target.id) {
-        const existing = db.prepare(`
+        const existing = await d1First(`
           SELECT id FROM task_links 
           WHERE (source_task_id = ? AND target_task_id = ?) OR (source_task_id = ? AND target_task_id = ?)
-        `).get(source.id, target.id, target.id, source.id);
+        `, [source.id, target.id, target.id, source.id], d1);
 
         if (!existing) {
           const id = randomUUID();
           const relType = i % 4 === 0 ? 'blocks' : i % 4 === 2 ? 'relates to' : 'blocks';
-          db.prepare(`
+          await d1Run(`
             INSERT INTO task_links (id, source_task_id, target_task_id, relationship_type, created_by)
             VALUES (?, ?, ?, ?, ?)
-          `).run(id, source.id, target.id, relType, user.$id);
+          `, [id, source.id, target.id, relType, user.$id], d1);
           createdCount++;
         }
       }

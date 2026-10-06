@@ -1,19 +1,20 @@
 import { Hono } from 'hono';
 import { randomUUID } from 'node:crypto';
 import { sessionMiddleware } from '../../../lib/session-middleware.js';
-import { db, formatDoc, logActivity } from '../../../db.js';
+import { db, d1All, d1First, d1Run, getD1Database, formatDoc, logActivity } from '../../../db.js';
 
 const app = new Hono()
   .get('/:projectId', sessionMiddleware, async (ctx) => {
     const { projectId } = ctx.req.param();
-    const deployments = db.prepare(`
+    const d1 = ctx.env?.DB || getD1Database();
+    const deployments = await d1All(`
       SELECT d.*, u.name as deployer_name, r.name as release_name
       FROM deployments d
       LEFT JOIN users u ON d.deployed_by = u.id
       LEFT JOIN releases r ON d.version_id = r.id
       WHERE d.project_id = ?
       ORDER BY d.started_at DESC
-    `).all(projectId);
+    `, [projectId], d1);
 
     return ctx.json({ data: deployments.map(formatDoc) });
   })
@@ -21,36 +22,38 @@ const app = new Hono()
     const user = ctx.get('user');
     const { projectId } = ctx.req.param();
     const { environment = 'PRODUCTION', versionId = null, status = 'SUCCESS' } = await ctx.req.json();
+    const d1 = ctx.env?.DB || getD1Database();
 
-    const project = db.prepare('SELECT workspace_id FROM projects WHERE id = ?').get(projectId);
+    const project = await d1First('SELECT workspace_id FROM projects WHERE id = ?', [projectId], d1);
     if (!project) return ctx.json({ error: 'Project not found.' }, 404);
 
     const id = randomUUID();
-    db.prepare(`
+    await d1Run(`
       INSERT INTO deployments (id, project_id, workspace_id, version_id, environment, status, deployed_by)
       VALUES (?, ?, ?, ?, ?, ?, ?)
-    `).run(id, projectId, project.workspace_id, versionId || null, environment, status, user.$id);
+    `, [id, projectId, project.workspace_id, versionId || null, environment, status, user.$id], d1);
 
-    logActivity({
-      workspaceId: project.workspace_id,
-      projectId,
-      userId: user.$id,
-      action: 'DEPLOYMENT_COMPLETED',
-      details: `Deployed to ${environment} (${status})`,
-    });
+    try {
+      logActivity({
+        workspaceId: project.workspace_id,
+        projectId,
+        userId: user.$id,
+        action: 'DEPLOYMENT_COMPLETED',
+        details: `Deployed to ${environment} (${status})`,
+      });
+    } catch (e) {}
 
     return ctx.json({ success: true, id, environment, status });
   })
   .get('/dora/:workspaceId', sessionMiddleware, async (ctx) => {
     const { workspaceId } = ctx.req.param();
+    const d1 = ctx.env?.DB || getD1Database();
 
-    const totalDeployments = db.prepare(`
-      SELECT COUNT(*) as c FROM deployments WHERE workspace_id = ?
-    `).get(workspaceId).c;
+    const totalRow = await d1First('SELECT COUNT(*) as c FROM deployments WHERE workspace_id = ?', [workspaceId], d1);
+    const totalDeployments = totalRow?.c || 0;
 
-    const failedDeployments = db.prepare(`
-      SELECT COUNT(*) as c FROM deployments WHERE workspace_id = ? AND status = 'FAILED'
-    `).get(workspaceId).c;
+    const failedRow = await d1First("SELECT COUNT(*) as c FROM deployments WHERE workspace_id = ? AND status = 'FAILED'", [workspaceId], d1);
+    const failedDeployments = failedRow?.c || 0;
 
     const changeFailureRate = totalDeployments > 0 ? Math.round((failedDeployments / totalDeployments) * 100) : 0;
 
@@ -66,12 +69,14 @@ const app = new Hono()
   })
   .get('/readiness/:releaseId', sessionMiddleware, async (ctx) => {
     const { releaseId } = ctx.req.param();
-    const release = db.prepare('SELECT * FROM releases WHERE id = ?').get(releaseId);
+    const d1 = ctx.env?.DB || getD1Database();
+
+    const release = await d1First('SELECT * FROM releases WHERE id = ?', [releaseId], d1);
     if (!release) return ctx.json({ error: 'Release not found.' }, 404);
 
-    const totalIssues = db.prepare('SELECT COUNT(*) as c FROM tasks WHERE workspace_id = ?').get(release.workspace_id).c;
-    const doneIssues = db.prepare("SELECT COUNT(*) as c FROM tasks WHERE workspace_id = ? AND status = 'DONE'").get(release.workspace_id).c;
-    const criticalBugs = db.prepare("SELECT COUNT(*) as c FROM tasks WHERE workspace_id = ? AND issue_type = 'Bug' AND priority = 'CRITICAL' AND status != 'DONE'").get(release.workspace_id).c;
+    const totalIssues = (await d1First('SELECT COUNT(*) as c FROM tasks WHERE workspace_id = ?', [release.workspace_id], d1))?.c || 0;
+    const doneIssues = (await d1First("SELECT COUNT(*) as c FROM tasks WHERE workspace_id = ? AND status = 'DONE'", [release.workspace_id], d1))?.c || 0;
+    const criticalBugs = (await d1First("SELECT COUNT(*) as c FROM tasks WHERE workspace_id = ? AND issue_type = 'Bug' AND priority = 'CRITICAL' AND status != 'DONE'", [release.workspace_id], d1))?.c || 0;
 
     const completion = totalIssues > 0 ? Math.round((doneIssues / totalIssues) * 100) : 100;
     const riskScore = criticalBugs > 0 ? 'HIGH' : (completion < 80 ? 'MEDIUM' : 'LOW');

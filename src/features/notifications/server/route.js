@@ -1,11 +1,12 @@
 import { Hono } from 'hono';
 import { sessionMiddleware } from '../../../lib/session-middleware.js';
-import { db, formatDoc } from '../../../db.js';
+import { db, d1All, d1First, d1Run, getD1Database, formatDoc } from '../../../db.js';
 
 const app = new Hono()
   .get('/', sessionMiddleware, async (ctx) => {
     const user = ctx.get('user');
     const workspaceId = ctx.req.query('workspaceId');
+    const d1 = ctx.env?.DB || getD1Database();
 
     let query = 'SELECT * FROM notifications WHERE user_id = ?';
     const params = [user.$id];
@@ -15,7 +16,7 @@ const app = new Hono()
     }
     query += ' ORDER BY created_at DESC LIMIT 30';
 
-    const notifications = db.prepare(query).all(...params);
+    const notifications = await d1All(query, params, d1);
     const unreadCount = notifications.filter((n) => !n.is_read).length;
 
     return ctx.json({
@@ -28,18 +29,20 @@ const app = new Hono()
   .patch('/:id/read', sessionMiddleware, async (ctx) => {
     const user = ctx.get('user');
     const { id } = ctx.req.param();
+    const d1 = ctx.env?.DB || getD1Database();
 
-    db.prepare('UPDATE notifications SET is_read = 1 WHERE id = ? AND user_id = ?').run(id, user.$id);
+    await d1Run('UPDATE notifications SET is_read = 1 WHERE id = ? AND user_id = ?', [id, user.$id], d1);
     return ctx.json({ success: true });
   })
   .post('/read-all', sessionMiddleware, async (ctx) => {
     const user = ctx.get('user');
     const workspaceId = ctx.req.query('workspaceId');
+    const d1 = ctx.env?.DB || getD1Database();
 
     if (workspaceId) {
-      db.prepare('UPDATE notifications SET is_read = 1 WHERE user_id = ? AND workspace_id = ?').run(user.$id, workspaceId);
+      await d1Run('UPDATE notifications SET is_read = 1 WHERE user_id = ? AND workspace_id = ?', [user.$id, workspaceId], d1);
     } else {
-      db.prepare('UPDATE notifications SET is_read = 1 WHERE user_id = ?').run(user.$id);
+      await d1Run('UPDATE notifications SET is_read = 1 WHERE user_id = ?', [user.$id], d1);
     }
 
     return ctx.json({ success: true });
@@ -47,10 +50,11 @@ const app = new Hono()
   .get('/preferences', sessionMiddleware, async (ctx) => {
     const user = ctx.get('user');
     const workspaceId = ctx.req.query('workspaceId');
+    const d1 = ctx.env?.DB || getD1Database();
 
     let prefs = null;
     if (workspaceId) {
-      prefs = db.prepare('SELECT * FROM notification_preferences WHERE user_id = ? AND workspace_id = ?').get(user.$id, workspaceId);
+      prefs = await d1First('SELECT * FROM notification_preferences WHERE user_id = ? AND workspace_id = ?', [user.$id, workspaceId], d1);
     }
 
     return ctx.json({
@@ -66,20 +70,21 @@ const app = new Hono()
   .put('/preferences', sessionMiddleware, async (ctx) => {
     const user = ctx.get('user');
     const { workspaceId, emailAlerts, inAppAlerts, mentionAlerts, assignmentAlerts, statusChangeAlerts } = await ctx.req.json();
+    const d1 = ctx.env?.DB || getD1Database();
 
-    db.prepare(`
+    await d1Run(`
       INSERT OR REPLACE INTO notification_preferences 
       (user_id, workspace_id, email_alerts, in_app_alerts, mention_alerts, assignment_alerts, status_change_alerts)
       VALUES (?, ?, ?, ?, ?, ?, ?)
-    `).run(
+    `, [
       user.$id,
       workspaceId,
       emailAlerts ? 1 : 0,
       inAppAlerts ? 1 : 0,
       mentionAlerts ? 1 : 0,
       assignmentAlerts ? 1 : 0,
-      statusChangeAlerts ? 1 : 0
-    );
+      statusChangeAlerts ? 1 : 0,
+    ], d1);
 
     return ctx.json({ success: true });
   });

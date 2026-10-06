@@ -1,20 +1,21 @@
 import { Hono } from 'hono';
 import { randomUUID } from 'node:crypto';
 import { sessionMiddleware } from '../../../lib/session-middleware.js';
-import { db, formatDoc } from '../../../db.js';
+import { db, formatDoc, d1All, d1First, d1Run, getD1Database } from '../../../db.js';
 
 const app = new Hono()
   .get('/:workspaceId', sessionMiddleware, async (ctx) => {
     const user = ctx.get('user');
     const { workspaceId } = ctx.req.param();
+    const d1 = ctx.env?.DB || getD1Database();
 
-    const filters = db.prepare(`
+    const filters = await d1All(`
       SELECT f.*, u.name as owner_name
       FROM saved_filters f
       JOIN users u ON f.owner_id = u.id
       WHERE f.workspace_id = ? AND (f.owner_id = ? OR f.visibility = 'COMPANY')
       ORDER BY f.created_at DESC
-    `).all(workspaceId, user.$id);
+    `, [workspaceId, user.$id], d1);
 
     return ctx.json({ data: filters.map(formatDoc) });
   })
@@ -22,14 +23,15 @@ const app = new Hono()
     const user = ctx.get('user');
     const { workspaceId } = ctx.req.param();
     const { name, description = '', jqlQuery, visibility = 'PRIVATE', projectId = null } = await ctx.req.json();
+    const d1 = ctx.env?.DB || getD1Database();
 
     if (!name || !jqlQuery) return ctx.json({ error: 'Name and JQL query are required.' }, 400);
 
     const filterId = randomUUID();
-    db.prepare(`
+    await d1Run(`
       INSERT INTO saved_filters (id, workspace_id, owner_id, name, description, jql_query, visibility, project_id)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(filterId, workspaceId, user.$id, name, description, jqlQuery, visibility, projectId || null);
+    `, [filterId, workspaceId, user.$id, name, description, jqlQuery, visibility, projectId || null], d1);
 
     return ctx.json({
       success: true,
@@ -44,8 +46,9 @@ const app = new Hono()
   .delete('/item/:filterId', sessionMiddleware, async (ctx) => {
     const user = ctx.get('user');
     const { filterId } = ctx.req.param();
+    const d1 = ctx.env?.DB || getD1Database();
 
-    db.prepare('DELETE FROM saved_filters WHERE id = ? AND owner_id = ?').run(filterId, user.$id);
+    await d1Run('DELETE FROM saved_filters WHERE id = ? AND owner_id = ?', [filterId, user.$id], d1);
     return ctx.json({ success: true });
   })
   .get('/search/jql', sessionMiddleware, async (ctx) => {
@@ -55,6 +58,7 @@ const app = new Hono()
     const page = parseInt(ctx.req.query('page') || '1', 10);
     const pageSize = parseInt(ctx.req.query('pageSize') || '50', 10);
     const offset = (page - 1) * pageSize;
+    const d1 = ctx.env?.DB || getD1Database();
 
     if (!workspaceId) return ctx.json({ error: 'workspaceId is required.' }, 400);
 
@@ -110,16 +114,16 @@ const app = new Hono()
 
     const whereSql = whereClauses.join(' AND ');
 
-    const countRow = db.prepare(`
+    const countRow = await d1First(`
       SELECT COUNT(*) as total
       FROM tasks t
       JOIN projects p ON t.project_id = p.id
       LEFT JOIN members m ON t.assignee_id = m.id
       LEFT JOIN users u ON m.user_id = u.id
       WHERE ${whereSql}
-    `).get(...params);
+    `, params, d1);
 
-    const rows = db.prepare(`
+    const rows = await d1All(`
       SELECT t.*, p.key as project_key, p.name as project_name, u.name as assignee_name, u.email as assignee_email
       FROM tasks t
       JOIN projects p ON t.project_id = p.id
@@ -128,7 +132,7 @@ const app = new Hono()
       WHERE ${whereSql}
       ORDER BY t.created_at DESC
       LIMIT ? OFFSET ?
-    `).all(...params, pageSize, offset);
+    `, [...params, pageSize, offset], d1);
 
     return ctx.json({
       data: {

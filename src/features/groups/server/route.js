@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { randomUUID } from 'node:crypto';
 import { sessionMiddleware } from '../../../lib/session-middleware.js';
-import { db, formatDoc, logAudit } from '../../../db.js';
+import { db, formatDoc, logAudit, d1All, d1First, d1Run, getD1Database } from '../../../db.js';
 
 const defaultEnterpriseGroups = [
   {
@@ -54,25 +54,25 @@ const defaultEnterpriseGroups = [
   },
 ];
 
-function seedDefaultGroupsIfEmpty(workspaceId) {
-  const existingCount = db.prepare('SELECT COUNT(*) as count FROM groups WHERE workspace_id = ?').get(workspaceId);
+async function seedDefaultGroupsIfEmpty(workspaceId, d1) {
+  const existingCount = await d1First('SELECT COUNT(*) as count FROM groups WHERE workspace_id = ?', [workspaceId], d1);
   if (existingCount && existingCount.count > 0) return;
 
-  const members = db.prepare('SELECT user_id, role FROM members WHERE workspace_id = ?').all(workspaceId);
+  const members = await d1All('SELECT user_id, role FROM members WHERE workspace_id = ?', [workspaceId], d1);
 
   for (const item of defaultEnterpriseGroups) {
     const groupId = randomUUID();
-    db.prepare(`
+    await d1Run(`
       INSERT INTO groups (id, workspace_id, name, description, is_default, is_system, group_type, role_mapping)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(groupId, workspaceId, item.name, item.description, item.is_default, item.is_system, item.group_type, item.role_mapping);
+    `, [groupId, workspaceId, item.name, item.description, item.is_default, item.is_system, item.group_type, item.role_mapping], d1);
 
     // Auto-populate members into standard groups
     for (const m of members) {
       if (item.name === 'klanservicehub-administrators' && (m.role === 'ADMIN' || m.role === 'OWNER')) {
-        db.prepare('INSERT OR IGNORE INTO group_members (group_id, user_id) VALUES (?, ?)').run(groupId, m.user_id);
+        await d1Run('INSERT OR IGNORE INTO group_members (group_id, user_id) VALUES (?, ?)', [groupId, m.user_id], d1);
       } else if (item.name === 'klanservicehub-software-users' || item.name === 'engineering-core') {
-        db.prepare('INSERT OR IGNORE INTO group_members (group_id, user_id) VALUES (?, ?)').run(groupId, m.user_id);
+        await d1Run('INSERT OR IGNORE INTO group_members (group_id, user_id) VALUES (?, ?)', [groupId, m.user_id], d1);
       }
     }
   }
@@ -81,52 +81,54 @@ function seedDefaultGroupsIfEmpty(workspaceId) {
 const app = new Hono()
   .get('/:workspaceId', sessionMiddleware, async (ctx) => {
     const { workspaceId } = ctx.req.param();
+    const d1 = ctx.env?.DB || getD1Database();
 
-    seedDefaultGroupsIfEmpty(workspaceId);
+    await seedDefaultGroupsIfEmpty(workspaceId, d1);
 
-    const groups = db.prepare(`
+    const groups = await d1All(`
       SELECT g.*, COUNT(gm.user_id) as member_count
       FROM groups g
       LEFT JOIN group_members gm ON g.id = gm.group_id
       WHERE g.workspace_id = ?
       GROUP BY g.id
       ORDER BY g.is_system DESC, g.name ASC
-    `).all(workspaceId);
+    `, [workspaceId], d1);
 
     return ctx.json({ data: groups.map(formatDoc) });
   })
   .get('/:workspaceId/directory/stats', sessionMiddleware, async (ctx) => {
     const { workspaceId } = ctx.req.param();
+    const d1 = ctx.env?.DB || getD1Database();
 
-    seedDefaultGroupsIfEmpty(workspaceId);
+    await seedDefaultGroupsIfEmpty(workspaceId, d1);
 
-    const ws = db.prepare('SELECT id, name, domain_slug FROM workspaces WHERE id = ?').get(workspaceId);
+    const ws = await d1First('SELECT id, name, domain_slug FROM workspaces WHERE id = ?', [workspaceId], d1);
 
-    const groupStats = db.prepare(`
+    const groupStats = await d1First(`
       SELECT 
         COUNT(DISTINCT g.id) as total_groups,
         COUNT(DISTINCT CASE WHEN g.is_default = 1 THEN g.id END) as default_groups,
         COUNT(DISTINCT CASE WHEN g.is_system = 1 THEN g.id END) as system_groups
       FROM groups g
       WHERE g.workspace_id = ?
-    `).get(workspaceId);
+    `, [workspaceId], d1);
 
-    const uniqueUsersInGroups = db.prepare(`
+    const uniqueUsersInGroups = await d1First(`
       SELECT COUNT(DISTINCT gm.user_id) as assigned_users
       FROM group_members gm
       JOIN groups g ON gm.group_id = g.id
       WHERE g.workspace_id = ?
-    `).get(workspaceId);
+    `, [workspaceId], d1);
 
-    const totalWorkspaceMembers = db.prepare(`
+    const totalWorkspaceMembers = await d1First(`
       SELECT COUNT(DISTINCT user_id) as total_members
       FROM members
       WHERE workspace_id = ? AND status = 'ACTIVE'
-    `).get(workspaceId);
+    `, [workspaceId], d1);
 
-    const domainRulesCount = db.prepare(`
+    const domainRulesCount = await d1First(`
       SELECT COUNT(*) as count FROM group_domain_rules WHERE workspace_id = ?
-    `).get(workspaceId);
+    `, [workspaceId], d1);
 
     return ctx.json({
       data: {
@@ -145,14 +147,15 @@ const app = new Hono()
   })
   .get('/:workspaceId/domain-rules', sessionMiddleware, async (ctx) => {
     const { workspaceId } = ctx.req.param();
+    const d1 = ctx.env?.DB || getD1Database();
 
-    const rules = db.prepare(`
+    const rules = await d1All(`
       SELECT r.id, r.workspace_id, r.domain, r.group_id, r.created_at, g.name as group_name
       FROM group_domain_rules r
       JOIN groups g ON r.group_id = g.id
       WHERE r.workspace_id = ?
       ORDER BY r.created_at DESC
-    `).all(workspaceId);
+    `, [workspaceId], d1);
 
     return ctx.json({ data: rules.map(formatDoc) });
   })
@@ -160,6 +163,7 @@ const app = new Hono()
     const user = ctx.get('user');
     const { workspaceId } = ctx.req.param();
     const { domain, groupId } = await ctx.req.json();
+    const d1 = ctx.env?.DB || getD1Database();
 
     if (!domain || !domain.trim()) return ctx.json({ error: 'Domain is required.' }, 400);
     if (!groupId) return ctx.json({ error: 'Target Group is required.' }, 400);
@@ -167,12 +171,12 @@ const app = new Hono()
     const cleanDomain = domain.trim().toLowerCase().replace(/^@/, '');
 
     const id = randomUUID();
-    db.prepare(`
+    await d1Run(`
       INSERT OR REPLACE INTO group_domain_rules (id, workspace_id, domain, group_id)
       VALUES (?, ?, ?, ?)
-    `).run(id, workspaceId, cleanDomain, groupId);
+    `, [id, workspaceId, cleanDomain, groupId], d1);
 
-    logAudit({
+    await logAudit({
       workspaceId,
       actorId: user.$id,
       actorName: user.name,
@@ -186,7 +190,8 @@ const app = new Hono()
   })
   .delete('/:workspaceId/domain-rules/:ruleId', sessionMiddleware, async (ctx) => {
     const { workspaceId, ruleId } = ctx.req.param();
-    db.prepare('DELETE FROM group_domain_rules WHERE id = ? AND workspace_id = ?').run(ruleId, workspaceId);
+    const d1 = ctx.env?.DB || getD1Database();
+    await d1Run('DELETE FROM group_domain_rules WHERE id = ? AND workspace_id = ?', [ruleId, workspaceId], d1);
     return ctx.json({ success: true });
   })
   .post('/:workspaceId', sessionMiddleware, async (ctx) => {
@@ -200,30 +205,31 @@ const app = new Hono()
       role_mapping = 'MEMBER',
       memberIds = [],
     } = await ctx.req.json();
+    const d1 = ctx.env?.DB || getD1Database();
 
     if (!name || !name.trim()) return ctx.json({ error: 'Group name is required.' }, 400);
 
     const cleanName = name.trim().toLowerCase().replace(/\s+/g, '-');
-    const existing = db.prepare('SELECT id FROM groups WHERE workspace_id = ? AND name = ?').get(workspaceId, cleanName);
+    const existing = await d1First('SELECT id FROM groups WHERE workspace_id = ? AND name = ?', [workspaceId, cleanName], d1);
     if (existing) {
       return ctx.json({ error: `A group named "${cleanName}" already exists in this workspace.` }, 400);
     }
 
     const id = randomUUID();
-    db.prepare(`
+    await d1Run(`
       INSERT INTO groups (id, workspace_id, name, description, is_default, is_system, group_type, role_mapping)
       VALUES (?, ?, ?, ?, ?, 0, ?, ?)
-    `).run(id, workspaceId, cleanName, description.trim(), is_default ? 1 : 0, group_type, role_mapping);
+    `, [id, workspaceId, cleanName, description.trim(), is_default ? 1 : 0, group_type, role_mapping], d1);
 
     if (Array.isArray(memberIds) && memberIds.length > 0) {
       for (const uid of memberIds) {
         if (uid) {
-          db.prepare('INSERT OR IGNORE INTO group_members (group_id, user_id) VALUES (?, ?)').run(id, uid);
+          await d1Run('INSERT OR IGNORE INTO group_members (group_id, user_id) VALUES (?, ?)', [id, uid], d1);
         }
       }
     }
 
-    logAudit({
+    await logAudit({
       workspaceId,
       actorId: user.$id,
       actorName: user.name,
@@ -239,8 +245,9 @@ const app = new Hono()
     const user = ctx.get('user');
     const { workspaceId, groupId } = ctx.req.param();
     const { name, description, is_default, group_type, role_mapping } = await ctx.req.json();
+    const d1 = ctx.env?.DB || getD1Database();
 
-    const existing = db.prepare('SELECT * FROM groups WHERE id = ? AND workspace_id = ?').get(groupId, workspaceId);
+    const existing = await d1First('SELECT * FROM groups WHERE id = ? AND workspace_id = ?', [groupId, workspaceId], d1);
     if (!existing) return ctx.json({ error: 'Group not found.' }, 404);
 
     let updatedName = existing.name;
@@ -253,13 +260,13 @@ const app = new Hono()
     const updatedType = group_type || existing.group_type || 'CUSTOM';
     const updatedRole = role_mapping || existing.role_mapping || 'MEMBER';
 
-    db.prepare(`
+    await d1Run(`
       UPDATE groups 
       SET name = ?, description = ?, is_default = ?, group_type = ?, role_mapping = ?
       WHERE id = ? AND workspace_id = ?
-    `).run(updatedName, updatedDesc, updatedDefault, updatedType, updatedRole, groupId, workspaceId);
+    `, [updatedName, updatedDesc, updatedDefault, updatedType, updatedRole, groupId, workspaceId], d1);
 
-    logAudit({
+    await logAudit({
       workspaceId,
       actorId: user.$id,
       actorName: user.name,
@@ -273,7 +280,8 @@ const app = new Hono()
   })
   .get('/:workspaceId/:groupId/members', sessionMiddleware, async (ctx) => {
     const { groupId } = ctx.req.param();
-    const members = db.prepare(`
+    const d1 = ctx.env?.DB || getD1Database();
+    const members = await d1All(`
       SELECT 
         u.id, 
         u.name, 
@@ -290,7 +298,7 @@ const app = new Hono()
       LEFT JOIN members m ON m.workspace_id = g.workspace_id AND m.user_id = u.id
       WHERE gm.group_id = ?
       ORDER BY u.name ASC
-    `).all(groupId);
+    `, [groupId], d1);
 
     return ctx.json({ data: members.map(formatDoc) });
   })
@@ -299,6 +307,7 @@ const app = new Hono()
     const { workspaceId, groupId } = ctx.req.param();
     const body = await ctx.req.json();
     const userIds = Array.isArray(body.userIds) ? body.userIds : (body.userId ? [body.userId] : []);
+    const d1 = ctx.env?.DB || getD1Database();
 
     if (userIds.length === 0) {
       return ctx.json({ error: 'At least one user must be selected.' }, 400);
@@ -307,12 +316,12 @@ const app = new Hono()
     let addedCount = 0;
     for (const uid of userIds) {
       if (uid) {
-        db.prepare('INSERT OR IGNORE INTO group_members (group_id, user_id) VALUES (?, ?)').run(groupId, uid);
+        await d1Run('INSERT OR IGNORE INTO group_members (group_id, user_id) VALUES (?, ?)', [groupId, uid], d1);
         addedCount++;
       }
     }
 
-    logAudit({
+    await logAudit({
       workspaceId,
       actorId: user.$id,
       actorName: user.name,
@@ -326,24 +335,26 @@ const app = new Hono()
   })
   .delete('/:workspaceId/:groupId/members/:userId', sessionMiddleware, async (ctx) => {
     const { groupId, userId } = ctx.req.param();
-    db.prepare('DELETE FROM group_members WHERE group_id = ? AND user_id = ?').run(groupId, userId);
+    const d1 = ctx.env?.DB || getD1Database();
+    await d1Run('DELETE FROM group_members WHERE group_id = ? AND user_id = ?', [groupId, userId], d1);
     return ctx.json({ success: true });
   })
   .delete('/:workspaceId/:groupId', sessionMiddleware, async (ctx) => {
     const user = ctx.get('user');
     const { groupId, workspaceId } = ctx.req.param();
+    const d1 = ctx.env?.DB || getD1Database();
 
-    const group = db.prepare('SELECT * FROM groups WHERE id = ? AND workspace_id = ?').get(groupId, workspaceId);
+    const group = await d1First('SELECT * FROM groups WHERE id = ? AND workspace_id = ?', [groupId, workspaceId], d1);
     if (!group) return ctx.json({ error: 'Group not found.' }, 404);
 
     if (group.is_system === 1 && group.name === 'klanservicehub-administrators') {
       return ctx.json({ error: 'The core system group "klanservicehub-administrators" cannot be deleted.' }, 400);
     }
 
-    db.prepare('DELETE FROM group_members WHERE group_id = ?').run(groupId);
-    db.prepare('DELETE FROM groups WHERE id = ? AND workspace_id = ?').run(groupId, workspaceId);
+    await d1Run('DELETE FROM group_members WHERE group_id = ?', [groupId], d1);
+    await d1Run('DELETE FROM groups WHERE id = ? AND workspace_id = ?', [groupId, workspaceId], d1);
 
-    logAudit({
+    await logAudit({
       workspaceId,
       actorId: user.$id,
       actorName: user.name,

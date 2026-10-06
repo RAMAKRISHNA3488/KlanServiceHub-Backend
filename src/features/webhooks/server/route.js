@@ -1,12 +1,13 @@
 import { Hono } from 'hono';
 import { randomUUID } from 'node:crypto';
 import { sessionMiddleware } from '../../../lib/session-middleware.js';
-import { db, formatDoc } from '../../../db.js';
+import { db, formatDoc, d1All, d1First, d1Run, getD1Database } from '../../../db.js';
 
 const app = new Hono()
   .get('/:workspaceId', sessionMiddleware, async (ctx) => {
     const { workspaceId } = ctx.req.param();
-    const hooks = db.prepare('SELECT id, workspace_id, name, url, events, status, created_at FROM webhooks WHERE workspace_id = ?').all(workspaceId);
+    const d1 = ctx.env?.DB || getD1Database();
+    const hooks = await d1All('SELECT id, workspace_id, name, url, events, status, created_at FROM webhooks WHERE workspace_id = ?', [workspaceId], d1);
     return ctx.json({
       data: hooks.map((h) => ({
         ...formatDoc(h),
@@ -17,16 +18,17 @@ const app = new Hono()
   .post('/:workspaceId', sessionMiddleware, async (ctx) => {
     const { workspaceId } = ctx.req.param();
     const { name, url, events = ['ISSUE_CREATED', 'ISSUE_UPDATED', 'ISSUE_STATUS_CHANGED'] } = await ctx.req.json();
+    const d1 = ctx.env?.DB || getD1Database();
 
     if (!name || !url) return ctx.json({ error: 'Webhook name and URL are required.' }, 400);
 
     const webhookId = randomUUID();
     const secret = `whsec_${randomUUID().replace(/-/g, '')}`;
 
-    db.prepare(`
+    await d1Run(`
       INSERT INTO webhooks (id, workspace_id, name, url, events, secret, status)
       VALUES (?, ?, ?, ?, ?, ?, 'ACTIVE')
-    `).run(webhookId, workspaceId, name, url, JSON.stringify(events), secret);
+    `, [webhookId, workspaceId, name, url, JSON.stringify(events), secret], d1);
 
     return ctx.json({
       success: true,
@@ -41,14 +43,15 @@ const app = new Hono()
   })
   .post('/:webhookId/test', sessionMiddleware, async (ctx) => {
     const { webhookId } = ctx.req.param();
-    const hook = db.prepare('SELECT * FROM webhooks WHERE id = ?').get(webhookId);
+    const d1 = ctx.env?.DB || getD1Database();
+    const hook = await d1First('SELECT * FROM webhooks WHERE id = ?', [webhookId], d1);
     if (!hook) return ctx.json({ error: 'Webhook not found.' }, 404);
 
     const deliveryId = randomUUID();
-    db.prepare(`
+    await d1Run(`
       INSERT INTO webhook_deliveries (id, webhook_id, event, status, response_code, payload)
-      VALUES (?, ?, 'PING_TEST', 'SUCCESS', 200, '{"event":"PING_TEST","timestamp":"${new Date().toISOString()}"}')
-    `).run(deliveryId, webhookId);
+      VALUES (?, ?, 'PING_TEST', 'SUCCESS', 200, ?)
+    `, [deliveryId, webhookId, JSON.stringify({ event: 'PING_TEST', timestamp: new Date().toISOString() })], d1);
 
     return ctx.json({ success: true, deliveryId, status: 'SUCCESS', responseCode: 200 });
   });
