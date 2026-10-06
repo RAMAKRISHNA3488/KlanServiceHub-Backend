@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import { sessionMiddleware } from '../../../lib/session-middleware.js';
-import { db, formatDoc } from '../../../db.js';
+import { db, formatDoc, d1All } from '../../../db.js';
 import { hasPermission } from '../../../lib/permissions.js';
 
 const app = new Hono()
@@ -11,7 +11,7 @@ const app = new Hono()
     const entityType = ctx.req.query('entityType');
     const search = ctx.req.query('search');
 
-    if (!hasPermission({ workspaceId, userId: actor.$id, permissionCode: 'AUDIT_VIEW' })) {
+    if (!await hasPermission({ workspaceId, userId: actor.$id, permissionCode: 'AUDIT_VIEW' })) {
       return ctx.json({ error: 'Forbidden: Missing AUDIT_VIEW permission.' }, 403);
     }
 
@@ -35,7 +35,7 @@ const app = new Hono()
 
     query += ' ORDER BY created_at DESC LIMIT 100';
 
-    const logs = db.prepare(query).all(...params);
+    const logs = await d1All(query, params);
 
     return ctx.json({ data: logs.map(formatDoc) });
   })
@@ -43,11 +43,11 @@ const app = new Hono()
     const actor = ctx.get('user');
     const { workspaceId } = ctx.req.param();
 
-    if (!hasPermission({ workspaceId, userId: actor.$id, permissionCode: 'AUDIT_VIEW' })) {
+    if (!await hasPermission({ workspaceId, userId: actor.$id, permissionCode: 'AUDIT_VIEW' })) {
       return ctx.json({ error: 'Forbidden: Missing AUDIT_VIEW permission.' }, 403);
     }
 
-    const logs = db.prepare('SELECT * FROM audit_logs WHERE workspace_id = ? ORDER BY created_at DESC').all(workspaceId);
+    const logs = await d1All('SELECT * FROM audit_logs WHERE workspace_id = ? ORDER BY created_at DESC', [workspaceId]);
 
     // Generate CSV string
     const headers = ['ID', 'Timestamp', 'Actor Name', 'Action', 'Entity Type', 'Entity ID', 'IP Address', 'Details'];

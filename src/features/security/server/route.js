@@ -1,16 +1,16 @@
 import { Hono } from 'hono';
 import { sessionMiddleware } from '../../../lib/session-middleware.js';
-import { db, formatDoc, logAudit } from '../../../db.js';
+import { db, formatDoc, logAudit, d1All, d1First, d1Run } from '../../../db.js';
 import { hasPermission } from '../../../lib/permissions.js';
 
 const app = new Hono()
   .get('/:workspaceId', sessionMiddleware, async (ctx) => {
     const { workspaceId } = ctx.req.param();
 
-    const policy = db.prepare('SELECT * FROM security_policies WHERE workspace_id = ?').get(workspaceId);
+    const policy = await d1First('SELECT * FROM security_policies WHERE workspace_id = ?', [workspaceId]);
 
     // Fetch active user sessions belonging to workspace users
-    const sessions = db.prepare(`
+    const sessions = await d1All(`
       SELECT 
         s.id, s.user_id, s.ip_address, s.user_agent, s.device_info, s.created_at, s.expires_at,
         u.name as user_name, u.email as user_email, u.avatar_url
@@ -20,7 +20,7 @@ const app = new Hono()
       WHERE m.workspace_id = ?
       ORDER BY s.created_at DESC
       LIMIT 50
-    `).all(workspaceId);
+    `, [workspaceId]);
 
     return ctx.json({
       data: {
@@ -43,7 +43,7 @@ const app = new Hono()
     const { workspaceId } = ctx.req.param();
     const body = await ctx.req.json();
 
-    if (!hasPermission({ workspaceId, userId: actor.$id, permissionCode: 'SECURITY_MANAGE' })) {
+    if (!await hasPermission({ workspaceId, userId: actor.$id, permissionCode: 'SECURITY_MANAGE' })) {
       return ctx.json({ error: 'Forbidden: Missing SECURITY_MANAGE permission.' }, 403);
     }
 
@@ -58,11 +58,11 @@ const app = new Hono()
       ssoProvider = '',
     } = body;
 
-    db.prepare(`
+    await d1Run(`
       INSERT OR REPLACE INTO security_policies 
       (workspace_id, min_password_length, require_special_char, require_numbers, session_timeout_mins, mfa_required, ip_allowlist, sso_enabled, sso_provider, updated_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-    `).run(
+    `, [
       workspaceId,
       minPasswordLength,
       requireSpecialChar ? 1 : 0,
@@ -72,7 +72,7 @@ const app = new Hono()
       ipAllowlist,
       ssoEnabled ? 1 : 0,
       ssoProvider
-    );
+    ]);
 
     logAudit({
       workspaceId,
@@ -90,14 +90,14 @@ const app = new Hono()
     const actor = ctx.get('user');
     const { workspaceId, sessionId } = ctx.req.param();
 
-    if (!hasPermission({ workspaceId, userId: actor.$id, permissionCode: 'SECURITY_MANAGE' })) {
+    if (!await hasPermission({ workspaceId, userId: actor.$id, permissionCode: 'SECURITY_MANAGE' })) {
       return ctx.json({ error: 'Forbidden: Missing SECURITY_MANAGE permission.' }, 403);
     }
 
-    const session = db.prepare('SELECT user_id FROM sessions WHERE id = ?').get(sessionId);
+    const session = await d1First('SELECT user_id FROM sessions WHERE id = ?', [sessionId]);
     if (!session) return ctx.json({ error: 'Session not found.' }, 404);
 
-    db.prepare('DELETE FROM sessions WHERE id = ?').run(sessionId);
+    await d1Run('DELETE FROM sessions WHERE id = ?', [sessionId]);
 
     logAudit({
       workspaceId,

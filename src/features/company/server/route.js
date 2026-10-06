@@ -2,7 +2,7 @@ import { Hono } from 'hono';
 import bcrypt from 'bcryptjs';
 import { randomUUID } from 'node:crypto';
 import { sessionMiddleware } from '../../../lib/session-middleware.js';
-import { db, formatDoc, logAudit, ensureWorkspaceDefaults, getD1Database } from '../../../db.js';
+import { db, d1All, d1First, d1Run, formatDoc, logAudit, ensureWorkspaceDefaults, getD1Database } from '../../../db.js';
 import { hasPermission, getUserPermissions } from '../../../lib/permissions.js';
 
 const app = new Hono()
@@ -17,49 +17,32 @@ const app = new Hono()
     const inviteCode = randomUUID().substring(0, 8).toUpperCase();
     const slug = domainSlug || name.toLowerCase().replace(/[^a-z0-9]/g, '-');
 
-    if (d1) {
-      try {
-        await d1.prepare(`
-          INSERT INTO workspaces (id, name, user_id, invite_code, domain_slug, industry, company_size, country, status)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'ACTIVE')
-        `).bind(workspaceId, name, user.$id, inviteCode, slug, industry, companySize, country).run();
-
-        await d1.prepare(`
-          INSERT INTO members (id, workspace_id, user_id, role, status, organization_role)
-          VALUES (?, ?, ?, 'ADMIN', 'ACTIVE', 'COMPANY_OWNER')
-        `).bind(randomUUID(), workspaceId, user.$id).run();
-      } catch (e) {}
-    }
-
-    db.prepare(`
+    await d1Run(`
       INSERT INTO workspaces (id, name, user_id, invite_code, domain_slug, industry, company_size, country, status)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'ACTIVE')
-    `).run(workspaceId, name, user.$id, inviteCode, slug, industry, companySize, country);
+    `, [workspaceId, name, user.$id, inviteCode, slug, industry, companySize, country], d1);
 
-    db.prepare(`
+    await d1Run(`
       INSERT INTO members (id, workspace_id, user_id, role, status, organization_role)
       VALUES (?, ?, ?, 'ADMIN', 'ACTIVE', 'COMPANY_OWNER')
-    `).run(randomUUID(), workspaceId, user.$id);
+    `, [randomUUID(), workspaceId, user.$id], d1);
 
-    ensureWorkspaceDefaults(workspaceId, user.$id);
+    ensureWorkspaceDefaults(workspaceId, user.$id, d1);
 
     // Update user's onboarding status
-    if (d1) {
-      try {
-        await d1.prepare("UPDATE users SET onboarding_status = 'ORGANIZATION_CREATED' WHERE id = ?").bind(user.$id).run();
-      } catch (e) {}
-    }
-    db.prepare("UPDATE users SET onboarding_status = 'ORGANIZATION_CREATED' WHERE id = ?").run(user.$id);
+    await d1Run("UPDATE users SET onboarding_status = 'ORGANIZATION_CREATED' WHERE id = ?", [user.$id], d1);
 
-    logAudit({
-      workspaceId,
-      actorId: user.$id,
-      actorName: user.name,
-      action: 'CREATE_ORGANIZATION',
-      entityType: 'COMPANY',
-      entityId: workspaceId,
-      details: { name, slug, industry },
-    });
+    try {
+      logAudit({
+        workspaceId,
+        actorId: user.$id,
+        actorName: user.name,
+        action: 'CREATE_ORGANIZATION',
+        entityType: 'COMPANY',
+        entityId: workspaceId,
+        details: { name, slug, industry },
+      });
+    } catch (e) {}
 
     return ctx.json({
       data: {
@@ -76,55 +59,29 @@ const app = new Hono()
     const { workspaceId } = ctx.req.param();
     const d1 = ctx.env?.DB || getD1Database();
 
-    ensureWorkspaceDefaults(workspaceId, user.$id);
+    ensureWorkspaceDefaults(workspaceId, user.$id, d1);
 
-    let workspace = null;
-    if (d1) {
-      try {
-        workspace = await d1.prepare('SELECT * FROM workspaces WHERE id = ?').bind(workspaceId).first();
-      } catch (e) {}
-    }
-    if (!workspace) {
-      workspace = db.prepare('SELECT * FROM workspaces WHERE id = ?').get(workspaceId);
-    }
-
+    const workspace = await d1First('SELECT * FROM workspaces WHERE id = ?', [workspaceId], d1);
     if (!workspace) {
       return ctx.json({ error: 'Company not found.' }, 404);
     }
 
-    let member = null;
-    if (d1) {
-      try {
-        member = await d1.prepare('SELECT * FROM members WHERE workspace_id = ? AND user_id = ?').bind(workspaceId, user.$id).first();
-      } catch (e) {}
-    }
-    if (!member) {
-      member = db.prepare('SELECT * FROM members WHERE workspace_id = ? AND user_id = ?').get(workspaceId, user.$id);
-    }
-
+    const member = await d1First('SELECT * FROM members WHERE workspace_id = ? AND user_id = ?', [workspaceId, user.$id], d1);
     if (!member && workspace.user_id !== user.$id) {
       return ctx.json({ error: 'Unauthorized.' }, 401);
     }
 
-    let owner = null;
-    if (d1) {
-      try {
-        owner = await d1.prepare('SELECT id, name, email, avatar_url FROM users WHERE id = ?').bind(workspace.user_id).first();
-      } catch (e) {}
-    }
-    if (!owner) {
-      owner = db.prepare('SELECT id, name, email, avatar_url FROM users WHERE id = ?').get(workspace.user_id);
-    }
-    const permissions = getUserPermissions({ workspaceId, userId: user.$id });
+    const owner = await d1First('SELECT id, name, email, avatar_url FROM users WHERE id = ?', [workspace.user_id], d1);
+    const permissions = await getUserPermissions({ workspaceId, userId: user.$id }, d1);
     const isOwner = workspace.user_id === user.$id;
 
     // Company Stats
-    const userCount = db.prepare('SELECT COUNT(*) as c FROM members WHERE workspace_id = ?').get(workspaceId).c;
-    const projectCount = db.prepare('SELECT COUNT(*) as c FROM projects WHERE workspace_id = ?').get(workspaceId).c;
-    const taskCount = db.prepare('SELECT COUNT(*) as c FROM tasks WHERE workspace_id = ?').get(workspaceId).c;
-    const teamCount = db.prepare('SELECT COUNT(*) as c FROM teams WHERE workspace_id = ?').get(workspaceId).c;
+    const userCount = (await d1First('SELECT COUNT(*) as c FROM members WHERE workspace_id = ?', [workspaceId], d1))?.c || 0;
+    const projectCount = (await d1First('SELECT COUNT(*) as c FROM projects WHERE workspace_id = ?', [workspaceId], d1))?.c || 0;
+    const taskCount = (await d1First('SELECT COUNT(*) as c FROM tasks WHERE workspace_id = ?', [workspaceId], d1))?.c || 0;
+    const teamCount = (await d1First('SELECT COUNT(*) as c FROM teams WHERE workspace_id = ?', [workspaceId], d1))?.c || 0;
 
-    const subscription = db.prepare('SELECT * FROM subscriptions WHERE workspace_id = ?').get(workspaceId);
+    const subscription = await d1First('SELECT * FROM subscriptions WHERE workspace_id = ?', [workspaceId], d1);
 
     return ctx.json({
       data: {
@@ -145,30 +102,34 @@ const app = new Hono()
   .get('/:workspaceId/permissions', sessionMiddleware, async (ctx) => {
     const user = ctx.get('user');
     const { workspaceId } = ctx.req.param();
+    const d1 = ctx.env?.DB || getD1Database();
 
-    const workspace = db.prepare('SELECT user_id FROM workspaces WHERE id = ?').get(workspaceId);
+    const workspace = await d1First('SELECT user_id FROM workspaces WHERE id = ?', [workspaceId], d1);
     if (!workspace) return ctx.json({ error: 'Company not found.' }, 404);
 
     const isOwner = workspace.user_id === user.$id;
-    const permissions = getUserPermissions({ workspaceId, userId: user.$id });
+    const permissions = await getUserPermissions({ workspaceId, userId: user.$id }, d1);
+    const allPermissions = await d1All('SELECT * FROM permissions ORDER BY category, code', [], d1);
 
     return ctx.json({
       isOwner,
       permissions,
-      allPermissions: db.prepare('SELECT * FROM permissions ORDER BY category, code').all(),
+      allPermissions,
     });
   })
   .patch('/:workspaceId', sessionMiddleware, async (ctx) => {
     const user = ctx.get('user');
     const { workspaceId } = ctx.req.param();
     const body = await ctx.req.json();
+    const d1 = ctx.env?.DB || getD1Database();
 
-    const workspace = db.prepare('SELECT * FROM workspaces WHERE id = ?').get(workspaceId);
+    const workspace = await d1First('SELECT * FROM workspaces WHERE id = ?', [workspaceId], d1);
     if (!workspace) {
       return ctx.json({ error: 'Company not found.' }, 404);
     }
 
-    if (!hasPermission({ workspaceId, userId: user.$id, permissionCode: 'COMPANY_SETTINGS_MANAGE' })) {
+    const allowed = await hasPermission({ workspaceId, userId: user.$id, permissionCode: 'COMPANY_SETTINGS_MANAGE' }, d1);
+    if (!allowed) {
       return ctx.json({ error: 'Forbidden: Missing COMPANY_SETTINGS_MANAGE permission.' }, 403);
     }
 
@@ -189,65 +150,70 @@ const app = new Hono()
       country = workspace.country,
     } = body;
 
-    db.prepare(`
+    await d1Run(`
       UPDATE workspaces 
       SET name = ?, description = ?, website = ?, email = ?, phone = ?, 
           address = ?, timezone = ?, language = ?, date_format = ?, currency = ?, 
           image_url = ?, industry = ?, company_size = ?, country = ?, updated_at = CURRENT_TIMESTAMP
       WHERE id = ?
-    `).run(name, description, website, email, phone, address, timezone, language, date_format, currency, image_url, industry, company_size, country, workspaceId);
+    `, [name, description, website, email, phone, address, timezone, language, date_format, currency, image_url, industry, company_size, country, workspaceId], d1);
 
-    logAudit({
-      workspaceId,
-      actorId: user.$id,
-      actorName: user.name,
-      action: 'UPDATE_COMPANY_PROFILE',
-      entityType: 'COMPANY',
-      entityId: workspaceId,
-      details: { name, website, email, timezone, language },
-    });
+    try {
+      logAudit({
+        workspaceId,
+        actorId: user.$id,
+        actorName: user.name,
+        action: 'UPDATE_COMPANY_PROFILE',
+        entityType: 'COMPANY',
+        entityId: workspaceId,
+        details: { name, website, email, timezone, language },
+      });
+    } catch (e) {}
 
-    const updated = db.prepare('SELECT * FROM workspaces WHERE id = ?').get(workspaceId);
+    const updated = await d1First('SELECT * FROM workspaces WHERE id = ?', [workspaceId], d1);
     return ctx.json({ data: formatDoc(updated) });
   })
   .post('/:workspaceId/transfer-ownership', sessionMiddleware, async (ctx) => {
     const user = ctx.get('user');
     const { workspaceId } = ctx.req.param();
     const { newOwnerUserId, password } = await ctx.req.json();
+    const d1 = ctx.env?.DB || getD1Database();
 
-    const workspace = db.prepare('SELECT * FROM workspaces WHERE id = ?').get(workspaceId);
+    const workspace = await d1First('SELECT * FROM workspaces WHERE id = ?', [workspaceId], d1);
     if (!workspace) return ctx.json({ error: 'Company not found.' }, 404);
 
     if (workspace.user_id !== user.$id) {
       return ctx.json({ error: 'Forbidden: Only current Company Owner can transfer ownership.' }, 403);
     }
 
-    const currentUser = db.prepare('SELECT * FROM users WHERE id = ?').get(user.$id);
+    const currentUser = await d1First('SELECT * FROM users WHERE id = ?', [user.$id], d1);
     if (!password || !bcrypt.compareSync(password, currentUser.password_hash)) {
       return ctx.json({ error: 'Invalid password. Please re-enter your password to authorize transfer.' }, 400);
     }
 
-    const targetUser = db.prepare('SELECT * FROM users WHERE id = ?').get(newOwnerUserId);
+    const targetUser = await d1First('SELECT * FROM users WHERE id = ?', [newOwnerUserId], d1);
     if (!targetUser) return ctx.json({ error: 'Target user not found.' }, 404);
 
     // 1. Update workspace owner
-    db.prepare('UPDATE workspaces SET user_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(newOwnerUserId, workspaceId);
+    await d1Run('UPDATE workspaces SET user_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [newOwnerUserId, workspaceId], d1);
 
     // 2. Update new owner role to COMPANY_OWNER
-    db.prepare("UPDATE members SET organization_role = 'COMPANY_OWNER', role = 'ADMIN' WHERE workspace_id = ? AND user_id = ?").run(workspaceId, newOwnerUserId);
+    await d1Run("UPDATE members SET organization_role = 'COMPANY_OWNER', role = 'ADMIN' WHERE workspace_id = ? AND user_id = ?", [workspaceId, newOwnerUserId], d1);
 
     // 3. Update old owner role to COMPANY_ADMIN
-    db.prepare("UPDATE members SET organization_role = 'COMPANY_ADMIN', role = 'ADMIN' WHERE workspace_id = ? AND user_id = ?").run(workspaceId, user.$id);
+    await d1Run("UPDATE members SET organization_role = 'COMPANY_ADMIN', role = 'ADMIN' WHERE workspace_id = ? AND user_id = ?", [workspaceId, user.$id], d1);
 
-    logAudit({
-      workspaceId,
-      actorId: user.$id,
-      actorName: user.name,
-      action: 'TRANSFER_COMPANY_OWNERSHIP',
-      entityType: 'COMPANY',
-      entityId: workspaceId,
-      details: `Transferred ownership from ${user.name} to ${targetUser.name} (${targetUser.email})`,
-    });
+    try {
+      logAudit({
+        workspaceId,
+        actorId: user.$id,
+        actorName: user.name,
+        action: 'TRANSFER_COMPANY_OWNERSHIP',
+        entityType: 'COMPANY',
+        entityId: workspaceId,
+        details: `Transferred ownership from ${user.name} to ${targetUser.name} (${targetUser.email})`,
+      });
+    } catch (e) {}
 
     return ctx.json({ success: true, newOwnerId: newOwnerUserId, newOwnerName: targetUser.name });
   })
@@ -255,36 +221,40 @@ const app = new Hono()
     const user = ctx.get('user');
     const { workspaceId } = ctx.req.param();
     const { status } = await ctx.req.json();
+    const d1 = ctx.env?.DB || getD1Database();
 
-    const workspace = db.prepare('SELECT * FROM workspaces WHERE id = ?').get(workspaceId);
+    const workspace = await d1First('SELECT * FROM workspaces WHERE id = ?', [workspaceId], d1);
     if (!workspace) return ctx.json({ error: 'Company not found.' }, 404);
 
     if (workspace.user_id !== user.$id) {
       return ctx.json({ error: 'Forbidden: Only the Company Owner can change company status.' }, 403);
     }
 
-    db.prepare('UPDATE workspaces SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(status, workspaceId);
+    await d1Run('UPDATE workspaces SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [status, workspaceId], d1);
 
-    logAudit({
-      workspaceId,
-      actorId: user.$id,
-      actorName: user.name,
-      action: 'UPDATE_COMPANY_STATUS',
-      entityType: 'COMPANY',
-      entityId: workspaceId,
-      details: `Company status changed to ${status}`,
-    });
+    try {
+      logAudit({
+        workspaceId,
+        actorId: user.$id,
+        actorName: user.name,
+        action: 'UPDATE_COMPANY_STATUS',
+        entityType: 'COMPANY',
+        entityId: workspaceId,
+        details: `Company status changed to ${status}`,
+      });
+    } catch (e) {}
 
     return ctx.json({ success: true, status });
   })
   .delete('/:workspaceId', sessionMiddleware, async (ctx) => {
     const user = ctx.get('user');
     const { workspaceId } = ctx.req.param();
+    const d1 = ctx.env?.DB || getD1Database();
 
-    const workspace = db.prepare('SELECT * FROM workspaces WHERE id = ?').get(workspaceId);
+    const workspace = await d1First('SELECT * FROM workspaces WHERE id = ?', [workspaceId], d1);
     if (!workspace) return ctx.json({ error: 'Company not found.' }, 404);
 
-    const member = db.prepare('SELECT * FROM members WHERE workspace_id = ? AND user_id = ?').get(workspaceId, user.$id);
+    const member = await d1First('SELECT * FROM members WHERE workspace_id = ? AND user_id = ?', [workspaceId, user.$id], d1);
     const isOwner = workspace.user_id === user.$id;
     const isAdmin = member && (
       member.role === 'ADMIN' ||
@@ -316,11 +286,11 @@ const app = new Hono()
 
     for (const table of tablesToClean) {
       try {
-        db.prepare(`DELETE FROM ${table} WHERE workspace_id = ?`).run(workspaceId);
+        await d1Run(`DELETE FROM ${table} WHERE workspace_id = ?`, [workspaceId], d1);
       } catch (e) {}
     }
 
-    db.prepare('DELETE FROM workspaces WHERE id = ?').run(workspaceId);
+    await d1Run('DELETE FROM workspaces WHERE id = ?', [workspaceId], d1);
     return ctx.json({ data: { id: workspaceId, $id: workspaceId, success: true } });
   });
 

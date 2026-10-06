@@ -1,28 +1,28 @@
 import { Hono } from 'hono';
 import { sessionMiddleware } from '../../../lib/session-middleware.js';
-import { db, formatDoc } from '../../../db.js';
+import { db, formatDoc, d1All, d1First, d1Run } from '../../../db.js';
 import { hasPermission } from '../../../lib/permissions.js';
 
 const app = new Hono();
 
 // Helper: Authorize workspace & check report permission
-function checkAccess(ctx, workspaceId) {
+async function checkAccess(ctx, workspaceId) {
   const user = ctx.get('user');
   if (!user) return { allowed: false, error: 'Unauthorized', status: 401 };
 
-  const workspace = db.prepare('SELECT * FROM workspaces WHERE id = ?').get(workspaceId);
+  const workspace = await d1First('SELECT * FROM workspaces WHERE id = ?', [workspaceId]);
   if (!workspace) return { allowed: false, error: 'Workspace not found', status: 404 };
 
   const isOwner = workspace.user_id === user.$id;
-  const member = db.prepare('SELECT * FROM members WHERE workspace_id = ? AND user_id = ?').get(workspaceId, user.$id);
+  const member = await d1First('SELECT * FROM members WHERE workspace_id = ? AND user_id = ?', [workspaceId, user.$id]);
 
   if (!isOwner && (!member || member.status === 'SUSPENDED')) {
     return { allowed: false, error: 'Access denied to this workspace', status: 403 };
   }
 
   // Check RBAC permission if applicable
-  const canViewReports = hasPermission({ workspaceId, userId: user.$id, permissionCode: 'REPORT_VIEW' });
-  if (!isOwner && member.role !== 'ADMIN' && !canViewReports) {
+  const canViewReports = await hasPermission({ workspaceId, userId: user.$id, permissionCode: 'REPORT_VIEW' });
+  if (!isOwner && member?.role !== 'ADMIN' && !canViewReports) {
     // Member access is allowed by default if they belong to the organization, but permissions are respected
   }
 
@@ -150,25 +150,29 @@ function buildTaskFilter(query, workspaceId, tableAlias = 't') {
 app.get('/:workspaceId/overview', sessionMiddleware, async (ctx) => {
   const { workspaceId } = ctx.req.param();
   const query = ctx.req.query();
-  const auth = checkAccess(ctx, workspaceId);
+  const auth = await checkAccess(ctx, workspaceId);
   if (!auth.allowed) return ctx.json({ error: auth.error }, auth.status);
 
   const { whereSql, params } = buildTaskFilter(query, workspaceId, 't');
 
   // Total projects in workspace
-  const totalProjects = db.prepare('SELECT COUNT(*) as c FROM projects WHERE workspace_id = ? AND is_archived = 0').get(workspaceId)?.c ?? 0;
-  const activeProjects = db.prepare(`
+  const totalProjectsRow = await d1First('SELECT COUNT(*) as c FROM projects WHERE workspace_id = ? AND is_archived = 0', [workspaceId]);
+  const totalProjects = totalProjectsRow?.c ?? 0;
+  const activeProjectsRow = await d1First(`
     SELECT COUNT(DISTINCT p.id) as c FROM projects p
     JOIN tasks t ON p.id = t.project_id
     WHERE p.workspace_id = ? AND p.is_archived = 0 AND t.status NOT IN ${TERMINAL_STATUSES}
-  `).get(workspaceId)?.c ?? 0;
+  `, [workspaceId]);
+  const activeProjects = activeProjectsRow?.c ?? 0;
 
   // Total teams & members
-  const totalTeams = db.prepare('SELECT COUNT(*) as c FROM teams WHERE workspace_id = ?').get(workspaceId)?.c ?? 0;
-  const totalMembers = db.prepare("SELECT COUNT(*) as c FROM members WHERE workspace_id = ? AND status = 'ACTIVE'").get(workspaceId)?.c ?? 0;
+  const totalTeamsRow = await d1First('SELECT COUNT(*) as c FROM teams WHERE workspace_id = ?', [workspaceId]);
+  const totalTeams = totalTeamsRow?.c ?? 0;
+  const totalMembersRow = await d1First("SELECT COUNT(*) as c FROM members WHERE workspace_id = ? AND status = 'ACTIVE'", [workspaceId]);
+  const totalMembers = totalMembersRow?.c ?? 0;
 
   // Filtered task counts
-  const kpiStats = db.prepare(`
+  const kpiStats = await d1First(`
     SELECT 
       COUNT(*) as total_work_items,
       SUM(CASE WHEN t.status IN ('TODO', 'BACKLOG', 'To Do', 'Backlog') THEN 1 ELSE 0 END) as open_items,
@@ -180,7 +184,7 @@ app.get('/:workspaceId/overview', sessionMiddleware, async (ctx) => {
       COALESCE(SUM(CASE WHEN t.status IN ${COMPLETED_STATUSES} THEN t.story_points ELSE 0 END), 0) as completed_story_points
     FROM tasks t
     WHERE ${whereSql}
-  `).get(...params);
+  `, params);
 
   const total = kpiStats?.total_work_items || 0;
   const completed = kpiStats?.completed_items || 0;
@@ -209,17 +213,17 @@ app.get('/:workspaceId/overview', sessionMiddleware, async (ctx) => {
 app.get('/:workspaceId/status', sessionMiddleware, async (ctx) => {
   const { workspaceId } = ctx.req.param();
   const query = ctx.req.query();
-  const auth = checkAccess(ctx, workspaceId);
+  const auth = await checkAccess(ctx, workspaceId);
   if (!auth.allowed) return ctx.json({ error: auth.error }, auth.status);
 
   const { whereSql, params } = buildTaskFilter(query, workspaceId, 't');
 
-  const rows = db.prepare(`
+  const rows = await d1All(`
     SELECT t.status, COUNT(*) as count
     FROM tasks t
     WHERE ${whereSql}
     GROUP BY t.status
-  `).all(...params);
+  `, params);
 
   let todoCount = 0;
   let inProgressCount = 0;
@@ -272,17 +276,17 @@ app.get('/:workspaceId/status', sessionMiddleware, async (ctx) => {
 app.get('/:workspaceId/work-types', sessionMiddleware, async (ctx) => {
   const { workspaceId } = ctx.req.param();
   const query = ctx.req.query();
-  const auth = checkAccess(ctx, workspaceId);
+  const auth = await checkAccess(ctx, workspaceId);
   if (!auth.allowed) return ctx.json({ error: auth.error }, auth.status);
 
   const { whereSql, params } = buildTaskFilter(query, workspaceId, 't');
 
-  const rows = db.prepare(`
+  const rows = await d1All(`
     SELECT t.issue_type, COUNT(*) as count
     FROM tasks t
     WHERE ${whereSql}
     GROUP BY t.issue_type
-  `).all(...params);
+  `, params);
 
   const standardTypes = [
     { type: 'Epic', icon: 'zap', color: '#9333EA' },
@@ -301,12 +305,12 @@ app.get('/:workspaceId/work-types', sessionMiddleware, async (ctx) => {
   }
 
   // Calculate trends vs previous 30-day period
-  const prevRows = db.prepare(`
+  const prevRows = await d1All(`
     SELECT t.issue_type, COUNT(*) as count
     FROM tasks t
     WHERE t.workspace_id = ? AND datetime(t.created_at) >= datetime('now', '-60 days') AND datetime(t.created_at) < datetime('now', '-30 days')
     GROUP BY t.issue_type
-  `).all(workspaceId);
+  `, [workspaceId]);
 
   const prevTypeMap = new Map();
   for (const pr of prevRows) {
@@ -344,17 +348,17 @@ app.get('/:workspaceId/work-types', sessionMiddleware, async (ctx) => {
 app.get('/:workspaceId/priorities', sessionMiddleware, async (ctx) => {
   const { workspaceId } = ctx.req.param();
   const query = ctx.req.query();
-  const auth = checkAccess(ctx, workspaceId);
+  const auth = await checkAccess(ctx, workspaceId);
   if (!auth.allowed) return ctx.json({ error: auth.error }, auth.status);
 
   const { whereSql, params } = buildTaskFilter(query, workspaceId, 't');
 
-  const rows = db.prepare(`
+  const rows = await d1All(`
     SELECT t.priority, COUNT(*) as count
     FROM tasks t
     WHERE ${whereSql}
     GROUP BY t.priority
-  `).all(...params);
+  `, params);
 
   const priorities = [
     { priority: 'Critical', count: 0, color: '#E11D48', icon: 'flame' },
@@ -382,20 +386,22 @@ app.get('/:workspaceId/priorities', sessionMiddleware, async (ctx) => {
   });
 
   // Highest priority unresolved & high priority overdue
-  const highestUnresolved = db.prepare(`
+  const highestUnresolvedRow = await d1First(`
     SELECT COUNT(*) as c FROM tasks t
     WHERE ${whereSql} AND t.priority IN ('HIGHEST', 'CRITICAL') AND t.status NOT IN ${TERMINAL_STATUSES}
-  `).get(...params).c;
+  `, params);
+  const highestUnresolved = highestUnresolvedRow?.c || 0;
 
-  const highOverdue = db.prepare(`
+  const highOverdueRow = await d1First(`
     SELECT COUNT(*) as c FROM tasks t
     WHERE ${whereSql} AND t.priority IN ('HIGHEST', 'CRITICAL', 'HIGH') 
       AND datetime(t.due_date) < datetime('now') 
       AND t.status NOT IN ${TERMINAL_STATUSES}
-  `).get(...params).c;
+  `, params);
+  const highOverdue = highOverdueRow?.c || 0;
 
   // Priority distribution by Project
-  const byProject = db.prepare(`
+  const byProject = await d1All(`
     SELECT p.id, p.name, p.key,
       SUM(CASE WHEN t.priority IN ('HIGHEST', 'CRITICAL') THEN 1 ELSE 0 END) as highest,
       SUM(CASE WHEN t.priority = 'HIGH' THEN 1 ELSE 0 END) as high,
@@ -408,7 +414,7 @@ app.get('/:workspaceId/priorities', sessionMiddleware, async (ctx) => {
     GROUP BY p.id
     ORDER BY highest DESC, high DESC
     LIMIT 10
-  `).all(workspaceId);
+  `, [workspaceId]);
 
   return ctx.json({
     data: {

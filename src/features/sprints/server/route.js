@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { randomUUID } from 'node:crypto';
 import { sessionMiddleware } from '../../../lib/session-middleware.js';
-import { db, formatDoc, logAudit, triggerAutomations } from '../../../db.js';
+import { db, formatDoc, logAudit, triggerAutomations, d1All, d1First, d1Run } from '../../../db.js';
 import { hasPermission } from '../../../lib/permissions.js';
 
 const app = new Hono()
@@ -17,30 +17,32 @@ const app = new Hono()
     }
     query += ' ORDER BY created_at DESC';
 
-    const sprints = db.prepare(query).all(...params);
+    const sprints = await d1All(query, params);
 
-    const sprintsWithTasks = sprints.map((sprint) => {
-      const tasks = db.prepare(`
-        SELECT t.*, p.name as project_name, u.name as assignee_name, u.avatar_url as assignee_avatar
-        FROM tasks t
-        LEFT JOIN projects p ON t.project_id = p.id
-        LEFT JOIN members m ON t.assignee_id = m.id
-        LEFT JOIN users u ON m.user_id = u.id
-        WHERE t.sprint_id = ?
-        ORDER BY t.position ASC
-      `).all(sprint.id);
+    const sprintsWithTasks = await Promise.all(
+      sprints.map(async (sprint) => {
+        const tasks = await d1All(`
+          SELECT t.*, p.name as project_name, u.name as assignee_name, u.avatar_url as assignee_avatar
+          FROM tasks t
+          LEFT JOIN projects p ON t.project_id = p.id
+          LEFT JOIN members m ON t.assignee_id = m.id
+          LEFT JOIN users u ON m.user_id = u.id
+          WHERE t.sprint_id = ?
+          ORDER BY t.position ASC
+        `, [sprint.id]);
 
-      const totalPoints = tasks.length;
-      const completedPoints = tasks.filter((t) => t.status === 'DONE').length;
+        const totalPoints = tasks.length;
+        const completedPoints = tasks.filter((t) => t.status === 'DONE').length;
 
-      return {
-        ...formatDoc(sprint),
-        tasks: tasks.map(formatDoc),
-        taskCount: tasks.length,
-        completedCount: completedPoints,
-        progressPercent: totalPoints > 0 ? Math.round((completedPoints / totalPoints) * 100) : 0,
-      };
-    });
+        return {
+          ...formatDoc(sprint),
+          tasks: tasks.map(formatDoc),
+          taskCount: tasks.length,
+          completedCount: completedPoints,
+          progressPercent: totalPoints > 0 ? Math.round((completedPoints / totalPoints) * 100) : 0,
+        };
+      })
+    );
 
     // Backlog tasks (no sprint_id)
     let backlogQuery = `
@@ -58,7 +60,8 @@ const app = new Hono()
     }
     backlogQuery += ' ORDER BY t.position ASC';
 
-    const backlogTasks = db.prepare(backlogQuery).all(...backlogParams).map(formatDoc);
+    const backlogRows = await d1All(backlogQuery, backlogParams);
+    const backlogTasks = backlogRows.map(formatDoc);
 
     return ctx.json({
       data: {
@@ -72,16 +75,16 @@ const app = new Hono()
     const { workspaceId } = ctx.req.param();
     const { name, goal = '', projectId = null, startDate = null, endDate = null, status = 'FUTURE' } = await ctx.req.json();
 
-    if (!hasPermission({ workspaceId, userId: actor.$id, permissionCode: 'SPRINT_MANAGE' })) {
+    if (!await hasPermission({ workspaceId, userId: actor.$id, permissionCode: 'SPRINT_MANAGE' })) {
       return ctx.json({ error: 'Forbidden: Missing SPRINT_MANAGE permission.' }, 403);
     }
 
     const sprintId = randomUUID();
     const finalStatus = (status || 'FUTURE').toUpperCase();
-    db.prepare(`
+    await d1Run(`
       INSERT INTO sprints (id, workspace_id, project_id, name, goal, start_date, end_date, status)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(sprintId, workspaceId, projectId, name, goal, startDate, endDate, finalStatus);
+    `, [sprintId, workspaceId, projectId, name, goal, startDate, endDate, finalStatus]);
 
     logAudit({
       workspaceId,
@@ -100,18 +103,18 @@ const app = new Hono()
     const { workspaceId, sprintId } = ctx.req.param();
     const { startDate, endDate } = await ctx.req.json().catch(() => ({}));
 
-    if (!hasPermission({ workspaceId, userId: actor.$id, permissionCode: 'SPRINT_MANAGE' })) {
+    if (!await hasPermission({ workspaceId, userId: actor.$id, permissionCode: 'SPRINT_MANAGE' })) {
       return ctx.json({ error: 'Forbidden: Missing SPRINT_MANAGE permission.' }, 403);
     }
 
-    db.prepare(`
+    await d1Run(`
       UPDATE sprints 
       SET status = 'ACTIVE', 
           start_date = COALESCE(?, start_date, datetime('now')),
           end_date = COALESCE(?, end_date, datetime('now', '+14 days')),
           updated_at = CURRENT_TIMESTAMP
       WHERE id = ? AND workspace_id = ?
-    `).run(startDate || null, endDate || null, sprintId, workspaceId);
+    `, [startDate || null, endDate || null, sprintId, workspaceId]);
 
     logAudit({
       workspaceId,
@@ -130,25 +133,25 @@ const app = new Hono()
     const { workspaceId, sprintId } = ctx.req.param();
     const { moveToSprintId = null } = await ctx.req.json().catch(() => ({}));
 
-    if (!hasPermission({ workspaceId, userId: actor.$id, permissionCode: 'SPRINT_MANAGE' })) {
+    if (!await hasPermission({ workspaceId, userId: actor.$id, permissionCode: 'SPRINT_MANAGE' })) {
       return ctx.json({ error: 'Forbidden: Missing SPRINT_MANAGE permission.' }, 403);
     }
 
-    db.prepare(`
+    await d1Run(`
       UPDATE sprints 
       SET status = 'CLOSED', updated_at = CURRENT_TIMESTAMP
       WHERE id = ? AND workspace_id = ?
-    `).run(sprintId, workspaceId);
+    `, [sprintId, workspaceId]);
 
     // Move incomplete tasks (status != DONE)
     if (moveToSprintId) {
-      db.prepare(`
+      await d1Run(`
         UPDATE tasks SET sprint_id = ? WHERE sprint_id = ? AND status != 'DONE'
-      `).run(moveToSprintId, sprintId);
+      `, [moveToSprintId, sprintId]);
     } else {
-      db.prepare(`
+      await d1Run(`
         UPDATE tasks SET sprint_id = NULL WHERE sprint_id = ? AND status != 'DONE'
-      `).run(sprintId);
+      `, [sprintId]);
     }
 
     logAudit({
@@ -168,12 +171,11 @@ const app = new Hono()
     const { workspaceId } = ctx.req.param();
     const { taskId, sprintId = null } = await ctx.req.json();
 
-    if (!hasPermission({ workspaceId, userId: actor.$id, permissionCode: 'ISSUE_EDIT' })) {
+    if (!await hasPermission({ workspaceId, userId: actor.$id, permissionCode: 'ISSUE_EDIT' })) {
       return ctx.json({ error: 'Forbidden.' }, 403);
     }
 
-    db.prepare('UPDATE tasks SET sprint_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND workspace_id = ?')
-      .run(sprintId, taskId, workspaceId);
+    await d1Run('UPDATE tasks SET sprint_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND workspace_id = ?', [sprintId, taskId, workspaceId]);
 
     return ctx.json({ success: true, taskId, sprintId });
   })
@@ -182,7 +184,7 @@ const app = new Hono()
     const { workspaceId, sprintId } = ctx.req.param();
     const { name, goal, startDate, endDate, status, projectId } = await ctx.req.json();
 
-    if (!hasPermission({ workspaceId, userId: actor.$id, permissionCode: 'SPRINT_MANAGE' })) {
+    if (!await hasPermission({ workspaceId, userId: actor.$id, permissionCode: 'SPRINT_MANAGE' })) {
       return ctx.json({ error: 'Forbidden: Missing SPRINT_MANAGE permission.' }, 403);
     }
 
@@ -203,11 +205,11 @@ const app = new Hono()
     updates.push('updated_at = CURRENT_TIMESTAMP');
     params.push(sprintId, workspaceId);
 
-    db.prepare(`
+    await d1Run(`
       UPDATE sprints 
       SET ${updates.join(', ')} 
       WHERE id = ? AND workspace_id = ?
-    `).run(...params);
+    `, params);
 
     logAudit({
       workspaceId,
@@ -219,24 +221,22 @@ const app = new Hono()
       details: { name, goal, status, startDate, endDate },
     });
 
-    const updated = db.prepare('SELECT * FROM sprints WHERE id = ?').get(sprintId);
+    const updated = await d1First('SELECT * FROM sprints WHERE id = ?', [sprintId]);
     return ctx.json({ data: formatDoc(updated) });
   })
   .delete('/:workspaceId/:sprintId', sessionMiddleware, async (ctx) => {
     const actor = ctx.get('user');
     const { workspaceId, sprintId } = ctx.req.param();
 
-    if (!hasPermission({ workspaceId, userId: actor.$id, permissionCode: 'SPRINT_MANAGE' })) {
+    if (!await hasPermission({ workspaceId, userId: actor.$id, permissionCode: 'SPRINT_MANAGE' })) {
       return ctx.json({ error: 'Forbidden: Missing SPRINT_MANAGE permission.' }, 403);
     }
 
     // Release all tasks back to backlog
-    db.prepare('UPDATE tasks SET sprint_id = NULL, updated_at = CURRENT_TIMESTAMP WHERE sprint_id = ? AND workspace_id = ?')
-      .run(sprintId, workspaceId);
+    await d1Run('UPDATE tasks SET sprint_id = NULL, updated_at = CURRENT_TIMESTAMP WHERE sprint_id = ? AND workspace_id = ?', [sprintId, workspaceId]);
 
     // Delete sprint
-    db.prepare('DELETE FROM sprints WHERE id = ? AND workspace_id = ?')
-      .run(sprintId, workspaceId);
+    await d1Run('DELETE FROM sprints WHERE id = ? AND workspace_id = ?', [sprintId, workspaceId]);
 
     logAudit({
       workspaceId,

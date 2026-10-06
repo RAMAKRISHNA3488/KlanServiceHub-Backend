@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { randomUUID } from 'node:crypto';
 import { sessionMiddleware } from '../../../lib/session-middleware.js';
-import { db, formatDoc, logAudit } from '../../../db.js';
+import { db, formatDoc, logAudit, d1All, d1First, d1Run } from '../../../db.js';
 
 export const SEAT_LICENSE_TIERS = {
   SOFTWARE_DEVELOPER: {
@@ -102,17 +102,17 @@ const app = new Hono()
   .get('/:workspaceId', sessionMiddleware, async (ctx) => {
     const { workspaceId } = ctx.req.param();
 
-    let sub = db.prepare('SELECT * FROM subscriptions WHERE workspace_id = ?').get(workspaceId);
+    let sub = await d1First('SELECT * FROM subscriptions WHERE workspace_id = ?', [workspaceId]);
     if (!sub) {
       const id = randomUUID();
-      db.prepare(`
+      await d1Run(`
         INSERT INTO subscriptions (id, workspace_id, plan, billing_cycle, user_limit, project_limit, storage_limit_gb, currency, status, current_period_end)
         VALUES (?, ?, 'BUSINESS', 'MONTHLY', 100, -1, 500, 'INR', 'ACTIVE', date('now', '+30 days'))
-      `).run(id, workspaceId);
-      sub = db.prepare('SELECT * FROM subscriptions WHERE workspace_id = ?').get(workspaceId);
+      `, [id, workspaceId]);
+      sub = await d1First('SELECT * FROM subscriptions WHERE workspace_id = ?', [workspaceId]);
     }
 
-    const members = db.prepare(`
+    const members = await d1All(`
       SELECT 
         m.id as member_id,
         m.workspace_id,
@@ -134,7 +134,7 @@ const app = new Hono()
       JOIN workspaces w ON m.workspace_id = w.id
       WHERE m.workspace_id = ? AND m.status = 'ACTIVE'
       ORDER BY w.user_id = u.id DESC, u.name ASC
-    `).all(workspaceId);
+    `, [workspaceId]);
 
     // Compute employee-wise license and cost
     const employeeLicenses = members.map((m) => {
@@ -207,18 +207,20 @@ const app = new Hono()
     const gstAmountInr = Math.round(totalAllocatedCostInr * (gstRatePercent / 100));
     const totalWithGstInr = totalAllocatedCostInr + gstAmountInr;
 
-    const projectCount = db.prepare('SELECT COUNT(*) as c FROM projects WHERE workspace_id = ?').get(workspaceId).c;
-    const taskCount = db.prepare('SELECT COUNT(*) as c FROM tasks WHERE workspace_id = ?').get(workspaceId).c;
+    const projCountRow = await d1First('SELECT COUNT(*) as c FROM projects WHERE workspace_id = ?', [workspaceId]);
+    const taskCountRow = await d1First('SELECT COUNT(*) as c FROM tasks WHERE workspace_id = ?', [workspaceId]);
+    const projectCount = projCountRow?.c || 0;
+    const taskCount = taskCountRow?.c || 0;
     const simulatedStorageGb = Math.max(12, Math.round(taskCount * 0.25 + projectCount * 3));
 
-    let invoices = db.prepare('SELECT * FROM invoices WHERE workspace_id = ? ORDER BY invoice_date DESC').all(workspaceId);
+    let invoices = await d1All('SELECT * FROM invoices WHERE workspace_id = ? ORDER BY invoice_date DESC', [workspaceId]);
     if (invoices.length === 0) {
       const initialInvId = randomUUID();
-      db.prepare(`
+      await d1Run(`
         INSERT INTO invoices (id, workspace_id, invoice_number, amount, currency, status, invoice_date)
         VALUES (?, ?, 'INV-2026-001', 7999.00, 'INR', 'PAID', date('now', '-5 days'))
-      `).run(initialInvId, workspaceId);
-      invoices = db.prepare('SELECT * FROM invoices WHERE workspace_id = ? ORDER BY invoice_date DESC').all(workspaceId);
+      `, [initialInvId, workspaceId]);
+      invoices = await d1All('SELECT * FROM invoices WHERE workspace_id = ? ORDER BY invoice_date DESC', [workspaceId]);
     }
 
     return ctx.json({
@@ -264,16 +266,16 @@ const app = new Hono()
       return ctx.json({ error: 'Invalid license tier specified.' }, 400);
     }
 
-    const member = db.prepare('SELECT id, user_id FROM members WHERE id = ? AND workspace_id = ?').get(memberId, workspaceId);
+    const member = await d1First('SELECT id, user_id FROM members WHERE id = ? AND workspace_id = ?', [memberId, workspaceId]);
     if (!member) {
       return ctx.json({ error: 'Member not found in workspace.' }, 404);
     }
 
-    db.prepare(`
+    await d1Run(`
       UPDATE members 
       SET license_tier = ?, monthly_cost_inr = ?
       WHERE id = ? AND workspace_id = ?
-    `).run(licenseTier, tierInfo.monthlyPriceInr, memberId, workspaceId);
+    `, [licenseTier, tierInfo.monthlyPriceInr, memberId, workspaceId]);
 
     logAudit({
       workspaceId,
@@ -305,18 +307,18 @@ const app = new Hono()
 
     const price = billingCycle === 'ANNUAL' ? tier.annualPriceInr : tier.monthlyPriceInr;
 
-    db.prepare(`
+    await d1Run(`
       UPDATE subscriptions 
       SET plan = ?, billing_cycle = ?, user_limit = ?, project_limit = ?, storage_limit_gb = ?, currency = 'INR', updated_at = CURRENT_TIMESTAMP
       WHERE workspace_id = ?
-    `).run(plan, billingCycle, tier.userLimit, tier.projectLimit, tier.storageLimitGb, workspaceId);
+    `, [plan, billingCycle, tier.userLimit, tier.projectLimit, tier.storageLimitGb, workspaceId]);
 
     // Generate new invoice in Indian Rupees
     const invNumber = `INV-${new Date().getFullYear()}-${Math.floor(100 + Math.random() * 900)}`;
-    db.prepare(`
+    await d1Run(`
       INSERT INTO invoices (id, workspace_id, invoice_number, amount, currency, status, invoice_date)
       VALUES (?, ?, ?, ?, 'INR', 'PAID', date('now'))
-    `).run(randomUUID(), workspaceId, invNumber, price);
+    `, [randomUUID(), workspaceId, invNumber, price]);
 
     logAudit({
       workspaceId,
@@ -335,7 +337,7 @@ const app = new Hono()
     const { workspaceId } = ctx.req.param();
 
     // Calculate current active members' total monthly cost
-    const members = db.prepare('SELECT monthly_cost_inr FROM members WHERE workspace_id = ? AND status = \'ACTIVE\'').all(workspaceId);
+    const members = await d1All('SELECT monthly_cost_inr FROM members WHERE workspace_id = ? AND status = \'ACTIVE\'', [workspaceId]);
     const subtotal = members.reduce((acc, m) => acc + (m.monthly_cost_inr || 650), 0);
     const gst = Math.round(subtotal * 0.18);
     const totalAmountInr = subtotal + gst;
@@ -343,10 +345,10 @@ const app = new Hono()
     const invNumber = `INV-${new Date().getFullYear()}-${Math.floor(100 + Math.random() * 900)}`;
     const invId = randomUUID();
 
-    db.prepare(`
+    await d1Run(`
       INSERT INTO invoices (id, workspace_id, invoice_number, amount, currency, status, invoice_date)
       VALUES (?, ?, ?, ?, 'INR', 'PAID', date('now'))
-    `).run(invId, workspaceId, invNumber, totalAmountInr);
+    `, [invId, workspaceId, invNumber, totalAmountInr]);
 
     logAudit({
       workspaceId,

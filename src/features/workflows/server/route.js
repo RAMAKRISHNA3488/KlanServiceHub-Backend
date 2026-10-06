@@ -1,30 +1,32 @@
 import { Hono } from 'hono';
 import { randomUUID } from 'node:crypto';
 import { sessionMiddleware } from '../../../lib/session-middleware.js';
-import { db, formatDoc, logAudit } from '../../../db.js';
+import { db, d1All, d1First, d1Run, getD1Database, formatDoc, logAudit } from '../../../db.js';
 import { hasPermission } from '../../../lib/permissions.js';
 
 const app = new Hono()
   .get('/:workspaceId', sessionMiddleware, async (ctx) => {
     const { workspaceId } = ctx.req.param();
+    const d1 = ctx.env?.DB || getD1Database();
 
-    const workflows = db.prepare('SELECT * FROM workflows WHERE workspace_id = ?').all(workspaceId);
+    const workflows = await d1All('SELECT * FROM workflows WHERE workspace_id = ?', [workspaceId], d1);
 
-    const workflowsWithDetails = workflows.map((wf) => {
-      const statuses = db.prepare(`
+    const workflowsWithDetails = [];
+    for (const wf of workflows) {
+      const statuses = await d1All(`
         SELECT * FROM workflow_statuses WHERE workflow_id = ? ORDER BY position ASC
-      `).all(wf.id);
+      `, [wf.id], d1);
 
-      const transitions = db.prepare(`
+      const transitions = await d1All(`
         SELECT * FROM workflow_transitions WHERE workflow_id = ?
-      `).all(wf.id);
+      `, [wf.id], d1);
 
-      return {
+      workflowsWithDetails.push({
         ...formatDoc(wf),
         statuses: statuses.map(formatDoc),
         transitions: transitions.map(formatDoc),
-      };
-    });
+      });
+    }
 
     return ctx.json({ data: workflowsWithDetails });
   })
@@ -32,34 +34,38 @@ const app = new Hono()
     const actor = ctx.get('user');
     const { workspaceId } = ctx.req.param();
     const { name, description = '', statuses = [] } = await ctx.req.json();
+    const d1 = ctx.env?.DB || getD1Database();
 
-    if (!hasPermission({ workspaceId, userId: actor.$id, permissionCode: 'WORKFLOW_MANAGE' })) {
+    const allowed = await hasPermission({ workspaceId, userId: actor.$id, permissionCode: 'WORKFLOW_MANAGE' }, d1);
+    if (!allowed) {
       return ctx.json({ error: 'Forbidden: Missing WORKFLOW_MANAGE permission.' }, 403);
     }
 
     const workflowId = randomUUID();
-    db.prepare(`
+    await d1Run(`
       INSERT INTO workflows (id, workspace_id, name, description, is_default)
       VALUES (?, ?, ?, ?, 0)
-    `).run(workflowId, workspaceId, name, description);
+    `, [workflowId, workspaceId, name, description], d1);
 
     let pos = 0;
     for (const s of statuses) {
-      db.prepare(`
+      await d1Run(`
         INSERT INTO workflow_statuses (id, workflow_id, name, category, color, position)
         VALUES (?, ?, ?, ?, ?, ?)
-      `).run(randomUUID(), workflowId, s.name, s.category || 'IN_PROGRESS', s.color || '#3B82F6', pos++);
+      `, [randomUUID(), workflowId, s.name, s.category || 'IN_PROGRESS', s.color || '#3B82F6', pos++], d1);
     }
 
-    logAudit({
-      workspaceId,
-      actorId: actor.$id,
-      actorName: actor.name,
-      action: 'CREATE_WORKFLOW',
-      entityType: 'WORKFLOW',
-      entityId: workflowId,
-      details: { name, statusesCount: statuses.length },
-    });
+    try {
+      logAudit({
+        workspaceId,
+        actorId: actor.$id,
+        actorName: actor.name,
+        action: 'CREATE_WORKFLOW',
+        entityType: 'WORKFLOW',
+        entityId: workflowId,
+        details: { name, statusesCount: statuses.length },
+      });
+    } catch (e) {}
 
     return ctx.json({ data: { id: workflowId, name } });
   })
@@ -67,8 +73,10 @@ const app = new Hono()
     const actor = ctx.get('user');
     const { workspaceId, workflowId } = ctx.req.param();
     const { name, description } = await ctx.req.json();
+    const d1 = ctx.env?.DB || getD1Database();
 
-    if (!hasPermission({ workspaceId, userId: actor.$id, permissionCode: 'WORKFLOW_MANAGE' })) {
+    const allowed = await hasPermission({ workspaceId, userId: actor.$id, permissionCode: 'WORKFLOW_MANAGE' }, d1);
+    if (!allowed) {
       return ctx.json({ error: 'Forbidden: Missing WORKFLOW_MANAGE permission.' }, 403);
     }
 
@@ -85,18 +93,20 @@ const app = new Hono()
 
     if (updates.length > 0) {
       params.push(workflowId, workspaceId);
-      db.prepare(`UPDATE workflows SET ${updates.join(', ')} WHERE id = ? AND workspace_id = ?`).run(...params);
+      await d1Run(`UPDATE workflows SET ${updates.join(', ')} WHERE id = ? AND workspace_id = ?`, params, d1);
     }
 
-    logAudit({
-      workspaceId,
-      actorId: actor.$id,
-      actorName: actor.name,
-      action: 'UPDATE_WORKFLOW',
-      entityType: 'WORKFLOW',
-      entityId: workflowId,
-      details: { name, description },
-    });
+    try {
+      logAudit({
+        workspaceId,
+        actorId: actor.$id,
+        actorName: actor.name,
+        action: 'UPDATE_WORKFLOW',
+        entityType: 'WORKFLOW',
+        entityId: workflowId,
+        details: { name, description },
+      });
+    } catch (e) {}
 
     return ctx.json({ success: true });
   })
@@ -104,18 +114,21 @@ const app = new Hono()
     const actor = ctx.get('user');
     const { workspaceId, workflowId } = ctx.req.param();
     const { name, category = 'IN_PROGRESS', color = '#3B82F6' } = await ctx.req.json();
+    const d1 = ctx.env?.DB || getD1Database();
 
-    if (!hasPermission({ workspaceId, userId: actor.$id, permissionCode: 'WORKFLOW_MANAGE' })) {
+    const allowed = await hasPermission({ workspaceId, userId: actor.$id, permissionCode: 'WORKFLOW_MANAGE' }, d1);
+    if (!allowed) {
       return ctx.json({ error: 'Forbidden: Missing WORKFLOW_MANAGE permission.' }, 403);
     }
 
-    const maxPos = db.prepare('SELECT MAX(position) as m FROM workflow_statuses WHERE workflow_id = ?').get(workflowId)?.m || 0;
+    const maxRow = await d1First('SELECT MAX(position) as m FROM workflow_statuses WHERE workflow_id = ?', [workflowId], d1);
+    const maxPos = maxRow?.m || 0;
     const statusId = randomUUID();
 
-    db.prepare(`
+    await d1Run(`
       INSERT INTO workflow_statuses (id, workflow_id, name, category, color, position)
       VALUES (?, ?, ?, ?, ?, ?)
-    `).run(statusId, workflowId, name.toUpperCase().replace(/\s+/g, '_'), category, color, maxPos + 1);
+    `, [statusId, workflowId, name.toUpperCase().replace(/\s+/g, '_'), category, color, maxPos + 1], d1);
 
     return ctx.json({ success: true, statusId });
   })
@@ -123,8 +136,10 @@ const app = new Hono()
     const actor = ctx.get('user');
     const { workspaceId, workflowId, statusId } = ctx.req.param();
     const { name, category, color, position } = await ctx.req.json();
+    const d1 = ctx.env?.DB || getD1Database();
 
-    if (!hasPermission({ workspaceId, userId: actor.$id, permissionCode: 'WORKFLOW_MANAGE' })) {
+    const allowed = await hasPermission({ workspaceId, userId: actor.$id, permissionCode: 'WORKFLOW_MANAGE' }, d1);
+    if (!allowed) {
       return ctx.json({ error: 'Forbidden: Missing WORKFLOW_MANAGE permission.' }, 403);
     }
 
@@ -149,7 +164,7 @@ const app = new Hono()
 
     if (updates.length > 0) {
       params.push(statusId, workflowId);
-      db.prepare(`UPDATE workflow_statuses SET ${updates.join(', ')} WHERE id = ? AND workflow_id = ?`).run(...params);
+      await d1Run(`UPDATE workflow_statuses SET ${updates.join(', ')} WHERE id = ? AND workflow_id = ?`, params, d1);
     }
 
     return ctx.json({ success: true });
@@ -158,26 +173,31 @@ const app = new Hono()
     const actor = ctx.get('user');
     const { workspaceId, workflowId } = ctx.req.param();
     const { statusIds = [] } = await ctx.req.json();
+    const d1 = ctx.env?.DB || getD1Database();
 
-    if (!hasPermission({ workspaceId, userId: actor.$id, permissionCode: 'WORKFLOW_MANAGE' })) {
+    const allowed = await hasPermission({ workspaceId, userId: actor.$id, permissionCode: 'WORKFLOW_MANAGE' }, d1);
+    if (!allowed) {
       return ctx.json({ error: 'Forbidden: Missing WORKFLOW_MANAGE permission.' }, 403);
     }
 
-    statusIds.forEach((id, index) => {
-      db.prepare('UPDATE workflow_statuses SET position = ? WHERE id = ? AND workflow_id = ?').run(index, id, workflowId);
-    });
+    let index = 0;
+    for (const id of statusIds) {
+      await d1Run('UPDATE workflow_statuses SET position = ? WHERE id = ? AND workflow_id = ?', [index++, id, workflowId], d1);
+    }
 
     return ctx.json({ success: true });
   })
   .delete('/:workspaceId/:workflowId/statuses/:statusId', sessionMiddleware, async (ctx) => {
     const actor = ctx.get('user');
     const { workspaceId, workflowId, statusId } = ctx.req.param();
+    const d1 = ctx.env?.DB || getD1Database();
 
-    if (!hasPermission({ workspaceId, userId: actor.$id, permissionCode: 'WORKFLOW_MANAGE' })) {
+    const allowed = await hasPermission({ workspaceId, userId: actor.$id, permissionCode: 'WORKFLOW_MANAGE' }, d1);
+    if (!allowed) {
       return ctx.json({ error: 'Forbidden: Missing WORKFLOW_MANAGE permission.' }, 403);
     }
 
-    db.prepare('DELETE FROM workflow_statuses WHERE id = ? AND workflow_id = ?').run(statusId, workflowId);
+    await d1Run('DELETE FROM workflow_statuses WHERE id = ? AND workflow_id = ?', [statusId, workflowId], d1);
     return ctx.json({ success: true });
   });
 

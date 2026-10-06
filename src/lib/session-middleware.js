@@ -1,6 +1,6 @@
 import { getCookie } from 'hono/cookie';
 import { createMiddleware } from 'hono/factory';
-import { db, formatDoc } from '../db.js';
+import { db, formatDoc, getD1Database } from '../db.js';
 import { AUTH_COOKIE } from '../features/auth/constants.js';
 
 export const sessionMiddleware = createMiddleware(async (ctx, next) => {
@@ -16,14 +16,15 @@ export const sessionMiddleware = createMiddleware(async (ctx, next) => {
   let user = null;
 
   // Try Cloudflare D1 first if available
-  if (ctx.env?.DB) {
+  const activeD1 = ctx.env?.DB || getD1Database();
+  if (activeD1) {
     try {
-      session = await ctx.env.DB.prepare(`
+      session = await activeD1.prepare(`
         SELECT * FROM sessions WHERE secret = ? AND datetime(expires_at) > datetime('now')
       `).bind(sessionSecret).first();
 
       if (session) {
-        user = await ctx.env.DB.prepare(`
+        user = await activeD1.prepare(`
           SELECT id, name, email, created_at, updated_at FROM users WHERE id = ?
         `).bind(session.user_id).first();
       }

@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { randomUUID } from 'node:crypto';
 import { sessionMiddleware } from '../../../lib/session-middleware.js';
-import { db, formatDoc, logActivity } from '../../../db.js';
+import { db, formatDoc, logActivity, d1All, d1First, d1Run } from '../../../db.js';
 
 // Default gadgets template for newly initialized dashboards
 const DEFAULT_DASHBOARD_TEMPLATES = [
@@ -45,22 +45,22 @@ const DEFAULT_DASHBOARD_TEMPLATES = [
   },
 ];
 
-function ensureDefaultDashboards(workspaceId, userId) {
-  const existing = db.prepare('SELECT COUNT(*) as c FROM dashboards WHERE workspace_id = ?').get(workspaceId);
+async function ensureDefaultDashboards(workspaceId, userId) {
+  const existing = await d1First('SELECT COUNT(*) as c FROM dashboards WHERE workspace_id = ?', [workspaceId]);
   if ((existing?.c ?? 0) > 0) return;
 
   for (const tpl of DEFAULT_DASHBOARD_TEMPLATES) {
     const dashId = randomUUID();
-    db.prepare(`
+    await d1Run(`
       INSERT INTO dashboards (id, workspace_id, name, description, layout, is_default, created_by)
       VALUES (?, ?, ?, ?, ?, ?, ?)
-    `).run(dashId, workspaceId, tpl.name, tpl.description, tpl.layout, tpl.is_default, userId);
+    `, [dashId, workspaceId, tpl.name, tpl.description, tpl.layout, tpl.is_default, userId]);
 
     for (const g of tpl.gadgets) {
-      db.prepare(`
+      await d1Run(`
         INSERT INTO dashboard_gadgets (id, dashboard_id, workspace_id, gadget_type, title, column_index, position, settings)
         VALUES (?, ?, ?, ?, ?, ?, ?, '{}')
-      `).run(randomUUID(), dashId, workspaceId, g.gadget_type, g.title, g.column_index, g.position);
+      `, [randomUUID(), dashId, workspaceId, g.gadget_type, g.title, g.column_index, g.position]);
     }
   }
 }
@@ -73,14 +73,15 @@ const app = new Hono()
     const requestedDashboardId = ctx.req.query('dashboardId');
     const projectIdFilter = ctx.req.query('projectId');
 
-    ensureDefaultDashboards(workspaceId, user.$id);
+    await ensureDefaultDashboards(workspaceId, user.$id);
 
     // List all dashboards in this workspace
-    const dashboardsList = db.prepare(`
+    const rawDashboards = await d1All(`
       SELECT * FROM dashboards 
       WHERE workspace_id = ? 
       ORDER BY is_default DESC, is_favorite DESC, created_at ASC
-    `).all(workspaceId).map(formatDoc);
+    `, [workspaceId]);
+    const dashboardsList = rawDashboards.map(formatDoc);
 
     // Find active dashboard
     let activeDashboard = null;
@@ -94,11 +95,11 @@ const app = new Hono()
     // Fetch configured gadgets for this dashboard
     let configuredGadgets = [];
     if (activeDashboard) {
-      const gRows = db.prepare(`
+      const gRows = await d1All(`
         SELECT * FROM dashboard_gadgets 
         WHERE dashboard_id = ? 
         ORDER BY column_index ASC, position ASC, created_at ASC
-      `).all(activeDashboard.id || activeDashboard.$id);
+      `, [activeDashboard.id || activeDashboard.$id]);
 
       configuredGadgets = gRows.map((g) => ({
         ...formatDoc(g),
@@ -115,20 +116,32 @@ const app = new Hono()
     }
 
     // 1. Summary Metrics
-    const totalTasks = db.prepare(`SELECT COUNT(*) as c FROM tasks WHERE ${whereSql}`).get(...params).c;
-    const completedTasks = db.prepare(`SELECT COUNT(*) as c FROM tasks WHERE ${whereSql} AND status = 'DONE'`).get(...params).c;
-    const inProgressTasks = db.prepare(`SELECT COUNT(*) as c FROM tasks WHERE ${whereSql} AND status IN ('IN_PROGRESS', 'IN_REVIEW', 'TESTING')`).get(...params).c;
-    const todoTasks = db.prepare(`SELECT COUNT(*) as c FROM tasks WHERE ${whereSql} AND status IN ('TODO', 'BACKLOG')`).get(...params).c;
-    const criticalTasks = db.prepare(`SELECT COUNT(*) as c FROM tasks WHERE ${whereSql} AND priority = 'CRITICAL' AND status != 'DONE'`).get(...params).c;
-    const overdueTasks = db.prepare(`SELECT COUNT(*) as c FROM tasks WHERE ${whereSql} AND status != 'DONE' AND datetime(due_date) < datetime('now')`).get(...params).c;
+    const summaryRow = await d1First(`
+      SELECT 
+        COUNT(*) as totalTasks,
+        SUM(CASE WHEN status = 'DONE' THEN 1 ELSE 0 END) as completedTasks,
+        SUM(CASE WHEN status IN ('IN_PROGRESS', 'IN_REVIEW', 'TESTING') THEN 1 ELSE 0 END) as inProgressTasks,
+        SUM(CASE WHEN status IN ('TODO', 'BACKLOG') THEN 1 ELSE 0 END) as todoTasks,
+        SUM(CASE WHEN priority = 'CRITICAL' AND status != 'DONE' THEN 1 ELSE 0 END) as criticalTasks,
+        SUM(CASE WHEN status != 'DONE' AND datetime(due_date) < datetime('now') THEN 1 ELSE 0 END) as overdueTasks
+      FROM tasks 
+      WHERE ${whereSql}
+    `, params);
+
+    const totalTasks = Number(summaryRow?.totalTasks || 0);
+    const completedTasks = Number(summaryRow?.completedTasks || 0);
+    const inProgressTasks = Number(summaryRow?.inProgressTasks || 0);
+    const todoTasks = Number(summaryRow?.todoTasks || 0);
+    const criticalTasks = Number(summaryRow?.criticalTasks || 0);
+    const overdueTasks = Number(summaryRow?.overdueTasks || 0);
 
     // 2. Priority Breakdown
-    const pRows = db.prepare(`
+    const pRows = await d1All(`
       SELECT priority, COUNT(*) as count 
       FROM tasks 
       WHERE ${whereSql} 
       GROUP BY priority
-    `).all(...params);
+    `, params);
 
     const priorityOrder = ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW', 'LOWEST'];
     const pMap = { CRITICAL: 0, HIGH: 0, MEDIUM: 0, LOW: 0, LOWEST: 0 };
@@ -149,12 +162,12 @@ const app = new Hono()
     }));
 
     // 3. Issue Type Breakdown
-    const tRows = db.prepare(`
+    const tRows = await d1All(`
       SELECT issue_type, COUNT(*) as count 
       FROM tasks 
       WHERE ${whereSql} 
       GROUP BY issue_type
-    `).all(...params);
+    `, params);
 
     const typeBreakdown = tRows.map((r) => ({
       issue_type: r.issue_type || 'Task',
@@ -163,7 +176,7 @@ const app = new Hono()
     }));
 
     // 4. Team Workload
-    const teamWorkload = db.prepare(`
+    const teamWorkload = await d1All(`
       SELECT u.id, u.name, u.email, u.avatar_url, m.role,
              COUNT(t.id) as task_count,
              SUM(CASE WHEN t.status = 'DONE' THEN 1 ELSE 0 END) as done_count,
@@ -177,10 +190,10 @@ const app = new Hono()
       GROUP BY u.id
       ORDER BY task_count DESC
       LIMIT 8
-    `).all(...(projectIdFilter && projectIdFilter !== 'ALL' ? [projectIdFilter, workspaceId] : [workspaceId]));
+    `, (projectIdFilter && projectIdFilter !== 'ALL' ? [projectIdFilter, workspaceId] : [workspaceId]));
 
     // 5. Project Progress
-    const projectProgress = db.prepare(`
+    const projectProgressRaw = await d1All(`
       SELECT p.id, p.name, p.key, p.image_url, p.category,
              COUNT(t.id) as total_tasks,
              SUM(CASE WHEN t.status = 'DONE' THEN 1 ELSE 0 END) as completed_tasks,
@@ -192,13 +205,15 @@ const app = new Hono()
       GROUP BY p.id
       ORDER BY total_tasks DESC
       LIMIT 8
-    `).all(workspaceId).map((p) => ({
+    `, [workspaceId]);
+
+    const projectProgress = projectProgressRaw.map((p) => ({
       ...p,
-      progressPercent: p.total_tasks > 0 ? Math.round((p.completed_tasks / p.total_tasks) * 100) : 0,
+      progressPercent: Number(p.total_tasks) > 0 ? Math.round((Number(p.completed_tasks) / Number(p.total_tasks)) * 100) : 0,
     }));
 
     // 6. Active Sprints Summary
-    const activeSprints = db.prepare(`
+    const activeSprints = await d1All(`
       SELECT s.*, p.name as project_name, p.key as project_key,
              COUNT(t.id) as total_tasks,
              SUM(CASE WHEN t.status = 'DONE' THEN 1 ELSE 0 END) as done_tasks,
@@ -209,10 +224,10 @@ const app = new Hono()
       WHERE s.workspace_id = ? AND s.status = 'ACTIVE'
       GROUP BY s.id
       ORDER BY s.start_date DESC
-    `).all(workspaceId);
+    `, [workspaceId]);
 
     // 7. Assigned to Me (current user quick items)
-    const assignedToMe = db.prepare(`
+    const assignedToMe = await d1All(`
       SELECT t.id, t.key, t.name, t.status, t.priority, t.due_date, t.issue_type,
              p.name as project_name, p.key as project_key
       FROM tasks t
@@ -221,10 +236,10 @@ const app = new Hono()
       WHERE t.workspace_id = ? AND m.user_id = ? AND t.status != 'DONE'
       ORDER BY (CASE WHEN t.priority = 'CRITICAL' THEN 1 WHEN t.priority = 'HIGH' THEN 2 ELSE 3 END), t.due_date ASC
       LIMIT 6
-    `).all(workspaceId, user.$id);
+    `, [workspaceId, user.$id]);
 
     // 8. Overdue Watchlist
-    const overdueWatchlist = db.prepare(`
+    const overdueWatchlist = await d1All(`
       SELECT t.id, t.key, t.name, t.status, t.priority, t.due_date, t.issue_type,
              p.name as project_name, p.key as project_key,
              u.name as assignee_name, u.avatar_url as assignee_avatar
@@ -235,9 +250,9 @@ const app = new Hono()
       WHERE t.workspace_id = ? AND t.status != 'DONE' AND datetime(t.due_date) < datetime('now')
       ORDER BY (CASE WHEN t.priority = 'CRITICAL' THEN 1 WHEN t.priority = 'HIGH' THEN 2 ELSE 3 END), t.due_date ASC
       LIMIT 6
-    `).all(workspaceId);
+    `, [workspaceId]);
 
-    // 9. Created vs Resolved Trend (Recent 6 months simulated/actual aggregate)
+    // 9. Created vs Resolved Trend
     const trendMonths = [];
     for (let i = 5; i >= 0; i--) {
       const d = new Date();
@@ -245,27 +260,27 @@ const app = new Hono()
       const monthLabel = d.toLocaleString('en-US', { month: 'short' });
       const yearMonth = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
 
-      const createdCount = db.prepare(`
+      const createdRow = await d1First(`
         SELECT COUNT(*) as c FROM tasks 
         WHERE ${whereSql} AND strftime('%Y-%m', created_at) = ?
-      `).get(...params, yearMonth).c;
+      `, [...params, yearMonth]);
 
-      const resolvedCount = db.prepare(`
+      const resolvedRow = await d1First(`
         SELECT COUNT(*) as c FROM tasks 
         WHERE ${whereSql} AND status = 'DONE' AND strftime('%Y-%m', updated_at) = ?
-      `).get(...params, yearMonth).c;
+      `, [...params, yearMonth]);
 
       trendMonths.push({
         month: monthLabel,
-        created: createdCount,
-        resolved: resolvedCount,
+        created: createdRow?.c || 0,
+        resolved: resolvedRow?.c || 0,
       });
     }
 
     // 10. Recent Activity Stream
     let recentActivities = [];
     try {
-      recentActivities = db.prepare(`
+      recentActivities = await d1All(`
         SELECT a.*, a.action as action_type, u.name as user_name, u.avatar_url as user_avatar, t.key as task_key, t.name as task_name
         FROM activities a
         LEFT JOIN users u ON a.user_id = u.id
@@ -273,20 +288,20 @@ const app = new Hono()
         WHERE a.workspace_id = ?
         ORDER BY a.created_at DESC
         LIMIT 8
-      `).all(workspaceId);
+      `, [workspaceId]);
     } catch (e) {
       console.error('Activities fetch error:', e);
     }
 
     // 11. Two-Dimensional Stats (Assignee vs Status Matrix)
-    const matrixRows = db.prepare(`
+    const matrixRows = await d1All(`
       SELECT u.name as assignee_name, t.status, COUNT(t.id) as count
       FROM members m
       JOIN users u ON m.user_id = u.id
       JOIN tasks t ON t.assignee_id = m.id
       WHERE t.workspace_id = ?
       GROUP BY u.name, t.status
-    `).all(workspaceId);
+    `, [workspaceId]);
 
     const assigneesSet = new Set();
     const statusMatrix = {};
@@ -342,10 +357,10 @@ const app = new Hono()
     }
 
     const dashboardId = randomUUID();
-    db.prepare(`
+    await d1Run(`
       INSERT INTO dashboards (id, workspace_id, name, description, layout, is_default, share_scope, created_by)
       VALUES (?, ?, ?, ?, ?, 0, ?, ?)
-    `).run(dashboardId, workspaceId, name.trim(), description.trim(), layout, shareScope, user.$id);
+    `, [dashboardId, workspaceId, name.trim(), description.trim(), layout, shareScope, user.$id]);
 
     // Add default starter gadgets
     const starterGadgets = [
@@ -356,13 +371,13 @@ const app = new Hono()
     ];
 
     for (const g of starterGadgets) {
-      db.prepare(`
+      await d1Run(`
         INSERT INTO dashboard_gadgets (id, dashboard_id, workspace_id, gadget_type, title, column_index, position, settings)
         VALUES (?, ?, ?, ?, ?, ?, ?, '{}')
-      `).run(randomUUID(), dashboardId, workspaceId, g.gadget_type, g.title, g.column_index, g.position);
+      `, [randomUUID(), dashboardId, workspaceId, g.gadget_type, g.title, g.column_index, g.position]);
     }
 
-    const created = db.prepare('SELECT * FROM dashboards WHERE id = ?').get(dashboardId);
+    const created = await d1First('SELECT * FROM dashboards WHERE id = ?', [dashboardId]);
     return ctx.json({ data: formatDoc(created) });
   })
 
@@ -371,7 +386,7 @@ const app = new Hono()
     const { workspaceId, dashboardId } = ctx.req.param();
     const { name, description, layout, isFavorite, isDefault, shareScope } = await ctx.req.json();
 
-    const existing = db.prepare('SELECT * FROM dashboards WHERE id = ? AND workspace_id = ?').get(dashboardId, workspaceId);
+    const existing = await d1First('SELECT * FROM dashboards WHERE id = ? AND workspace_id = ?', [dashboardId, workspaceId]);
     if (!existing) return ctx.json({ error: 'Dashboard not found' }, 404);
 
     const updates = [];
@@ -383,31 +398,31 @@ const app = new Hono()
     if (isFavorite !== undefined) { updates.push('is_favorite = ?'); params.push(isFavorite ? 1 : 0); }
     if (shareScope) { updates.push('share_scope = ?'); params.push(shareScope); }
     if (isDefault) {
-      db.prepare('UPDATE dashboards SET is_default = 0 WHERE workspace_id = ?').run(workspaceId);
+      await d1Run('UPDATE dashboards SET is_default = 0 WHERE workspace_id = ?', [workspaceId]);
       updates.push('is_default = 1');
     }
 
     if (updates.length > 0) {
       updates.push('updated_at = CURRENT_TIMESTAMP');
-      db.prepare(`UPDATE dashboards SET ${updates.join(', ')} WHERE id = ?`).run(...params, dashboardId);
+      await d1Run(`UPDATE dashboards SET ${updates.join(', ')} WHERE id = ?`, [...params, dashboardId]);
     }
 
-    const updated = db.prepare('SELECT * FROM dashboards WHERE id = ?').get(dashboardId);
+    const updated = await d1First('SELECT * FROM dashboards WHERE id = ?', [dashboardId]);
     return ctx.json({ data: formatDoc(updated) });
   })
 
   // 4. Delete dashboard
   .delete('/:workspaceId/:dashboardId', sessionMiddleware, async (ctx) => {
     const { workspaceId, dashboardId } = ctx.req.param();
-    const existing = db.prepare('SELECT * FROM dashboards WHERE id = ? AND workspace_id = ?').get(dashboardId, workspaceId);
+    const existing = await d1First('SELECT * FROM dashboards WHERE id = ? AND workspace_id = ?', [dashboardId, workspaceId]);
     if (!existing) return ctx.json({ error: 'Dashboard not found' }, 404);
 
     if (existing.is_default) {
       return ctx.json({ error: 'Cannot delete default dashboard.' }, 400);
     }
 
-    db.prepare('DELETE FROM dashboard_gadgets WHERE dashboard_id = ?').run(dashboardId);
-    db.prepare('DELETE FROM dashboards WHERE id = ?').run(dashboardId);
+    await d1Run('DELETE FROM dashboard_gadgets WHERE dashboard_id = ?', [dashboardId]);
+    await d1Run('DELETE FROM dashboards WHERE id = ?', [dashboardId]);
 
     return ctx.json({ success: true, message: 'Dashboard deleted' });
   })
@@ -422,36 +437,36 @@ const app = new Hono()
       return ctx.json({ error: 'gadgetType and title are required' }, 400);
     }
 
-    ensureDefaultDashboards(workspaceId, user.$id);
+    await ensureDefaultDashboards(workspaceId, user.$id);
 
-    let targetDash = db.prepare('SELECT * FROM dashboards WHERE id = ? AND workspace_id = ?').get(dashboardId, workspaceId);
+    let targetDash = await d1First('SELECT * FROM dashboards WHERE id = ? AND workspace_id = ?', [dashboardId, workspaceId]);
     if (!targetDash) {
-      targetDash = db.prepare('SELECT * FROM dashboards WHERE workspace_id = ? ORDER BY is_default DESC LIMIT 1').get(workspaceId);
+      targetDash = await d1First('SELECT * FROM dashboards WHERE workspace_id = ? ORDER BY is_default DESC LIMIT 1', [workspaceId]);
     }
     const targetDashId = targetDash ? targetDash.id : dashboardId;
     const colIdx = Number(columnIndex) || 0;
 
-    const maxPosRow = db.prepare(`
+    const maxPosRow = await d1First(`
       SELECT MAX(position) as max_pos FROM dashboard_gadgets 
       WHERE dashboard_id = ? AND column_index = ?
-    `).get(targetDashId, colIdx);
+    `, [targetDashId, colIdx]);
 
     const newPos = (maxPosRow?.max_pos !== null && maxPosRow?.max_pos !== undefined) ? Number(maxPosRow.max_pos) + 1 : 0;
     const gadgetId = randomUUID();
 
-    db.prepare(`
+    await d1Run(`
       INSERT INTO dashboard_gadgets (id, dashboard_id, workspace_id, gadget_type, title, column_index, position, settings)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(gadgetId, targetDashId, workspaceId, gadgetType, title, colIdx, newPos, JSON.stringify(settings));
+    `, [gadgetId, targetDashId, workspaceId, gadgetType, title, colIdx, newPos, JSON.stringify(settings)]);
 
-    const gadget = db.prepare('SELECT * FROM dashboard_gadgets WHERE id = ?').get(gadgetId);
+    const gadget = await d1First('SELECT * FROM dashboard_gadgets WHERE id = ?', [gadgetId]);
     return ctx.json({ data: { ...formatDoc(gadget), settings } });
   })
 
   // 6. Update / remove gadget
   .delete('/:workspaceId/:dashboardId/gadgets/:gadgetId', sessionMiddleware, async (ctx) => {
     const { gadgetId } = ctx.req.param();
-    db.prepare('DELETE FROM dashboard_gadgets WHERE id = ?').run(gadgetId);
+    await d1Run('DELETE FROM dashboard_gadgets WHERE id = ?', [gadgetId]);
     return ctx.json({ success: true });
   });
 

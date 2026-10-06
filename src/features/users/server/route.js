@@ -2,7 +2,7 @@ import { Hono } from 'hono';
 import bcrypt from 'bcryptjs';
 import { randomUUID, randomBytes } from 'node:crypto';
 import { sessionMiddleware } from '../../../lib/session-middleware.js';
-import { db, formatDoc, logAudit, createNotification } from '../../../db.js';
+import { db, formatDoc, logAudit, createNotification, d1All, d1First, d1Run } from '../../../db.js';
 import { hasPermission } from '../../../lib/permissions.js';
 import { sendInvitationEmail } from '../../../lib/mail.js';
 
@@ -11,7 +11,7 @@ const app = new Hono()
     const user = ctx.get('user');
     const { workspaceId } = ctx.req.param();
 
-    const members = db.prepare(`
+    const members = await d1All(`
       SELECT 
         m.id as member_id,
         m.role as legacy_role,
@@ -29,45 +29,47 @@ const app = new Hono()
       JOIN users u ON m.user_id = u.id
       WHERE m.workspace_id = ?
       ORDER BY m.created_at ASC
-    `).all(workspaceId);
+    `, [workspaceId]);
 
-    const workspace = db.prepare('SELECT user_id FROM workspaces WHERE id = ?').get(workspaceId);
+    const workspace = await d1First('SELECT user_id FROM workspaces WHERE id = ?', [workspaceId]);
 
-    const userList = members.map((m) => {
-      // Fetch assigned roles
-      const roles = db.prepare(`
-        SELECT r.id, r.name, r.description, r.is_system
-        FROM user_roles ur
-        JOIN roles r ON ur.role_id = r.id
-        WHERE ur.workspace_id = ? AND ur.user_id = ?
-      `).all(workspaceId, m.user_id);
+    const userList = await Promise.all(
+      members.map(async (m) => {
+        // Fetch assigned roles
+        const roles = await d1All(`
+          SELECT r.id, r.name, r.description, r.is_system
+          FROM user_roles ur
+          JOIN roles r ON ur.role_id = r.id
+          WHERE ur.workspace_id = ? AND ur.user_id = ?
+        `, [workspaceId, m.user_id]);
 
-      // Fetch assigned teams
-      const teams = db.prepare(`
-        SELECT t.id, t.name
-        FROM team_members tm
-        JOIN teams t ON tm.team_id = t.id
-        WHERE t.workspace_id = ? AND tm.user_id = ?
-      `).all(workspaceId, m.user_id);
+        // Fetch assigned teams
+        const teams = await d1All(`
+          SELECT t.id, t.name
+          FROM team_members tm
+          JOIN teams t ON tm.team_id = t.id
+          WHERE t.workspace_id = ? AND tm.user_id = ?
+        `, [workspaceId, m.user_id]);
 
-      const isOwner = workspace && workspace.user_id === m.user_id;
+        const isOwner = workspace && workspace.user_id === m.user_id;
 
-      return {
-        id: m.user_id,
-        memberId: m.member_id,
-        name: m.name,
-        email: m.email,
-        phone: m.phone || '',
-        jobTitle: m.job_title || 'Team Member',
-        department: m.department || 'Engineering',
-        avatarUrl: m.avatar_url,
-        status: m.member_status || 'ACTIVE',
-        isOwner,
-        roles: roles.length > 0 ? roles : [{ name: isOwner ? 'Company Owner' : m.legacy_role === 'ADMIN' ? 'Company Admin' : 'Developer' }],
-        teams,
-        joinedAt: m.joined_at,
-      };
-    });
+        return {
+          id: m.user_id,
+          memberId: m.member_id,
+          name: m.name,
+          email: m.email,
+          phone: m.phone || '',
+          jobTitle: m.job_title || 'Team Member',
+          department: m.department || 'Engineering',
+          avatarUrl: m.avatar_url,
+          status: m.member_status || 'ACTIVE',
+          isOwner,
+          roles: roles.length > 0 ? roles : [{ name: isOwner ? 'Company Owner' : m.legacy_role === 'ADMIN' ? 'Company Admin' : 'Developer' }],
+          teams,
+          joinedAt: m.joined_at,
+        };
+      })
+    );
 
     return ctx.json({ data: userList });
   })
@@ -76,7 +78,7 @@ const app = new Hono()
     const { workspaceId } = ctx.req.param();
     const { email, name, roleName = 'Developer', jobTitle = 'Software Engineer', department = 'Engineering' } = await ctx.req.json();
 
-    if (!hasPermission({ workspaceId, userId: actor.$id, permissionCode: 'USER_MANAGE' })) {
+    if (!await hasPermission({ workspaceId, userId: actor.$id, permissionCode: 'USER_MANAGE' })) {
       return ctx.json({ error: 'Forbidden: Missing USER_MANAGE permission.' }, 403);
     }
 
@@ -85,37 +87,37 @@ const app = new Hono()
     }
 
     const cleanEmail = email.toLowerCase().trim();
-    let user = db.prepare('SELECT * FROM users WHERE email = ?').get(cleanEmail);
+    let user = await d1First('SELECT * FROM users WHERE email = ?', [cleanEmail]);
     let userId;
 
     if (!user) {
       userId = randomUUID();
       const defaultHash = bcrypt.hashSync('Password@123', 10);
-      db.prepare(`
+      await d1Run(`
         INSERT INTO users (id, name, email, password_hash, job_title, department)
         VALUES (?, ?, ?, ?, ?, ?)
-      `).run(userId, name || cleanEmail.split('@')[0], cleanEmail, defaultHash, jobTitle, department);
+      `, [userId, name || cleanEmail.split('@')[0], cleanEmail, defaultHash, jobTitle, department]);
     } else {
       userId = user.id;
     }
 
     // Check if already in workspace
-    const existingMember = db.prepare('SELECT id FROM members WHERE workspace_id = ? AND user_id = ?').get(workspaceId, userId);
+    const existingMember = await d1First('SELECT id FROM members WHERE workspace_id = ? AND user_id = ?', [workspaceId, userId]);
     if (!existingMember) {
       const memberId = randomUUID();
-      db.prepare(`
+      await d1Run(`
         INSERT INTO members (id, workspace_id, user_id, role, status)
         VALUES (?, ?, ?, 'MEMBER', 'ACTIVE')
-      `).run(memberId, workspaceId, userId);
+      `, [memberId, workspaceId, userId]);
     }
 
     // Find or assign role
-    const role = db.prepare('SELECT id FROM roles WHERE workspace_id = ? AND name = ?').get(workspaceId, roleName);
+    const role = await d1First('SELECT id FROM roles WHERE workspace_id = ? AND name = ?', [workspaceId, roleName]);
     if (role) {
-      db.prepare(`
+      await d1Run(`
         INSERT OR REPLACE INTO user_roles (id, workspace_id, user_id, role_id)
         VALUES (?, ?, ?, ?)
-      `).run(randomUUID(), workspaceId, userId, role.id);
+      `, [randomUUID(), workspaceId, userId, role.id]);
     }
 
     // Create invitation record with token
@@ -124,13 +126,13 @@ const app = new Hono()
     const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
     const orgRole = roleName === 'Company Admin' ? 'COMPANY_ADMIN' : 'MEMBER';
 
-    db.prepare(`
+    await d1Run(`
       INSERT INTO invitations (id, organization_id, email, invited_by, organization_role, token_hash, status, expires_at)
       VALUES (?, ?, ?, ?, ?, ?, 'PENDING', ?)
-    `).run(inviteId, workspaceId, cleanEmail, actor.$id, orgRole, token, expiresAt);
+    `, [inviteId, workspaceId, cleanEmail, actor.$id, orgRole, token, expiresAt]);
 
     // Fetch workspace details for email
-    const workspace = db.prepare('SELECT name FROM workspaces WHERE id = ?').get(workspaceId);
+    const workspace = await d1First('SELECT name FROM workspaces WHERE id = ?', [workspaceId]);
     const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
     const fullInviteUrl = `${frontendUrl}/invite/${token}`;
 
@@ -175,17 +177,16 @@ const app = new Hono()
     const { workspaceId, userId } = ctx.req.param();
     const { status } = await ctx.req.json(); // ACTIVE, SUSPENDED, DEACTIVATED
 
-    if (!hasPermission({ workspaceId, userId: actor.$id, permissionCode: 'USER_MANAGE' })) {
+    if (!await hasPermission({ workspaceId, userId: actor.$id, permissionCode: 'USER_MANAGE' })) {
       return ctx.json({ error: 'Forbidden: Missing USER_MANAGE permission.' }, 403);
     }
 
-    const workspace = db.prepare('SELECT user_id FROM workspaces WHERE id = ?').get(workspaceId);
+    const workspace = await d1First('SELECT user_id FROM workspaces WHERE id = ?', [workspaceId]);
     if (workspace && workspace.user_id === userId) {
       return ctx.json({ error: 'Cannot change status of Company Owner.' }, 400);
     }
 
-    db.prepare('UPDATE members SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE workspace_id = ? AND user_id = ?')
-      .run(status, workspaceId, userId);
+    await d1Run('UPDATE members SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE workspace_id = ? AND user_id = ?', [status, workspaceId, userId]);
 
     logAudit({
       workspaceId,
@@ -204,26 +205,26 @@ const app = new Hono()
     const { workspaceId, userId } = ctx.req.param();
     const { roleId } = await ctx.req.json();
 
-    if (!hasPermission({ workspaceId, userId: actor.$id, permissionCode: 'ROLE_MANAGE' })) {
+    if (!await hasPermission({ workspaceId, userId: actor.$id, permissionCode: 'ROLE_MANAGE' })) {
       return ctx.json({ error: 'Forbidden: Missing ROLE_MANAGE permission.' }, 403);
     }
 
-    const workspace = db.prepare('SELECT user_id FROM workspaces WHERE id = ?').get(workspaceId);
+    const workspace = await d1First('SELECT user_id FROM workspaces WHERE id = ?', [workspaceId]);
     if (workspace && workspace.user_id === userId) {
       return ctx.json({ error: 'Cannot reassign Company Owner role.' }, 400);
     }
 
-    const role = db.prepare('SELECT name FROM roles WHERE id = ? AND workspace_id = ?').get(roleId, workspaceId);
+    const role = await d1First('SELECT name FROM roles WHERE id = ? AND workspace_id = ?', [roleId, workspaceId]);
     if (!role) {
       return ctx.json({ error: 'Role not found.' }, 404);
     }
 
     // Delete existing roles and assign new one
-    db.prepare('DELETE FROM user_roles WHERE workspace_id = ? AND user_id = ?').run(workspaceId, userId);
-    db.prepare(`
+    await d1Run('DELETE FROM user_roles WHERE workspace_id = ? AND user_id = ?', [workspaceId, userId]);
+    await d1Run(`
       INSERT INTO user_roles (id, workspace_id, user_id, role_id)
       VALUES (?, ?, ?, ?)
-    `).run(randomUUID(), workspaceId, userId, roleId);
+    `, [randomUUID(), workspaceId, userId, roleId]);
 
     logAudit({
       workspaceId,
@@ -242,11 +243,11 @@ const app = new Hono()
     const { workspaceId, userId } = ctx.req.param();
     const { name, phone, job_title, department, avatar_url } = await ctx.req.json();
 
-    if (actor.$id !== userId && !hasPermission({ workspaceId, userId: actor.$id, permissionCode: 'USER_MANAGE' })) {
+    if (actor.$id !== userId && !await hasPermission({ workspaceId, userId: actor.$id, permissionCode: 'USER_MANAGE' })) {
       return ctx.json({ error: 'Forbidden.' }, 403);
     }
 
-    db.prepare(`
+    await d1Run(`
       UPDATE users 
       SET name = COALESCE(?, name),
           phone = COALESCE(?, phone),
@@ -255,7 +256,7 @@ const app = new Hono()
           avatar_url = COALESCE(?, avatar_url),
           updated_at = CURRENT_TIMESTAMP
       WHERE id = ?
-    `).run(name ?? null, phone ?? null, job_title ?? null, department ?? null, avatar_url ?? null, userId);
+    `, [name ?? null, phone ?? null, job_title ?? null, department ?? null, avatar_url ?? null, userId]);
 
     return ctx.json({ success: true });
   })
@@ -263,17 +264,17 @@ const app = new Hono()
     const actor = ctx.get('user');
     const { workspaceId, userId } = ctx.req.param();
 
-    if (!hasPermission({ workspaceId, userId: actor.$id, permissionCode: 'USER_MANAGE' })) {
+    if (!await hasPermission({ workspaceId, userId: actor.$id, permissionCode: 'USER_MANAGE' })) {
       return ctx.json({ error: 'Forbidden: Missing USER_MANAGE permission.' }, 403);
     }
 
-    const workspace = db.prepare('SELECT user_id FROM workspaces WHERE id = ?').get(workspaceId);
+    const workspace = await d1First('SELECT user_id FROM workspaces WHERE id = ?', [workspaceId]);
     if (workspace && workspace.user_id === userId) {
       return ctx.json({ error: 'Cannot remove Company Owner from workspace.' }, 400);
     }
 
-    db.prepare('DELETE FROM members WHERE workspace_id = ? AND user_id = ?').run(workspaceId, userId);
-    db.prepare('DELETE FROM user_roles WHERE workspace_id = ? AND user_id = ?').run(workspaceId, userId);
+    await d1Run('DELETE FROM members WHERE workspace_id = ? AND user_id = ?', [workspaceId, userId]);
+    await d1Run('DELETE FROM user_roles WHERE workspace_id = ? AND user_id = ?', [workspaceId, userId]);
 
     logAudit({
       workspaceId,
@@ -292,32 +293,32 @@ const app = new Hono()
     const { workspaceId, userId } = ctx.req.param();
     const { reassignToUserId } = await ctx.req.json();
 
-    if (!hasPermission({ workspaceId, userId: actor.$id, permissionCode: 'USER_MANAGE' })) {
+    if (!await hasPermission({ workspaceId, userId: actor.$id, permissionCode: 'USER_MANAGE' })) {
       return ctx.json({ error: 'Forbidden: Missing USER_MANAGE permission.' }, 403);
     }
 
-    const workspace = db.prepare('SELECT user_id FROM workspaces WHERE id = ?').get(workspaceId);
+    const workspace = await d1First('SELECT user_id FROM workspaces WHERE id = ?', [workspaceId]);
     if (workspace && workspace.user_id === userId) {
       return ctx.json({ error: 'Cannot remove Company Owner from workspace.' }, 400);
     }
 
-    const userMember = db.prepare('SELECT id FROM members WHERE workspace_id = ? AND user_id = ?').get(workspaceId, userId);
+    const userMember = await d1First('SELECT id FROM members WHERE workspace_id = ? AND user_id = ?', [workspaceId, userId]);
     const targetMember = reassignToUserId
-      ? db.prepare('SELECT id FROM members WHERE workspace_id = ? AND user_id = ?').get(workspaceId, reassignToUserId)
+      ? await d1First('SELECT id FROM members WHERE workspace_id = ? AND user_id = ?', [workspaceId, reassignToUserId])
       : null;
 
     let reassignedCount = 0;
     if (userMember && targetMember) {
-      const updateResult = db.prepare(`
+      await d1Run(`
         UPDATE tasks 
         SET assignee_id = ? 
         WHERE workspace_id = ? AND assignee_id = ?
-      `).run(targetMember.id, workspaceId, userMember.id);
-      reassignedCount = updateResult.changes || 0;
+      `, [targetMember.id, workspaceId, userMember.id]);
+      reassignedCount = 1;
     }
 
     // Set member status to DEACTIVATED
-    db.prepare("UPDATE members SET status = 'DEACTIVATED' WHERE workspace_id = ? AND user_id = ?").run(workspaceId, userId);
+    await d1Run("UPDATE members SET status = 'DEACTIVATED' WHERE workspace_id = ? AND user_id = ?", [workspaceId, userId]);
 
     logAudit({
       workspaceId,

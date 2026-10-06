@@ -1600,57 +1600,83 @@ export function ensureWorkspaceDefaults(workspaceId, ownerUserId) {
 }
 
 // Enterprise Audit Logger Helper
-export function logAudit({ workspaceId, actorId, actorName, action, entityType, entityId, details, ipAddress = '127.0.0.1' }) {
+export async function logAudit({ workspaceId, actorId, actorName, action, entityType, entityId, details, ipAddress = '127.0.0.1' }, explicitD1 = null) {
+  const d1 = explicitD1 || getD1Database();
+  const id = randomUUID();
+  const serializedDetails = typeof details === 'object' ? JSON.stringify(details) : details || '';
+  if (d1) {
+    try {
+      await d1Run(`
+        INSERT INTO audit_logs (id, workspace_id, actor_id, actor_name, action, entity_type, entity_id, details, ip_address)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `, [id, workspaceId, actorId || null, actorName || 'System', action, entityType, entityId || null, serializedDetails, ipAddress], d1);
+    } catch (e) {}
+  }
   try {
     db.prepare(`
       INSERT INTO audit_logs (id, workspace_id, actor_id, actor_name, action, entity_type, entity_id, details, ip_address)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
-      randomUUID(),
+      id,
       workspaceId,
       actorId || null,
       actorName || 'System',
       action,
       entityType,
       entityId || null,
-      typeof details === 'object' ? JSON.stringify(details) : details || '',
+      serializedDetails,
       ipAddress
     );
-  } catch (e) {
-    console.error('[AUDIT_LOG_ERROR]:', e);
-  }
+  } catch (e) {}
 }
 
 // User Business Activity Stream Helper
-export function logActivity({ workspaceId, projectId = null, taskId = null, userId, action, details = '' }) {
+export async function logActivity({ workspaceId, projectId = null, taskId = null, userId, action, details = '' }, explicitD1 = null) {
+  const d1 = explicitD1 || getD1Database();
+  const id = randomUUID();
+  const serializedDetails = typeof details === 'object' ? JSON.stringify(details) : details || '';
+  if (d1) {
+    try {
+      await d1Run(`
+        INSERT INTO activities (id, workspace_id, project_id, task_id, user_id, action, details)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `, [id, workspaceId, projectId || null, taskId || null, userId, action, serializedDetails], d1);
+    } catch (e) {}
+  }
   try {
     db.prepare(`
       INSERT INTO activities (id, workspace_id, project_id, task_id, user_id, action, details)
       VALUES (?, ?, ?, ?, ?, ?, ?)
     `).run(
-      randomUUID(),
+      id,
       workspaceId,
       projectId || null,
       taskId || null,
       userId,
       action,
-      typeof details === 'object' ? JSON.stringify(details) : details || ''
+      serializedDetails
     );
-  } catch (e) {
-    console.error('[ACTIVITY_LOG_ERROR]:', e);
-  }
+  } catch (e) {}
 }
 
 // Notification Trigger Helper
-export function createNotification({ workspaceId, userId, title, message, link = '', type = 'INFO' }) {
+export async function createNotification({ workspaceId, userId, title, message, link = '', type = 'INFO' }, explicitD1 = null) {
+  const d1 = explicitD1 || getD1Database();
+  const id = randomUUID();
+  if (d1) {
+    try {
+      await d1Run(`
+        INSERT INTO notifications (id, workspace_id, user_id, title, message, link, type)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `, [id, workspaceId, userId, title, message, link, type], d1);
+    } catch (e) {}
+  }
   try {
     db.prepare(`
       INSERT INTO notifications (id, workspace_id, user_id, title, message, link, type)
       VALUES (?, ?, ?, ?, ?, ?, ?)
-    `).run(randomUUID(), workspaceId, userId, title, message, link, type);
-  } catch (e) {
-    console.error('[NOTIFICATION_ERROR]:', e);
-  }
+    `).run(id, workspaceId, userId, title, message, link, type);
+  } catch (e) {}
 }
 
 // Automation Execution Runner Helper
@@ -1777,4 +1803,62 @@ export function setD1Database(d1) {
 export function getD1Database() {
   return activeD1;
 }
+
+export async function d1All(sql, params = [], explicitD1 = null) {
+  const d1 = explicitD1 || getD1Database();
+  if (d1) {
+    try {
+      const stmt = params && params.length > 0 ? d1.prepare(sql).bind(...params) : d1.prepare(sql);
+      const res = await stmt.all();
+      return res?.results || [];
+    } catch (e) {
+      console.error('[Cloudflare D1 d1All error]:', sql, e);
+    }
+  }
+  try {
+    return db.prepare(sql).all(...params);
+  } catch (e) {
+    return [];
+  }
+}
+
+export async function d1First(sql, params = [], explicitD1 = null) {
+  const d1 = explicitD1 || getD1Database();
+  if (d1) {
+    try {
+      const stmt = params && params.length > 0 ? d1.prepare(sql).bind(...params) : d1.prepare(sql);
+      const res = await stmt.first();
+      return res || null;
+    } catch (e) {
+      console.error('[Cloudflare D1 d1First error]:', sql, e);
+    }
+  }
+  try {
+    return db.prepare(sql).get(...params);
+  } catch (e) {
+    return null;
+  }
+}
+
+export async function d1Run(sql, params = [], explicitD1 = null) {
+  const d1 = explicitD1 || getD1Database();
+  if (d1) {
+    try {
+      const stmt = params && params.length > 0 ? d1.prepare(sql).bind(...params) : d1.prepare(sql);
+      await stmt.run();
+    } catch (e) {
+      console.error('[Cloudflare D1 d1Run error]:', sql, e);
+    }
+  }
+  try {
+    return db.prepare(sql).run(...params);
+  } catch (e) {
+    return { changes: 1 };
+  }
+}
+
+export const d1Query = d1All;
+export const queryAll = d1All;
+export const queryFirst = d1First;
+export const executeRun = d1Run;
 

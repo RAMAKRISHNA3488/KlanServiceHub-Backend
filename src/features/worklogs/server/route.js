@@ -1,18 +1,21 @@
 import { Hono } from 'hono';
 import { randomUUID } from 'node:crypto';
 import { sessionMiddleware } from '../../../lib/session-middleware.js';
-import { db, formatDoc, logActivity } from '../../../db.js';
+import { db, d1All, d1First, d1Run, getD1Database, formatDoc, logActivity } from '../../../db.js';
 
 const app = new Hono()
   .get('/:taskId', sessionMiddleware, async (ctx) => {
     const { taskId } = ctx.req.param();
-    const worklogs = db.prepare(`
+    const d1 = ctx.env?.DB || getD1Database();
+
+    const sql = `
       SELECT w.*, u.name as user_name, u.email as user_email, u.avatar_url as user_avatar
       FROM work_logs w
       JOIN users u ON w.user_id = u.id
       WHERE w.task_id = ?
       ORDER BY w.started_at DESC
-    `).all(taskId);
+    `;
+    const worklogs = await d1All(sql, [taskId], d1);
 
     return ctx.json({ data: worklogs.map(formatDoc) });
   })
@@ -31,14 +34,15 @@ const app = new Hono()
       return ctx.json({ error: 'Valid time spent in seconds is required.' }, 400);
     }
 
-    const task = db.prepare('SELECT * FROM tasks WHERE id = ?').get(taskId);
+    const d1 = ctx.env?.DB || getD1Database();
+    const task = await d1First('SELECT * FROM tasks WHERE id = ?', [taskId], d1);
     if (!task) return ctx.json({ error: 'Issue not found.' }, 404);
 
     const worklogId = randomUUID();
-    db.prepare(`
+    await d1Run(`
       INSERT INTO work_logs (id, task_id, user_id, time_spent_seconds, started_at, description)
       VALUES (?, ?, ?, ?, ?, ?)
-    `).run(worklogId, taskId, user.$id, timeSpentSeconds, startedAt, description);
+    `, [worklogId, taskId, user.$id, timeSpentSeconds, startedAt, description], d1);
 
     // Calculate time tracking updates
     const currentSpent = task.time_spent_seconds || 0;
@@ -53,20 +57,22 @@ const app = new Hono()
       nextRemaining = Math.max(0, newRemainingSeconds);
     }
 
-    db.prepare(`
+    await d1Run(`
       UPDATE tasks 
       SET time_spent_seconds = ?, remaining_estimate_seconds = ?, updated_at = CURRENT_TIMESTAMP
       WHERE id = ?
-    `).run(nextSpent, nextRemaining, taskId);
+    `, [nextSpent, nextRemaining, taskId], d1);
 
-    logActivity({
-      workspaceId: task.workspace_id,
-      projectId: task.project_id,
-      taskId,
-      userId: user.$id,
-      action: 'WORK_LOGGED',
-      details: `Logged ${Math.round(timeSpentSeconds / 3600 * 10) / 10}h on ${task.key || 'issue'}: "${description}"`,
-    });
+    try {
+      logActivity({
+        workspaceId: task.workspace_id,
+        projectId: task.project_id,
+        taskId,
+        userId: user.$id,
+        action: 'WORK_LOGGED',
+        details: `Logged ${Math.round(timeSpentSeconds / 3600 * 10) / 10}h on ${task.key || 'issue'}: "${description}"`,
+      });
+    } catch (e) {}
 
     return ctx.json({
       success: true,
@@ -82,18 +88,19 @@ const app = new Hono()
   .delete('/item/:worklogId', sessionMiddleware, async (ctx) => {
     const user = ctx.get('user');
     const { worklogId } = ctx.req.param();
+    const d1 = ctx.env?.DB || getD1Database();
 
-    const log = db.prepare('SELECT * FROM work_logs WHERE id = ?').get(worklogId);
+    const log = await d1First('SELECT * FROM work_logs WHERE id = ?', [worklogId], d1);
     if (!log) return ctx.json({ error: 'Work log not found.' }, 404);
 
-    db.prepare('DELETE FROM work_logs WHERE id = ?').run(worklogId);
+    await d1Run('DELETE FROM work_logs WHERE id = ?', [worklogId], d1);
 
     // Adjust spent time
-    db.prepare(`
+    await d1Run(`
       UPDATE tasks 
       SET time_spent_seconds = MAX(0, time_spent_seconds - ?), updated_at = CURRENT_TIMESTAMP
       WHERE id = ?
-    `).run(log.time_spent_seconds, log.task_id);
+    `, [log.time_spent_seconds, log.task_id], d1);
 
     return ctx.json({ success: true });
   });

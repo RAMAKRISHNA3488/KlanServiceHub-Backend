@@ -1,34 +1,36 @@
 import { Hono } from 'hono';
 import { randomUUID } from 'node:crypto';
 import { sessionMiddleware } from '../../../lib/session-middleware.js';
-import { db, formatDoc, logAudit, SYSTEM_PERMISSIONS } from '../../../db.js';
+import { db, formatDoc, logAudit, SYSTEM_PERMISSIONS, d1All, d1First, d1Run } from '../../../db.js';
 import { hasPermission } from '../../../lib/permissions.js';
 
 const app = new Hono()
   .get('/:workspaceId', sessionMiddleware, async (ctx) => {
     const { workspaceId } = ctx.req.param();
 
-    const roles = db.prepare(`
+    const roles = await d1All(`
       SELECT * FROM roles 
       WHERE workspace_id = ?
       ORDER BY is_system DESC, created_at ASC
-    `).all(workspaceId);
+    `, [workspaceId]);
 
-    const rolesWithPerms = roles.map((role) => {
-      const perms = db.prepare(`
-        SELECT permission_code FROM role_permissions WHERE role_id = ?
-      `).all(role.id);
+    const rolesWithPerms = await Promise.all(
+      roles.map(async (role) => {
+        const perms = await d1All(`
+          SELECT permission_code FROM role_permissions WHERE role_id = ?
+        `, [role.id]);
 
-      const userCount = db.prepare(`
-        SELECT COUNT(*) as c FROM user_roles WHERE role_id = ?
-      `).get(role.id).c;
+        const countRow = await d1First(`
+          SELECT COUNT(*) as c FROM user_roles WHERE role_id = ?
+        `, [role.id]);
 
-      return {
-        ...formatDoc(role),
-        permissions: perms.map((p) => p.permission_code),
-        userCount,
-      };
-    });
+        return {
+          ...formatDoc(role),
+          permissions: perms.map((p) => p.permission_code),
+          userCount: countRow?.c || 0,
+        };
+      })
+    );
 
     return ctx.json({
       data: {
@@ -42,7 +44,7 @@ const app = new Hono()
     const { workspaceId } = ctx.req.param();
     const { name, description = '', permissions = [] } = await ctx.req.json();
 
-    if (!hasPermission({ workspaceId, userId: actor.$id, permissionCode: 'ROLE_MANAGE' })) {
+    if (!await hasPermission({ workspaceId, userId: actor.$id, permissionCode: 'ROLE_MANAGE' })) {
       return ctx.json({ error: 'Forbidden: Missing ROLE_MANAGE permission.' }, 403);
     }
 
@@ -50,22 +52,22 @@ const app = new Hono()
       return ctx.json({ error: 'Role name is required.' }, 400);
     }
 
-    const existing = db.prepare('SELECT id FROM roles WHERE workspace_id = ? AND name = ?').get(workspaceId, name);
+    const existing = await d1First('SELECT id FROM roles WHERE workspace_id = ? AND name = ?', [workspaceId, name]);
     if (existing) {
       return ctx.json({ error: 'A role with this name already exists in this workspace.' }, 400);
     }
 
     const roleId = randomUUID();
-    db.prepare(`
+    await d1Run(`
       INSERT INTO roles (id, workspace_id, name, description, is_system)
       VALUES (?, ?, ?, ?, 0)
-    `).run(roleId, workspaceId, name, description);
+    `, [roleId, workspaceId, name, description]);
 
     for (const code of permissions) {
-      db.prepare(`
+      await d1Run(`
         INSERT OR IGNORE INTO role_permissions (role_id, permission_code)
         VALUES (?, ?)
-      `).run(roleId, code);
+      `, [roleId, code]);
     }
 
     logAudit({
@@ -85,11 +87,11 @@ const app = new Hono()
     const { workspaceId, roleId } = ctx.req.param();
     const { permissions = [] } = await ctx.req.json();
 
-    if (!hasPermission({ workspaceId, userId: actor.$id, permissionCode: 'ROLE_MANAGE' })) {
+    if (!await hasPermission({ workspaceId, userId: actor.$id, permissionCode: 'ROLE_MANAGE' })) {
       return ctx.json({ error: 'Forbidden: Missing ROLE_MANAGE permission.' }, 403);
     }
 
-    const role = db.prepare('SELECT * FROM roles WHERE id = ? AND workspace_id = ?').get(roleId, workspaceId);
+    const role = await d1First('SELECT * FROM roles WHERE id = ? AND workspace_id = ?', [roleId, workspaceId]);
     if (!role) {
       return ctx.json({ error: 'Role not found.' }, 404);
     }
@@ -99,13 +101,13 @@ const app = new Hono()
     }
 
     // Delete existing permissions for this role
-    db.prepare('DELETE FROM role_permissions WHERE role_id = ?').run(roleId);
+    await d1Run('DELETE FROM role_permissions WHERE role_id = ?', [roleId]);
 
     for (const code of permissions) {
-      db.prepare(`
+      await d1Run(`
         INSERT OR IGNORE INTO role_permissions (role_id, permission_code)
         VALUES (?, ?)
-      `).run(roleId, code);
+      `, [roleId, code]);
     }
 
     logAudit({
@@ -124,11 +126,11 @@ const app = new Hono()
     const actor = ctx.get('user');
     const { workspaceId, roleId } = ctx.req.param();
 
-    if (!hasPermission({ workspaceId, userId: actor.$id, permissionCode: 'ROLE_MANAGE' })) {
+    if (!await hasPermission({ workspaceId, userId: actor.$id, permissionCode: 'ROLE_MANAGE' })) {
       return ctx.json({ error: 'Forbidden: Missing ROLE_MANAGE permission.' }, 403);
     }
 
-    const role = db.prepare('SELECT * FROM roles WHERE id = ? AND workspace_id = ?').get(roleId, workspaceId);
+    const role = await d1First('SELECT * FROM roles WHERE id = ? AND workspace_id = ?', [roleId, workspaceId]);
     if (!role) {
       return ctx.json({ error: 'Role not found.' }, 404);
     }
@@ -137,7 +139,7 @@ const app = new Hono()
       return ctx.json({ error: 'System roles cannot be deleted.' }, 400);
     }
 
-    db.prepare('DELETE FROM roles WHERE id = ?').run(roleId);
+    await d1Run('DELETE FROM roles WHERE id = ?', [roleId]);
 
     logAudit({
       workspaceId,

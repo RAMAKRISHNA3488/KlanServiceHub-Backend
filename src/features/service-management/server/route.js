@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { randomUUID } from 'node:crypto';
 import { sessionMiddleware } from '../../../lib/session-middleware.js';
-import { db, formatDoc, logActivity } from '../../../db.js';
+import { db, d1All, d1First, d1Run, getD1Database, formatDoc, logActivity } from '../../../db.js';
 import { getNextTaskKeyForProject } from '../../../lib/issue-key.js';
 
 const app = new Hono()
@@ -78,7 +78,8 @@ const app = new Hono()
 
     sql += ` ORDER BY r.created_at DESC`;
 
-    const requests = db.prepare(sql).all(...params);
+    const d1 = ctx.env?.DB || getD1Database();
+    const requests = await d1All(sql, params, d1);
 
     return ctx.json({
       data: requests.map((r) => {
@@ -122,10 +123,12 @@ const app = new Hono()
 
     if (!summary) return ctx.json({ error: 'Summary is required.' }, 400);
 
+    const d1 = ctx.env?.DB || getD1Database();
+
     // Resolve or fallback project
     let targetProjectId = projectId;
     if (!targetProjectId) {
-      const firstProject = db.prepare('SELECT id FROM projects WHERE workspace_id = ? LIMIT 1').get(workspaceId);
+      const firstProject = await d1First('SELECT id FROM projects WHERE workspace_id = ? LIMIT 1', [workspaceId], d1);
       if (firstProject) targetProjectId = firstProject.id;
     }
 
@@ -133,7 +136,7 @@ const app = new Hono()
       return ctx.json({ error: 'Please create at least one project before raising service requests.' }, 400);
     }
 
-    const key = getNextTaskKeyForProject(targetProjectId);
+    const key = await getNextTaskKeyForProject(targetProjectId, d1);
 
     // SLA Due calculation
     let calculatedSlaHours = slaHours;
@@ -147,17 +150,17 @@ const app = new Hono()
     const slaDueAt = new Date(Date.now() + calculatedSlaHours * 60 * 60 * 1000).toISOString();
     const slaFirstResponseDueAt = new Date(Date.now() + (calculatedSlaHours / 4) * 60 * 60 * 1000).toISOString();
 
-    const member = db.prepare('SELECT id FROM members WHERE workspace_id = ? AND user_id = ?').get(workspaceId, user.$id);
+    const member = await d1First('SELECT id FROM members WHERE workspace_id = ? AND user_id = ?', [workspaceId, user.$id], d1);
     const assigneeId = assignedAgentId || (member ? member.id : null);
 
     const taskId = randomUUID();
-    db.prepare(`
+    await d1Run(`
       INSERT INTO tasks (id, workspace_id, project_id, assignee_id, reporter_id, name, key, status, priority, issue_type, due_date)
       VALUES (?, ?, ?, ?, ?, ?, ?, 'TODO', ?, 'Task', ?)
-    `).run(taskId, workspaceId, targetProjectId, assigneeId, user.$id, summary, key, priority, slaDueAt);
+    `, [taskId, workspaceId, targetProjectId, assigneeId, user.$id, summary, key, priority, slaDueAt], d1);
 
     const requestId = randomUUID();
-    db.prepare(`
+    await d1Run(`
       INSERT INTO service_requests (
         id, workspace_id, project_id, task_id, customer_id, request_type,
         summary, description, status, priority, queue_name,
@@ -165,7 +168,7 @@ const app = new Hono()
         assigned_agent_id, customer_org_id
       )
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'OPEN', ?, ?, ?, ?, 0, ?, ?)
-    `).run(
+    `, [
       requestId,
       workspaceId,
       targetProjectId,
@@ -179,8 +182,8 @@ const app = new Hono()
       slaDueAt,
       slaFirstResponseDueAt,
       assignedAgentId || null,
-      customerOrgId || null
-    );
+      customerOrgId || null,
+    ], d1);
 
     try {
       logActivity({
@@ -213,7 +216,8 @@ const app = new Hono()
     const { workspaceId, id } = ctx.req.param();
     const { status, priority, assignedAgentId, customerOrgId, queueName } = await ctx.req.json();
 
-    const request = db.prepare('SELECT * FROM service_requests WHERE id = ? AND workspace_id = ?').get(id, workspaceId);
+    const d1 = ctx.env?.DB || getD1Database();
+    const request = await d1First('SELECT * FROM service_requests WHERE id = ? AND workspace_id = ?', [id, workspaceId], d1);
     if (!request) return ctx.json({ error: 'Service request not found.' }, 404);
 
     let resolvedAt = request.resolved_at;
@@ -223,7 +227,7 @@ const app = new Hono()
       resolvedAt = null;
     }
 
-    db.prepare(`
+    await d1Run(`
       UPDATE service_requests
       SET status = COALESCE(?, status),
           priority = COALESCE(?, priority),
@@ -232,24 +236,24 @@ const app = new Hono()
           queue_name = COALESCE(?, queue_name),
           resolved_at = ?
       WHERE id = ?
-    `).run(
+    `, [
       status || null,
       priority || null,
       assignedAgentId || null,
       customerOrgId || null,
       queueName || null,
       resolvedAt,
-      id
-    );
+      id,
+    ], d1);
 
     // Sync status to linked task if resolved
     if (request.task_id && status) {
       const taskStatus = ['RESOLVED', 'CLOSED'].includes(status) ? 'DONE' : status === 'IN_PROGRESS' ? 'IN_PROGRESS' : 'TODO';
-      db.prepare('UPDATE tasks SET status = ?, priority = COALESCE(?, priority) WHERE id = ?').run(
+      await d1Run('UPDATE tasks SET status = ?, priority = COALESCE(?, priority) WHERE id = ?', [
         taskStatus,
         priority || null,
-        request.task_id
-      );
+        request.task_id,
+      ], d1);
     }
 
     try {
@@ -268,14 +272,15 @@ const app = new Hono()
   // 4. DELETE A SERVICE REQUEST
   .delete('/:workspaceId/requests/:id', sessionMiddleware, async (ctx) => {
     const { workspaceId, id } = ctx.req.param();
-    const request = db.prepare('SELECT * FROM service_requests WHERE id = ? AND workspace_id = ?').get(id, workspaceId);
+    const d1 = ctx.env?.DB || getD1Database();
+    const request = await d1First('SELECT * FROM service_requests WHERE id = ? AND workspace_id = ?', [id, workspaceId], d1);
 
     if (!request) return ctx.json({ error: 'Service request not found.' }, 404);
 
-    db.prepare('DELETE FROM service_requests WHERE id = ?').run(id);
+    await d1Run('DELETE FROM service_requests WHERE id = ?', [id], d1);
 
     if (request.task_id) {
-      db.prepare('DELETE FROM tasks WHERE id = ?').run(request.task_id);
+      await d1Run('DELETE FROM tasks WHERE id = ?', [request.task_id], d1);
     }
 
     return ctx.json({ success: true, message: 'Service request removed.' });
@@ -284,50 +289,51 @@ const app = new Hono()
   // 5. GET SERVICE QUEUES COUNTS & TELEMETRY
   .get('/:workspaceId/queues', sessionMiddleware, async (ctx) => {
     const { workspaceId } = ctx.req.param();
+    const d1 = ctx.env?.DB || getD1Database();
 
-    const allOpen = db.prepare(`
+    const allOpen = (await d1First(`
       SELECT COUNT(*) as c FROM service_requests WHERE workspace_id = ? AND status NOT IN ('RESOLVED', 'CLOSED')
-    `).get(workspaceId)?.c ?? 0;
+    `, [workspaceId], d1))?.c ?? 0;
 
-    const critical = db.prepare(`
+    const critical = (await d1First(`
       SELECT COUNT(*) as c FROM service_requests 
       WHERE workspace_id = ? AND priority IN ('HIGH', 'CRITICAL') AND status NOT IN ('RESOLVED', 'CLOSED')
-    `).get(workspaceId)?.c ?? 0;
+    `, [workspaceId], d1))?.c ?? 0;
 
-    const incidents = db.prepare(`
+    const incidents = (await d1First(`
       SELECT COUNT(*) as c FROM service_requests 
       WHERE workspace_id = ? AND request_type = 'INCIDENT' AND status NOT IN ('RESOLVED', 'CLOSED')
-    `).get(workspaceId)?.c ?? 0;
+    `, [workspaceId], d1))?.c ?? 0;
 
-    const serviceRequests = db.prepare(`
+    const serviceRequests = (await d1First(`
       SELECT COUNT(*) as c FROM service_requests 
       WHERE workspace_id = ? AND request_type = 'SERVICE_REQUEST' AND status NOT IN ('RESOLVED', 'CLOSED')
-    `).get(workspaceId)?.c ?? 0;
+    `, [workspaceId], d1))?.c ?? 0;
 
-    const changes = db.prepare(`
+    const changes = (await d1First(`
       SELECT COUNT(*) as c FROM service_requests 
       WHERE workspace_id = ? AND request_type = 'CHANGE' AND status NOT IN ('RESOLVED', 'CLOSED')
-    `).get(workspaceId)?.c ?? 0;
+    `, [workspaceId], d1))?.c ?? 0;
 
-    const problems = db.prepare(`
+    const problems = (await d1First(`
       SELECT COUNT(*) as c FROM service_requests 
       WHERE workspace_id = ? AND request_type = 'PROBLEM' AND status NOT IN ('RESOLVED', 'CLOSED')
-    `).get(workspaceId)?.c ?? 0;
+    `, [workspaceId], d1))?.c ?? 0;
 
-    const slaAtRisk = db.prepare(`
+    const slaAtRisk = (await d1First(`
       SELECT COUNT(*) as c FROM service_requests 
       WHERE workspace_id = ? AND datetime(sla_due_at) < datetime('now', '+2 hours') AND status NOT IN ('RESOLVED', 'CLOSED')
-    `).get(workspaceId)?.c ?? 0;
+    `, [workspaceId], d1))?.c ?? 0;
 
-    const waitingCustomer = db.prepare(`
+    const waitingCustomer = (await d1First(`
       SELECT COUNT(*) as c FROM service_requests 
       WHERE workspace_id = ? AND status = 'WAITING_FOR_CUSTOMER'
-    `).get(workspaceId)?.c ?? 0;
+    `, [workspaceId], d1))?.c ?? 0;
 
-    const resolvedClosed = db.prepare(`
+    const resolvedClosed = (await d1First(`
       SELECT COUNT(*) as c FROM service_requests 
       WHERE workspace_id = ? AND status IN ('RESOLVED', 'CLOSED')
-    `).get(workspaceId)?.c ?? 0;
+    `, [workspaceId], d1))?.c ?? 0;
 
     return ctx.json({
       data: [
@@ -347,13 +353,14 @@ const app = new Hono()
   // 6. GET SLA PERFORMANCE METRICS
   .get('/:workspaceId/slas', sessionMiddleware, async (ctx) => {
     const { workspaceId } = ctx.req.param();
+    const d1 = ctx.env?.DB || getD1Database();
 
-    const total = db.prepare('SELECT COUNT(*) as c FROM service_requests WHERE workspace_id = ?').get(workspaceId)?.c ?? 0;
-    const resolved = db.prepare("SELECT COUNT(*) as c FROM service_requests WHERE workspace_id = ? AND status IN ('RESOLVED', 'CLOSED')").get(workspaceId)?.c ?? 0;
-    const breached = db.prepare(`
+    const total = (await d1First('SELECT COUNT(*) as c FROM service_requests WHERE workspace_id = ?', [workspaceId], d1))?.c ?? 0;
+    const resolved = (await d1First("SELECT COUNT(*) as c FROM service_requests WHERE workspace_id = ? AND status IN ('RESOLVED', 'CLOSED')", [workspaceId], d1))?.c ?? 0;
+    const breached = (await d1First(`
       SELECT COUNT(*) as c FROM service_requests 
       WHERE workspace_id = ? AND (sla_breached = 1 OR (datetime(sla_due_at) < datetime('now') AND status NOT IN ('RESOLVED', 'CLOSED')))
-    `).get(workspaceId)?.c ?? 0;
+    `, [workspaceId], d1))?.c ?? 0;
 
     const slaMetRate = total > 0 ? Math.max(0, Math.round(((total - breached) / total) * 100)) : 100;
 
@@ -374,26 +381,27 @@ const app = new Hono()
   .post('/:workspaceId/seed-demo', sessionMiddleware, async (ctx) => {
     const user = ctx.get('user');
     const { workspaceId } = ctx.req.param();
+    const d1 = ctx.env?.DB || getD1Database();
 
     // Ensure project exists
-    let project = db.prepare('SELECT id, key FROM projects WHERE workspace_id = ? LIMIT 1').get(workspaceId);
+    let project = await d1First('SELECT id, key FROM projects WHERE workspace_id = ? LIMIT 1', [workspaceId], d1);
     if (!project) {
       const projId = randomUUID();
-      db.prepare(`
+      await d1Run(`
         INSERT INTO projects (id, workspace_id, name, key, category)
         VALUES (?, ?, 'IT Service Operations', 'KSM', 'Service Desk')
-      `).run(projId, workspaceId);
+      `, [projId, workspaceId], d1);
       project = { id: projId, key: 'KSM' };
     }
 
     // Ensure customer org exists
-    let org = db.prepare('SELECT id FROM customer_organizations WHERE workspace_id = ? LIMIT 1').get(workspaceId);
+    let org = await d1First('SELECT id FROM customer_organizations WHERE workspace_id = ? LIMIT 1', [workspaceId], d1);
     if (!org) {
       const orgId = randomUUID();
-      db.prepare(`
+      await d1Run(`
         INSERT INTO customer_organizations (id, workspace_id, name, domains)
         VALUES (?, ?, 'Acme Global Enterprise', '["acme.com", "acme-corp.io"]')
-      `).run(orgId, workspaceId);
+      `, [orgId, workspaceId], d1);
       org = { id: orgId };
     }
 
@@ -447,20 +455,20 @@ const app = new Hono()
 
     let createdCount = 0;
     for (const t of demoTickets) {
-      const existing = db.prepare(`
+      const existing = await d1First(`
         SELECT id FROM service_requests WHERE workspace_id = ? AND summary = ?
-      `).get(workspaceId, t.summary);
+      `, [workspaceId, t.summary], d1);
 
       if (!existing) {
         const taskId = randomUUID();
         const reqId = randomUUID();
-        const key = getNextTaskKeyForProject(project.id);
+        const key = await getNextTaskKeyForProject(project.id, d1);
         const slaDueAt = new Date(Date.now() + t.slaHours * 60 * 60 * 1000).toISOString();
 
-        db.prepare(`
+        await d1Run(`
           INSERT INTO tasks (id, workspace_id, project_id, assignee_id, reporter_id, name, key, status, priority, issue_type, due_date)
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'Task', ?)
-        `).run(
+        `, [
           taskId,
           workspaceId,
           project.id,
@@ -470,10 +478,10 @@ const app = new Hono()
           key,
           t.status === 'RESOLVED' ? 'DONE' : 'TODO',
           t.priority,
-          slaDueAt
-        );
+          slaDueAt,
+        ], d1);
 
-        db.prepare(`
+        await d1Run(`
           INSERT INTO service_requests (
             id, workspace_id, project_id, task_id, customer_id, request_type,
             summary, description, status, priority, queue_name,
@@ -481,7 +489,7 @@ const app = new Hono()
             assigned_agent_id, customer_org_id, resolved_at
           )
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)
-        `).run(
+        `, [
           reqId,
           workspaceId,
           project.id,
@@ -497,8 +505,8 @@ const app = new Hono()
           new Date(Date.now() + (t.slaHours / 3) * 60 * 60 * 1000).toISOString(),
           user.$id,
           org.id,
-          t.status === 'RESOLVED' ? new Date().toISOString() : null
-        );
+          t.status === 'RESOLVED' ? new Date().toISOString() : null,
+        ], d1);
 
         createdCount++;
       }
@@ -514,7 +522,8 @@ const app = new Hono()
   // 8. CUSTOMER ORGANIZATIONS MANAGEMENT
   .get('/:workspaceId/customers', sessionMiddleware, async (ctx) => {
     const { workspaceId } = ctx.req.param();
-    const orgs = db.prepare('SELECT * FROM customer_organizations WHERE workspace_id = ?').all(workspaceId);
+    const d1 = ctx.env?.DB || getD1Database();
+    const orgs = await d1All('SELECT * FROM customer_organizations WHERE workspace_id = ?', [workspaceId], d1);
     return ctx.json({
       data: orgs.map((o) => ({
         ...formatDoc(o),
@@ -528,11 +537,12 @@ const app = new Hono()
 
     if (!name) return ctx.json({ error: 'Organization name is required.' }, 400);
 
+    const d1 = ctx.env?.DB || getD1Database();
     const id = randomUUID();
-    db.prepare(`
+    await d1Run(`
       INSERT INTO customer_organizations (id, workspace_id, name, domains)
       VALUES (?, ?, ?, ?)
-    `).run(id, workspaceId, name, JSON.stringify(domains));
+    `, [id, workspaceId, name, JSON.stringify(domains)], d1);
 
     return ctx.json({ success: true, id, name, domains });
   });

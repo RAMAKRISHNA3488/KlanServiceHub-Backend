@@ -2,7 +2,7 @@ import { Hono } from 'hono';
 import { randomUUID, randomBytes } from 'node:crypto';
 import bcrypt from 'bcryptjs';
 import { sessionMiddleware } from '../../../lib/session-middleware.js';
-import { db, formatDoc, logAudit, createNotification, ensureWorkspaceDefaults } from '../../../db.js';
+import { db, formatDoc, logAudit, createNotification, ensureWorkspaceDefaults, d1All, d1First, d1Run } from '../../../db.js';
 import { broadcastWorkspaceEvent } from '../../../lib/events.js';
 import { sendInvitationEmail } from '../../../lib/mail.js';
 
@@ -10,7 +10,7 @@ const app = new Hono()
   .get('/token/:token', async (ctx) => {
     const { token } = ctx.req.param();
 
-    const invite = db.prepare(`
+    const invite = await d1First(`
       SELECT i.*, w.name as organization_name, w.image_url as organization_image,
              u.name as inviter_name, u.email as inviter_email,
              p.name as project_name
@@ -19,19 +19,19 @@ const app = new Hono()
       JOIN users u ON i.invited_by = u.id
       LEFT JOIN projects p ON i.project_id = p.id
       WHERE i.token_hash = ?
-    `).get(token);
+    `, [token]);
 
     if (!invite) {
       return ctx.json({ error: 'Invitation not found or invalid link.' }, 404);
     }
 
     if (new Date(invite.expires_at) < new Date() && invite.status === 'PENDING') {
-      db.prepare("UPDATE invitations SET status = 'EXPIRED' WHERE id = ?").run(invite.id);
+      await d1Run("UPDATE invitations SET status = 'EXPIRED' WHERE id = ?", [invite.id]);
       invite.status = 'EXPIRED';
     }
 
     // Check if user already exists
-    const existingUser = db.prepare('SELECT id, name, email FROM users WHERE email = ?').get(invite.email.toLowerCase());
+    const existingUser = await d1First('SELECT id, name, email FROM users WHERE email = ?', [invite.email.toLowerCase()]);
 
     return ctx.json({
       data: {
@@ -55,7 +55,7 @@ const app = new Hono()
     const user = ctx.get('user');
     const { token } = ctx.req.param();
 
-    const invite = db.prepare('SELECT * FROM invitations WHERE token_hash = ?').get(token);
+    const invite = await d1First('SELECT * FROM invitations WHERE token_hash = ?', [token]);
     if (!invite) {
       return ctx.json({ error: 'Invitation not found.' }, 404);
     }
@@ -65,50 +65,50 @@ const app = new Hono()
     }
 
     if (new Date(invite.expires_at) < new Date()) {
-      db.prepare("UPDATE invitations SET status = 'EXPIRED' WHERE id = ?").run(invite.id);
+      await d1Run("UPDATE invitations SET status = 'EXPIRED' WHERE id = ?", [invite.id]);
       return ctx.json({ error: 'This invitation has expired.' }, 400);
     }
 
     // Create or activate organization membership
-    const existingMember = db.prepare('SELECT id FROM members WHERE workspace_id = ? AND user_id = ?').get(invite.organization_id, user.$id);
+    const existingMember = await d1First('SELECT id FROM members WHERE workspace_id = ? AND user_id = ?', [invite.organization_id, user.$id]);
     if (!existingMember) {
       const memberId = randomUUID();
       const memberRole = invite.organization_role === 'COMPANY_ADMIN' ? 'ADMIN' : 'MEMBER';
 
-      db.prepare(`
+      await d1Run(`
         INSERT INTO members (id, workspace_id, user_id, role, status, organization_role)
         VALUES (?, ?, ?, ?, 'ACTIVE', ?)
-      `).run(memberId, invite.organization_id, user.$id, memberRole, invite.organization_role || 'MEMBER');
+      `, [memberId, invite.organization_id, user.$id, memberRole, invite.organization_role || 'MEMBER']);
 
       // Assign system role in roles table
-      const systemRole = db.prepare('SELECT id FROM roles WHERE workspace_id = ? AND name = ?').get(
+      const systemRole = await d1First('SELECT id FROM roles WHERE workspace_id = ? AND name = ?', [
         invite.organization_id,
         invite.organization_role === 'COMPANY_ADMIN' ? 'Company Admin' : (invite.organization_role === 'USER_ACCESS_ADMIN' ? 'User Access Admin' : 'Developer')
-      );
+      ]);
       if (systemRole) {
-        db.prepare(`
+        await d1Run(`
           INSERT OR IGNORE INTO user_roles (id, workspace_id, user_id, role_id)
           VALUES (?, ?, ?, ?)
-        `).run(randomUUID(), invite.organization_id, user.$id, systemRole.id);
+        `, [randomUUID(), invite.organization_id, user.$id, systemRole.id]);
       }
     }
 
     // If project assigned, add project membership
     if (invite.project_id) {
-      const projectRole = db.prepare('SELECT id FROM roles WHERE workspace_id = ? AND name = ?').get(invite.organization_id, 'Developer');
+      const projectRole = await d1First('SELECT id FROM roles WHERE workspace_id = ? AND name = ?', [invite.organization_id, 'Developer']);
       if (projectRole) {
-        db.prepare(`
+        await d1Run(`
           INSERT OR IGNORE INTO project_members (id, project_id, user_id, role_id)
           VALUES (?, ?, ?, ?)
-        `).run(randomUUID(), invite.project_id, user.$id, projectRole.id);
+        `, [randomUUID(), invite.project_id, user.$id, projectRole.id]);
       }
     }
 
     // Mark invitation accepted
-    db.prepare("UPDATE invitations SET status = 'ACCEPTED' WHERE id = ?").run(invite.id);
+    await d1Run("UPDATE invitations SET status = 'ACCEPTED' WHERE id = ?", [invite.id]);
 
     // Update user onboarding status
-    db.prepare("UPDATE users SET onboarding_status = 'ONBOARDING_COMPLETED' WHERE id = ?").run(user.$id);
+    await d1Run("UPDATE users SET onboarding_status = 'ONBOARDING_COMPLETED' WHERE id = ?", [user.$id]);
 
     logAudit({
       workspaceId: invite.organization_id,
@@ -144,22 +144,22 @@ const app = new Hono()
   })
   .post('/token/:token/decline', async (ctx) => {
     const { token } = ctx.req.param();
-    const invite = db.prepare('SELECT id, organization_id, invited_by FROM invitations WHERE token_hash = ?').get(token);
+    const invite = await d1First('SELECT id, organization_id, invited_by FROM invitations WHERE token_hash = ?', [token]);
     if (!invite) return ctx.json({ error: 'Invitation not found.' }, 404);
 
-    db.prepare("UPDATE invitations SET status = 'DECLINED' WHERE id = ?").run(invite.id);
+    await d1Run("UPDATE invitations SET status = 'DECLINED' WHERE id = ?", [invite.id]);
     return ctx.json({ success: true });
   })
   .get('/:workspaceId', sessionMiddleware, async (ctx) => {
     const { workspaceId } = ctx.req.param();
-    const invites = db.prepare(`
+    const invites = await d1All(`
       SELECT i.*, u.name as inviter_name, p.name as project_name
       FROM invitations i
       JOIN users u ON i.invited_by = u.id
       LEFT JOIN projects p ON i.project_id = p.id
       WHERE i.organization_id = ?
       ORDER BY i.created_at DESC
-    `).all(workspaceId);
+    `, [workspaceId]);
 
     return ctx.json({ data: invites.map(formatDoc) });
   })
@@ -187,10 +187,10 @@ const app = new Hono()
       const projId = item.projectId || null;
       const projRole = item.projectRole || 'MEMBER';
 
-      db.prepare(`
+      await d1Run(`
         INSERT INTO invitations (id, organization_id, email, invited_by, organization_role, project_id, project_role, token_hash, status, expires_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', ?)
-      `).run(inviteId, workspaceId, cleanEmail, user.$id, orgRole, projId, projRole, token, expiresAt);
+      `, [inviteId, workspaceId, cleanEmail, user.$id, orgRole, projId, projRole, token, expiresAt]);
 
       logAudit({
         workspaceId,
@@ -208,8 +208,8 @@ const app = new Hono()
         role: orgRole,
       });
 
-      const workspace = db.prepare('SELECT name FROM workspaces WHERE id = ?').get(workspaceId);
-      const project = projId ? db.prepare('SELECT name FROM projects WHERE id = ?').get(projId) : null;
+      const workspace = await d1First('SELECT name FROM workspaces WHERE id = ?', [workspaceId]);
+      const project = projId ? await d1First('SELECT name FROM projects WHERE id = ?', [projId]) : null;
       const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
       const fullInviteUrl = `${frontendUrl}/invite/${token}`;
 
@@ -243,7 +243,7 @@ const app = new Hono()
   })
   .delete('/:workspaceId/:id', sessionMiddleware, async (ctx) => {
     const { workspaceId, id } = ctx.req.param();
-    db.prepare("UPDATE invitations SET status = 'REVOKED' WHERE id = ? AND organization_id = ?").run(id, workspaceId);
+    await d1Run("UPDATE invitations SET status = 'REVOKED' WHERE id = ? AND organization_id = ?", [id, workspaceId]);
     return ctx.json({ success: true });
   });
 

@@ -7,7 +7,7 @@ import { getMember } from '../../members/utils.js';
 import { createTaskSchema } from '../schema.js';
 import { TaskStatus } from '../types.js';
 import { sessionMiddleware } from '../../../lib/session-middleware.js';
-import { db, formatDoc, logAudit, logActivity, createNotification, triggerAutomations, getD1Database } from '../../../db.js';
+import { db, formatDoc, logAudit, logActivity, createNotification, triggerAutomations, getD1Database, d1All, d1First, d1Run } from '../../../db.js';
 import { broadcastWorkspaceEvent } from '../../../lib/events.js';
 import { getNextTaskKeyForProject } from '../../../lib/issue-key.js';
 
@@ -275,8 +275,9 @@ const app = new Hono()
   .get('/my-work', sessionMiddleware, async (ctx) => {
     const user = ctx.get('user');
     const workspaceId = ctx.req.query('workspaceId');
+    const d1 = ctx.env?.DB || getD1Database();
 
-    const memberRows = db.prepare('SELECT id, workspace_id FROM members WHERE user_id = ?').all(user.$id);
+    const memberRows = await d1All('SELECT id, workspace_id FROM members WHERE user_id = ?', [user.$id], d1);
     const memberIds = memberRows.map((m) => m.id);
 
     if (memberIds.length === 0) {
@@ -293,7 +294,7 @@ const app = new Hono()
     const placeholders = memberIds.map(() => '?').join(',');
 
     // Assigned to Me
-    const assigned = db.prepare(`
+    const assigned = await d1All(`
       SELECT t.*, p.key as project_key, p.name as project_name
       FROM tasks t
       JOIN projects p ON t.project_id = p.id
@@ -301,20 +302,20 @@ const app = new Hono()
       AND t.status != 'DONE'
       ORDER BY t.updated_at DESC
       LIMIT 20
-    `).all(...(workspaceId ? [...memberIds, ...memberIds, workspaceId] : [...memberIds, ...memberIds]));
+    `, (workspaceId ? [...memberIds, ...memberIds, workspaceId] : [...memberIds, ...memberIds]), d1);
 
     // Reported by Me
-    const reported = db.prepare(`
+    const reported = await d1All(`
       SELECT t.*, p.key as project_key, p.name as project_name
       FROM tasks t
       JOIN projects p ON t.project_id = p.id
       WHERE t.reporter_id = ? ${workspaceId ? 'AND t.workspace_id = ?' : ''}
       ORDER BY t.created_at DESC
       LIMIT 20
-    `).all(...(workspaceId ? [user.$id, workspaceId] : [user.$id]));
+    `, (workspaceId ? [user.$id, workspaceId] : [user.$id]), d1);
 
     // Watched by Me
-    const watched = db.prepare(`
+    const watched = await d1All(`
       SELECT t.*, p.key as project_key, p.name as project_name
       FROM task_watchers w
       JOIN tasks t ON w.task_id = t.id
@@ -322,13 +323,17 @@ const app = new Hono()
       WHERE w.user_id = ? ${workspaceId ? 'AND t.workspace_id = ?' : ''}
       ORDER BY t.updated_at DESC
       LIMIT 20
-    `).all(...(workspaceId ? [user.$id, workspaceId] : [user.$id]));
+    `, (workspaceId ? [user.$id, workspaceId] : [user.$id]), d1);
+
+    const assignedDocs = await attachAssigneesToTasks(assigned.map(formatDoc), d1);
+    const reportedDocs = await attachAssigneesToTasks(reported.map(formatDoc), d1);
+    const watchedDocs = await attachAssigneesToTasks(watched.map(formatDoc), d1);
 
     return ctx.json({
       data: {
-        assignedToMe: attachAssigneesToTasks(assigned.map(formatDoc)),
-        reportedByMe: attachAssigneesToTasks(reported.map(formatDoc)),
-        watchedIssues: attachAssigneesToTasks(watched.map(formatDoc)),
+        assignedToMe: assignedDocs,
+        reportedByMe: reportedDocs,
+        watchedIssues: watchedDocs,
       },
     });
   })
@@ -336,6 +341,7 @@ const app = new Hono()
     const user = ctx.get('user');
     const body = await ctx.req.json();
     const { tasks = [] } = body;
+    const d1 = ctx.env?.DB || getD1Database();
 
     if (!Array.isArray(tasks) || tasks.length === 0) {
       return ctx.json({ data: [] });
@@ -348,7 +354,7 @@ const app = new Hono()
       const taskId = item.$id || item.id;
       if (!taskId) continue;
 
-      const existingTask = db.prepare('SELECT * FROM tasks WHERE id = ?').get(taskId);
+      const existingTask = await d1First('SELECT * FROM tasks WHERE id = ?', [taskId], d1);
       if (!existingTask) continue;
 
       workspaceId = existingTask.workspace_id;
@@ -366,8 +372,8 @@ const app = new Hono()
 
       // Restriction: Only Admins / Workspace Owners can move tasks to DONE
       if (newStatus === 'DONE' && existingTask.status !== 'DONE') {
-        const member = await getMember({ workspaceId: existingTask.workspace_id, userId: user.$id });
-        const workspace = db.prepare('SELECT user_id FROM workspaces WHERE id = ?').get(existingTask.workspace_id);
+        const member = await getMember({ workspaceId: existingTask.workspace_id, userId: user.$id, d1 });
+        const workspace = await d1First('SELECT user_id FROM workspaces WHERE id = ?', [existingTask.workspace_id], d1);
         const isOwner = workspace && workspace.user_id === user.$id;
         const isAdmin = isOwner || (member && (member.role === 'ADMIN' || member.organization_role === 'COMPANY_OWNER' || member.organization_role === 'COMPANY_ADMIN'));
 
@@ -376,17 +382,17 @@ const app = new Hono()
         }
       }
 
-      db.prepare(`
+      await d1Run(`
         UPDATE tasks 
         SET status = ?, position = ?, updated_at = CURRENT_TIMESTAMP
         WHERE id = ?
-      `).run(newStatus, newPosition, taskId);
+      `, [newStatus, newPosition, taskId], d1);
 
       if (newStatus !== existingTask.status) {
-        db.prepare(`
+        await d1Run(`
           INSERT INTO task_history (id, task_id, user_id, field_name, old_value, new_value)
           VALUES (?, ?, ?, 'status', ?, ?)
-        `).run(randomUUID(), taskId, user.$id, existingTask.status, newStatus);
+        `, [randomUUID(), taskId, user.$id, existingTask.status, newStatus], d1);
 
         logActivity({
           workspaceId: existingTask.workspace_id,
@@ -398,7 +404,7 @@ const app = new Hono()
         });
       }
 
-      const updated = db.prepare('SELECT * FROM tasks WHERE id = ?').get(taskId);
+      const updated = await d1First('SELECT * FROM tasks WHERE id = ?', [taskId], d1);
       if (updated) {
         updatedTasks.push(formatDoc(updated));
       }
@@ -546,7 +552,7 @@ const app = new Hono()
     const d1 = ctx.env?.DB || getD1Database();
 
     // Auto-generate project-wise unique KlanserviceHub issue key (e.g. SW-1, IE-2, KLAN-101)
-    const key = getNextTaskKeyForProject(projectId);
+    const key = await getNextTaskKeyForProject(projectId, d1);
 
     let maxPosNum = 0;
     if (d1) {

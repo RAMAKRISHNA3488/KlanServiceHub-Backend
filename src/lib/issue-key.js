@@ -1,4 +1,4 @@
-import { db } from '../db.js';
+import { db, d1First, d1All, d1Run, getD1Database } from '../db.js';
 
 /**
  * Generate a clean uppercase project key from a project name.
@@ -70,27 +70,29 @@ export function generateProjectKey(projectName, existingKeys = []) {
  * Get next unique task key for a project e.g. "SW-1", "IE-2", "KLAN-101".
  * Guaranteed to be unique across all tasks.
  */
-export function getNextTaskKeyForProject(projectId) {
+export async function getNextTaskKeyForProject(projectId, explicitD1 = null) {
   if (!projectId) return 'TASK-1';
 
+  const d1 = explicitD1 || getD1Database();
+
   // 1. Fetch project info
-  const project = db.prepare('SELECT id, name, key, workspace_id FROM projects WHERE id = ?').get(projectId);
+  const project = await d1First('SELECT id, name, key, workspace_id FROM projects WHERE id = ?', [projectId], d1);
   if (!project) return 'TASK-1';
 
   let projKey = (project.key || '').trim().toUpperCase();
 
   // If project key is missing or 'PROJ', generate and update a unique project key
   if (!projKey || projKey === 'PROJ') {
-    const existingProjects = db.prepare('SELECT key FROM projects WHERE workspace_id = ? AND id != ?').all(project.workspace_id, project.id);
+    const existingProjects = await d1All('SELECT key FROM projects WHERE workspace_id = ? AND id != ?', [project.workspace_id, project.id], d1);
     const existingKeys = existingProjects.map((p) => p.key).filter(Boolean);
     projKey = generateProjectKey(project.name, existingKeys);
     try {
-      db.prepare('UPDATE projects SET key = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(projKey, projectId);
+      await d1Run('UPDATE projects SET key = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [projKey, projectId], d1);
     } catch (e) {}
   }
 
   // 2. Fetch all existing task keys in this project
-  const taskRows = db.prepare('SELECT key FROM tasks WHERE project_id = ? AND key IS NOT NULL').all(projectId);
+  const taskRows = await d1All('SELECT key FROM tasks WHERE project_id = ? AND key IS NOT NULL', [projectId], d1);
 
   let maxNum = 0;
   const regex = new RegExp(`^${projKey}-(\\d+)$`, 'i');
@@ -115,13 +117,12 @@ export function getNextTaskKeyForProject(projectId) {
     }
   }
 
-  // Next number: if maxNum > 0, next is maxNum + 1. Otherwise start at 1 (or 101 if preferred).
-  // In KlanserviceHub, projects typically start from 1: KEY-1, KEY-2...
+  // Next number: if maxNum > 0, next is maxNum + 1. Otherwise start at 1.
   let nextNum = maxNum > 0 ? maxNum + 1 : 1;
   let candidateKey = `${projKey}-${nextNum}`;
 
   // Double check collision across database just in case
-  while (db.prepare('SELECT id FROM tasks WHERE key = ?').get(candidateKey)) {
+  while (await d1First('SELECT id FROM tasks WHERE key = ?', [candidateKey], d1)) {
     nextNum++;
     candidateKey = `${projKey}-${nextNum}`;
   }
