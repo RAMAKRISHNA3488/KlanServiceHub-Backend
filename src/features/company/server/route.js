@@ -2,19 +2,34 @@ import { Hono } from 'hono';
 import bcrypt from 'bcryptjs';
 import { randomUUID } from 'node:crypto';
 import { sessionMiddleware } from '../../../lib/session-middleware.js';
-import { db, formatDoc, logAudit, ensureWorkspaceDefaults } from '../../../db.js';
+import { db, formatDoc, logAudit, ensureWorkspaceDefaults, getD1Database } from '../../../db.js';
 import { hasPermission, getUserPermissions } from '../../../lib/permissions.js';
 
 const app = new Hono()
   .post('/', sessionMiddleware, async (ctx) => {
     const user = ctx.get('user');
     const { name, domainSlug = '', industry = '', companySize = '', country = 'India' } = await ctx.req.json();
+    const d1 = ctx.env?.DB || getD1Database();
 
     if (!name) return ctx.json({ error: 'Company name is required.' }, 400);
 
     const workspaceId = randomUUID();
     const inviteCode = randomUUID().substring(0, 8).toUpperCase();
     const slug = domainSlug || name.toLowerCase().replace(/[^a-z0-9]/g, '-');
+
+    if (d1) {
+      try {
+        await d1.prepare(`
+          INSERT INTO workspaces (id, name, user_id, invite_code, domain_slug, industry, company_size, country, status)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'ACTIVE')
+        `).bind(workspaceId, name, user.$id, inviteCode, slug, industry, companySize, country).run();
+
+        await d1.prepare(`
+          INSERT INTO members (id, workspace_id, user_id, role, status, organization_role)
+          VALUES (?, ?, ?, 'ADMIN', 'ACTIVE', 'COMPANY_OWNER')
+        `).bind(randomUUID(), workspaceId, user.$id).run();
+      } catch (e) {}
+    }
 
     db.prepare(`
       INSERT INTO workspaces (id, name, user_id, invite_code, domain_slug, industry, company_size, country, status)
@@ -29,6 +44,11 @@ const app = new Hono()
     ensureWorkspaceDefaults(workspaceId, user.$id);
 
     // Update user's onboarding status
+    if (d1) {
+      try {
+        await d1.prepare("UPDATE users SET onboarding_status = 'ORGANIZATION_CREATED' WHERE id = ?").bind(user.$id).run();
+      } catch (e) {}
+    }
     db.prepare("UPDATE users SET onboarding_status = 'ORGANIZATION_CREATED' WHERE id = ?").run(user.$id);
 
     logAudit({
@@ -54,20 +74,47 @@ const app = new Hono()
   .get('/:workspaceId', sessionMiddleware, async (ctx) => {
     const user = ctx.get('user');
     const { workspaceId } = ctx.req.param();
+    const d1 = ctx.env?.DB || getD1Database();
 
     ensureWorkspaceDefaults(workspaceId, user.$id);
 
-    const workspace = db.prepare('SELECT * FROM workspaces WHERE id = ?').get(workspaceId);
+    let workspace = null;
+    if (d1) {
+      try {
+        workspace = await d1.prepare('SELECT * FROM workspaces WHERE id = ?').bind(workspaceId).first();
+      } catch (e) {}
+    }
+    if (!workspace) {
+      workspace = db.prepare('SELECT * FROM workspaces WHERE id = ?').get(workspaceId);
+    }
+
     if (!workspace) {
       return ctx.json({ error: 'Company not found.' }, 404);
     }
 
-    const member = db.prepare('SELECT * FROM members WHERE workspace_id = ? AND user_id = ?').get(workspaceId, user.$id);
+    let member = null;
+    if (d1) {
+      try {
+        member = await d1.prepare('SELECT * FROM members WHERE workspace_id = ? AND user_id = ?').bind(workspaceId, user.$id).first();
+      } catch (e) {}
+    }
+    if (!member) {
+      member = db.prepare('SELECT * FROM members WHERE workspace_id = ? AND user_id = ?').get(workspaceId, user.$id);
+    }
+
     if (!member && workspace.user_id !== user.$id) {
       return ctx.json({ error: 'Unauthorized.' }, 401);
     }
 
-    const owner = db.prepare('SELECT id, name, email, avatar_url FROM users WHERE id = ?').get(workspace.user_id);
+    let owner = null;
+    if (d1) {
+      try {
+        owner = await d1.prepare('SELECT id, name, email, avatar_url FROM users WHERE id = ?').bind(workspace.user_id).first();
+      } catch (e) {}
+    }
+    if (!owner) {
+      owner = db.prepare('SELECT id, name, email, avatar_url FROM users WHERE id = ?').get(workspace.user_id);
+    }
     const permissions = getUserPermissions({ workspaceId, userId: user.$id });
     const isOwner = workspace.user_id === user.$id;
 

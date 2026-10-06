@@ -8,7 +8,7 @@ import { getMember } from '../../members/utils.js';
 import { createProjectSchema, updateProjectSchema } from '../schema.js';
 import { TaskStatus } from '../../tasks/types.js';
 import { sessionMiddleware } from '../../../lib/session-middleware.js';
-import { db, formatDoc } from '../../../db.js';
+import { db, formatDoc, getD1Database } from '../../../db.js';
 import { generateProjectKey } from '../../../lib/issue-key.js';
 
 const app = new Hono()
@@ -38,8 +38,19 @@ const app = new Hono()
       return ctx.json({ error: 'Unauthorized.' }, 401);
     }
 
+    const d1 = ctx.env?.DB || getD1Database();
+
     // Auto-generate unique project key if not provided
-    const existingProjects = db.prepare('SELECT key FROM projects WHERE workspace_id = ?').all(workspaceId);
+    let existingProjects = [];
+    if (d1) {
+      try {
+        const res = await d1.prepare('SELECT key FROM projects WHERE workspace_id = ?').bind(workspaceId).all();
+        existingProjects = res.results || [];
+      } catch (e) {}
+    }
+    if (existingProjects.length === 0) {
+      existingProjects = db.prepare('SELECT key FROM projects WHERE workspace_id = ?').all(workspaceId);
+    }
     const existingKeys = existingProjects.map((p) => p.key).filter(Boolean);
 
     if (key && typeof key === 'string' && key.trim().length > 0) {
@@ -59,12 +70,31 @@ const app = new Hono()
 
     const projectId = randomUUID();
 
+    if (d1) {
+      try {
+        await d1.prepare(`
+          INSERT INTO projects (id, name, key, workspace_id, image_id, image_url, category)
+          VALUES (?, ?, ?, ?, ?, ?, ?)
+        `).bind(projectId, name, key, workspaceId, imageId, imageUrl, category || 'Software').run();
+      } catch (e) {
+        console.error('[D1_CREATE_PROJECT_ERROR]:', e);
+      }
+    }
+
     db.prepare(`
       INSERT INTO projects (id, name, key, workspace_id, image_id, image_url, category)
       VALUES (?, ?, ?, ?, ?, ?, ?)
     `).run(projectId, name, key, workspaceId, imageId, imageUrl, category || 'Software');
 
-    const project = db.prepare('SELECT * FROM projects WHERE id = ?').get(projectId);
+    let project = null;
+    if (d1) {
+      try {
+        project = await d1.prepare('SELECT * FROM projects WHERE id = ?').bind(projectId).first();
+      } catch (e) {}
+    }
+    if (!project) {
+      project = db.prepare('SELECT * FROM projects WHERE id = ?').get(projectId);
+    }
 
     return ctx.json({ data: formatDoc(project) });
   })
@@ -90,11 +120,28 @@ const app = new Hono()
         return ctx.json({ error: 'Unauthorized.' }, 401);
       }
 
-      const rows = db.prepare(`
-        SELECT * FROM projects 
-        WHERE workspace_id = ? 
-        ORDER BY created_at DESC
-      `).all(workspaceId);
+      const d1 = ctx.env?.DB || getD1Database();
+      let rows = [];
+      if (d1) {
+        try {
+          const res = await d1.prepare(`
+            SELECT * FROM projects 
+            WHERE workspace_id = ? 
+            ORDER BY created_at DESC
+          `).bind(workspaceId).all();
+          rows = res.results || [];
+        } catch (e) {
+          console.error('[D1_GET_PROJECTS_ERROR]:', e);
+        }
+      }
+
+      if (rows.length === 0) {
+        rows = db.prepare(`
+          SELECT * FROM projects 
+          WHERE workspace_id = ? 
+          ORDER BY created_at DESC
+        `).all(workspaceId);
+      }
 
       const documents = rows.map(formatDoc);
 
@@ -109,8 +156,17 @@ const app = new Hono()
   .get('/:projectId', sessionMiddleware, async (ctx) => {
     const user = ctx.get('user');
     const { projectId } = ctx.req.param();
+    const d1 = ctx.env?.DB || getD1Database();
 
-    const project = db.prepare('SELECT * FROM projects WHERE id = ?').get(projectId);
+    let project = null;
+    if (d1) {
+      try {
+        project = await d1.prepare('SELECT * FROM projects WHERE id = ?').bind(projectId).first();
+      } catch (e) {}
+    }
+    if (!project) {
+      project = db.prepare('SELECT * FROM projects WHERE id = ?').get(projectId);
+    }
 
     if (!project) {
       return ctx.json({ error: 'Project not found.' }, 404);
@@ -140,8 +196,17 @@ const app = new Hono()
     }
 
     const { name, image, key, category } = body;
+    const d1 = ctx.env?.DB || getD1Database();
 
-    const project = db.prepare('SELECT * FROM projects WHERE id = ?').get(projectId);
+    let project = null;
+    if (d1) {
+      try {
+        project = await d1.prepare('SELECT * FROM projects WHERE id = ?').bind(projectId).first();
+      } catch (e) {}
+    }
+    if (!project) {
+      project = db.prepare('SELECT * FROM projects WHERE id = ?').get(projectId);
+    }
 
     if (!project) {
       return ctx.json({ error: 'Project not found.' }, 404);
@@ -191,18 +256,42 @@ const app = new Hono()
 
     if (updates.length > 0) {
       updates.push('updated_at = CURRENT_TIMESTAMP');
+      if (d1) {
+        try {
+          await d1.prepare(`UPDATE projects SET ${updates.join(', ')} WHERE id = ?`).bind(...params, projectId).run();
+        } catch (e) {
+          console.error('[D1_PATCH_PROJECT_ERROR]:', e);
+        }
+      }
       db.prepare(`UPDATE projects SET ${updates.join(', ')} WHERE id = ?`).run(...params, projectId);
     }
 
-    const updated = db.prepare('SELECT * FROM projects WHERE id = ?').get(projectId);
+    let updated = null;
+    if (d1) {
+      try {
+        updated = await d1.prepare('SELECT * FROM projects WHERE id = ?').bind(projectId).first();
+      } catch (e) {}
+    }
+    if (!updated) {
+      updated = db.prepare('SELECT * FROM projects WHERE id = ?').get(projectId);
+    }
 
     return ctx.json({ data: formatDoc(updated) });
   })
   .delete('/:projectId', sessionMiddleware, async (ctx) => {
     const user = ctx.get('user');
     const { projectId } = ctx.req.param();
+    const d1 = ctx.env?.DB || getD1Database();
 
-    const project = db.prepare('SELECT * FROM projects WHERE id = ?').get(projectId);
+    let project = null;
+    if (d1) {
+      try {
+        project = await d1.prepare('SELECT * FROM projects WHERE id = ?').bind(projectId).first();
+      } catch (e) {}
+    }
+    if (!project) {
+      project = db.prepare('SELECT * FROM projects WHERE id = ?').get(projectId);
+    }
 
     if (!project) {
       return ctx.json({ error: 'Project not found.' }, 404);
@@ -215,6 +304,13 @@ const app = new Hono()
 
     if (!member) {
       return ctx.json({ error: 'Unauthorized.' }, 401);
+    }
+
+    if (d1) {
+      try {
+        await d1.prepare('DELETE FROM tasks WHERE project_id = ?').bind(projectId).run();
+        await d1.prepare('DELETE FROM projects WHERE id = ?').bind(projectId).run();
+      } catch (e) {}
     }
 
     db.prepare('DELETE FROM projects WHERE id = ?').run(projectId);

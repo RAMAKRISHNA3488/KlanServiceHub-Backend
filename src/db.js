@@ -1767,3 +1767,14 @@ export function formatDoc(row) {
   if (row.sprint_id !== undefined) doc.sprintId = row.sprint_id;
   return doc;
 }
+
+let activeD1 = null;
+
+export function setD1Database(d1) {
+  if (d1) activeD1 = d1;
+}
+
+export function getD1Database() {
+  return activeD1;
+}
+

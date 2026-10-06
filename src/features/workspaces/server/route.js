@@ -10,24 +10,48 @@ import { TaskStatus } from '../../tasks/types.js';
 import { createWorkspaceSchema, updateWorkspaceSchema } from '../schema.js';
 import { sessionMiddleware } from '../../../lib/session-middleware.js';
 import { generateInviteCode } from '../../../lib/utils.js';
-import { db, formatDoc, ensureWorkspaceDefaults } from '../../../db.js';
+import { db, formatDoc, ensureWorkspaceDefaults, getD1Database } from '../../../db.js';
 
 const app = new Hono()
   .get('/', sessionMiddleware, async (ctx) => {
     const user = ctx.get('user');
+    const d1 = ctx.env?.DB || getD1Database();
 
-    const rows = db.prepare(`
-      SELECT w.*, 
-             m.role as user_role, 
-             m.organization_role,
-             (SELECT COUNT(*) FROM members WHERE workspace_id = w.id) as member_count,
-             (SELECT COUNT(*) FROM projects WHERE workspace_id = w.id) as project_count,
-             (SELECT COUNT(*) FROM tasks WHERE workspace_id = w.id) as task_count
-      FROM workspaces w
-      JOIN members m ON w.id = m.workspace_id
-      WHERE m.user_id = ?
-      ORDER BY w.created_at DESC
-    `).all(user.$id);
+    let rows = [];
+    if (d1) {
+      try {
+        const res = await d1.prepare(`
+          SELECT w.*, 
+                 m.role as user_role, 
+                 m.organization_role,
+                 (SELECT COUNT(*) FROM members WHERE workspace_id = w.id) as member_count,
+                 (SELECT COUNT(*) FROM projects WHERE workspace_id = w.id) as project_count,
+                 (SELECT COUNT(*) FROM tasks WHERE workspace_id = w.id) as task_count
+          FROM workspaces w
+          JOIN members m ON w.id = m.workspace_id
+          WHERE m.user_id = ?
+          ORDER BY w.created_at DESC
+        `).bind(user.$id).all();
+        rows = res.results || [];
+      } catch (err) {
+        console.error('[D1_WORKSPACES_GET_ERROR]:', err);
+      }
+    }
+
+    if (rows.length === 0) {
+      rows = db.prepare(`
+        SELECT w.*, 
+               m.role as user_role, 
+               m.organization_role,
+               (SELECT COUNT(*) FROM members WHERE workspace_id = w.id) as member_count,
+               (SELECT COUNT(*) FROM projects WHERE workspace_id = w.id) as project_count,
+               (SELECT COUNT(*) FROM tasks WHERE workspace_id = w.id) as task_count
+        FROM workspaces w
+        JOIN members m ON w.id = m.workspace_id
+        WHERE m.user_id = ?
+        ORDER BY w.created_at DESC
+      `).all(user.$id);
+    }
 
     const documents = rows.map((row) => {
       const doc = formatDoc(row);
@@ -63,6 +87,23 @@ const app = new Hono()
 
     const workspaceId = randomUUID();
     const inviteCode = generateInviteCode(6);
+    const d1 = ctx.env?.DB || getD1Database();
+
+    if (d1) {
+      try {
+        await d1.prepare(`
+          INSERT INTO workspaces (id, name, user_id, image_id, image_url, invite_code)
+          VALUES (?, ?, ?, ?, ?, ?)
+        `).bind(workspaceId, name, user.$id, imageId, imageUrl, inviteCode).run();
+
+        await d1.prepare(`
+          INSERT INTO members (id, workspace_id, user_id, role)
+          VALUES (?, ?, ?, ?)
+        `).bind(randomUUID(), workspaceId, user.$id, MemberRole.ADMIN).run();
+      } catch (e) {
+        console.error('[D1_CREATE_WORKSPACE_ERROR]:', e);
+      }
+    }
 
     db.prepare(`
       INSERT INTO workspaces (id, name, user_id, image_id, image_url, invite_code)
@@ -76,7 +117,15 @@ const app = new Hono()
 
     ensureWorkspaceDefaults(workspaceId, user.$id);
 
-    const workspace = db.prepare('SELECT * FROM workspaces WHERE id = ?').get(workspaceId);
+    let workspace = null;
+    if (d1) {
+      try {
+        workspace = await d1.prepare('SELECT * FROM workspaces WHERE id = ?').bind(workspaceId).first();
+      } catch (e) {}
+    }
+    if (!workspace) {
+      workspace = db.prepare('SELECT * FROM workspaces WHERE id = ?').get(workspaceId);
+    }
 
     return ctx.json({ data: formatDoc(workspace) });
   })
@@ -95,7 +144,18 @@ const app = new Hono()
       return ctx.json({ error: 'Unauthorized.' }, 401);
     }
 
-    const workspace = db.prepare('SELECT * FROM workspaces WHERE id = ?').get(workspaceId);
+    const d1 = ctx.env?.DB || getD1Database();
+    let workspace = null;
+    if (d1) {
+      try {
+        workspace = await d1.prepare('SELECT * FROM workspaces WHERE id = ?').bind(workspaceId).first();
+      } catch (e) {
+        console.error('[D1_GET_WORKSPACE_ERROR]:', e);
+      }
+    }
+    if (!workspace) {
+      workspace = db.prepare('SELECT * FROM workspaces WHERE id = ?').get(workspaceId);
+    }
 
     if (!workspace) {
       return ctx.json({ error: 'Workspace not found.' }, 404);
@@ -105,8 +165,17 @@ const app = new Hono()
   })
   .get('/:workspaceId/info', sessionMiddleware, async (ctx) => {
     const { workspaceId } = ctx.req.param();
+    const d1 = ctx.env?.DB || getD1Database();
 
-    const workspace = db.prepare('SELECT id, name FROM workspaces WHERE id = ?').get(workspaceId);
+    let workspace = null;
+    if (d1) {
+      try {
+        workspace = await d1.prepare('SELECT id, name FROM workspaces WHERE id = ?').bind(workspaceId).first();
+      } catch (e) {}
+    }
+    if (!workspace) {
+      workspace = db.prepare('SELECT id, name FROM workspaces WHERE id = ?').get(workspaceId);
+    }
 
     if (!workspace) {
       return ctx.json({ error: 'Workspace not found.' }, 404);
@@ -142,6 +211,21 @@ const app = new Hono()
       imageId = randomUUID();
     }
 
+    const d1 = ctx.env?.DB || getD1Database();
+    if (d1) {
+      try {
+        if (name && imageUrl !== undefined) {
+          await d1.prepare('UPDATE workspaces SET name = ?, image_id = ?, image_url = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(name, imageId || null, imageUrl, workspaceId).run();
+        } else if (name) {
+          await d1.prepare('UPDATE workspaces SET name = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(name, workspaceId).run();
+        } else if (imageUrl !== undefined) {
+          await d1.prepare('UPDATE workspaces SET image_id = ?, image_url = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(imageId || null, imageUrl, workspaceId).run();
+        }
+      } catch (e) {
+        console.error('[D1_PATCH_WORKSPACE_ERROR]:', e);
+      }
+    }
+
     if (name && imageUrl !== undefined) {
       db.prepare('UPDATE workspaces SET name = ?, image_id = ?, image_url = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(name, imageId || null, imageUrl, workspaceId);
     } else if (name) {
@@ -150,15 +234,33 @@ const app = new Hono()
       db.prepare('UPDATE workspaces SET image_id = ?, image_url = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(imageId || null, imageUrl, workspaceId);
     }
 
-    const workspace = db.prepare('SELECT * FROM workspaces WHERE id = ?').get(workspaceId);
+    let workspace = null;
+    if (d1) {
+      try {
+        workspace = await d1.prepare('SELECT * FROM workspaces WHERE id = ?').bind(workspaceId).first();
+      } catch (e) {}
+    }
+    if (!workspace) {
+      workspace = db.prepare('SELECT * FROM workspaces WHERE id = ?').get(workspaceId);
+    }
 
     return ctx.json({ data: formatDoc(workspace) });
   })
   .delete('/:workspaceId', sessionMiddleware, async (ctx) => {
     const user = ctx.get('user');
     const { workspaceId } = ctx.req.param();
+    const d1 = ctx.env?.DB || getD1Database();
 
-    const workspace = db.prepare('SELECT * FROM workspaces WHERE id = ?').get(workspaceId);
+    let workspace = null;
+    if (d1) {
+      try {
+        workspace = await d1.prepare('SELECT * FROM workspaces WHERE id = ?').bind(workspaceId).first();
+      } catch (e) {}
+    }
+    if (!workspace) {
+      workspace = db.prepare('SELECT * FROM workspaces WHERE id = ?').get(workspaceId);
+    }
+
     if (!workspace) {
       return ctx.json({ error: 'Workspace not found.' }, 404);
     }
@@ -198,6 +300,17 @@ const app = new Hono()
       'security_policies', 'audit_logs', 'subscriptions', 'invoices', 'backups', 'invitations'
     ];
 
+    if (d1) {
+      for (const table of tablesToClean) {
+        try {
+          await d1.prepare(`DELETE FROM ${table} WHERE workspace_id = ?`).bind(workspaceId).run();
+        } catch (e) {}
+      }
+      try {
+        await d1.prepare('DELETE FROM workspaces WHERE id = ?').bind(workspaceId).run();
+      } catch (e) {}
+    }
+
     for (const table of tablesToClean) {
       try {
         db.prepare(`DELETE FROM ${table} WHERE workspace_id = ?`).run(workspaceId);
@@ -213,6 +326,7 @@ const app = new Hono()
   .post('/:workspaceId/resetInviteCode', sessionMiddleware, async (ctx) => {
     const user = ctx.get('user');
     const { workspaceId } = ctx.req.param();
+    const d1 = ctx.env?.DB || getD1Database();
 
     const member = await getMember({
       workspaceId,
@@ -224,9 +338,22 @@ const app = new Hono()
     }
 
     const newCode = generateInviteCode(6);
+    if (d1) {
+      try {
+        await d1.prepare('UPDATE workspaces SET invite_code = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(newCode, workspaceId).run();
+      } catch (e) {}
+    }
     db.prepare('UPDATE workspaces SET invite_code = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(newCode, workspaceId);
 
-    const workspace = db.prepare('SELECT * FROM workspaces WHERE id = ?').get(workspaceId);
+    let workspace = null;
+    if (d1) {
+      try {
+        workspace = await d1.prepare('SELECT * FROM workspaces WHERE id = ?').bind(workspaceId).first();
+      } catch (e) {}
+    }
+    if (!workspace) {
+      workspace = db.prepare('SELECT * FROM workspaces WHERE id = ?').get(workspaceId);
+    }
 
     return ctx.json({ data: formatDoc(workspace) });
   })
@@ -243,6 +370,7 @@ const app = new Hono()
       const { workspaceId } = ctx.req.param();
       const { code } = ctx.req.valid('json');
       const user = ctx.get('user');
+      const d1 = ctx.env?.DB || getD1Database();
 
       const member = await getMember({
         workspaceId,
@@ -253,10 +381,27 @@ const app = new Hono()
         return ctx.json({ error: 'Already a member.' }, 400);
       }
 
-      const workspace = db.prepare('SELECT * FROM workspaces WHERE id = ?').get(workspaceId);
+      let workspace = null;
+      if (d1) {
+        try {
+          workspace = await d1.prepare('SELECT * FROM workspaces WHERE id = ?').bind(workspaceId).first();
+        } catch (e) {}
+      }
+      if (!workspace) {
+        workspace = db.prepare('SELECT * FROM workspaces WHERE id = ?').get(workspaceId);
+      }
 
       if (!workspace || workspace.invite_code !== code) {
         return ctx.json({ error: 'Invalid invite code.' }, 400);
+      }
+
+      if (d1) {
+        try {
+          await d1.prepare(`
+            INSERT INTO members (id, workspace_id, user_id, role)
+            VALUES (?, ?, ?, ?)
+          `).bind(randomUUID(), workspaceId, user.$id, MemberRole.MEMBER).run();
+        } catch (e) {}
       }
 
       db.prepare(`

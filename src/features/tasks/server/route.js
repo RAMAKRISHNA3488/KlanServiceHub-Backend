@@ -7,27 +7,44 @@ import { getMember } from '../../members/utils.js';
 import { createTaskSchema } from '../schema.js';
 import { TaskStatus } from '../types.js';
 import { sessionMiddleware } from '../../../lib/session-middleware.js';
-import { db, formatDoc, logAudit, logActivity, createNotification, triggerAutomations } from '../../../db.js';
+import { db, formatDoc, logAudit, logActivity, createNotification, triggerAutomations, getD1Database } from '../../../db.js';
 import { broadcastWorkspaceEvent } from '../../../lib/events.js';
 import { getNextTaskKeyForProject } from '../../../lib/issue-key.js';
 
-function attachAssigneesToTasks(tasks) {
+async function attachAssigneesToTasks(tasks, d1) {
   if (!tasks || tasks.length === 0) return tasks;
   const taskIds = tasks.map((t) => t.$id || t.id).filter(Boolean);
   if (taskIds.length === 0) return tasks;
 
   const placeholders = taskIds.map(() => '?').join(',');
   let assigneeRows = [];
-  try {
-    assigneeRows = db.prepare(`
-      SELECT ta.task_id, m.id as member_id, m.role as member_role, m.workspace_id as member_workspace_id, m.user_id,
-             u.name as user_name, u.email as user_email, u.avatar_url as user_avatar
-      FROM task_assignees ta
-      JOIN members m ON ta.member_id = m.id
-      JOIN users u ON m.user_id = u.id
-      WHERE ta.task_id IN (${placeholders})
-    `).all(...taskIds);
-  } catch (err) {}
+  const dbInstance = d1 || getD1Database();
+  if (dbInstance) {
+    try {
+      const res = await dbInstance.prepare(`
+        SELECT ta.task_id, m.id as member_id, m.role as member_role, m.workspace_id as member_workspace_id, m.user_id,
+               u.name as user_name, u.email as user_email, u.avatar_url as user_avatar
+        FROM task_assignees ta
+        JOIN members m ON ta.member_id = m.id
+        JOIN users u ON m.user_id = u.id
+        WHERE ta.task_id IN (${placeholders})
+      `).bind(...taskIds).all();
+      assigneeRows = res.results || [];
+    } catch (e) {}
+  }
+
+  if (assigneeRows.length === 0) {
+    try {
+      assigneeRows = db.prepare(`
+        SELECT ta.task_id, m.id as member_id, m.role as member_role, m.workspace_id as member_workspace_id, m.user_id,
+               u.name as user_name, u.email as user_email, u.avatar_url as user_avatar
+        FROM task_assignees ta
+        JOIN members m ON ta.member_id = m.id
+        JOIN users u ON m.user_id = u.id
+        WHERE ta.task_id IN (${placeholders})
+      `).all(...taskIds);
+    } catch (err) {}
+  }
 
   const assigneesByTaskId = {};
   for (const row of assigneeRows) {
@@ -66,20 +83,37 @@ function attachAssigneesToTasks(tasks) {
   return tasks;
 }
 
-function attachAssigneesToTask(task) {
+async function attachAssigneesToTask(task, d1) {
   if (!task) return task;
   const taskId = task.$id || task.id;
   let rows = [];
-  try {
-    rows = db.prepare(`
-      SELECT m.id as member_id, m.role as member_role, m.workspace_id as member_workspace_id, m.user_id,
-             u.name as user_name, u.email as user_email, u.avatar_url as user_avatar
-      FROM task_assignees ta
-      JOIN members m ON ta.member_id = m.id
-      JOIN users u ON m.user_id = u.id
-      WHERE ta.task_id = ?
-    `).all(taskId);
-  } catch (err) {}
+  const dbInstance = d1 || getD1Database();
+  if (dbInstance) {
+    try {
+      const res = await dbInstance.prepare(`
+        SELECT m.id as member_id, m.role as member_role, m.workspace_id as member_workspace_id, m.user_id,
+               u.name as user_name, u.email as user_email, u.avatar_url as user_avatar
+        FROM task_assignees ta
+        JOIN members m ON ta.member_id = m.id
+        JOIN users u ON m.user_id = u.id
+        WHERE ta.task_id = ?
+      `).bind(taskId).all();
+      rows = res.results || [];
+    } catch (e) {}
+  }
+
+  if (rows.length === 0) {
+    try {
+      rows = db.prepare(`
+        SELECT m.id as member_id, m.role as member_role, m.workspace_id as member_workspace_id, m.user_id,
+               u.name as user_name, u.email as user_email, u.avatar_url as user_avatar
+        FROM task_assignees ta
+        JOIN members m ON ta.member_id = m.id
+        JOIN users u ON m.user_id = u.id
+        WHERE ta.task_id = ?
+      `).all(taskId);
+    } catch (err) {}
+  }
 
   if (rows.length > 0) {
     task.assignees = rows.map((r) => ({
@@ -177,7 +211,22 @@ const app = new Hono()
 
     query += ' ORDER BY t.position ASC, t.created_at DESC';
 
-    const rows = db.prepare(query).all(...params);
+    const d1 = ctx.env?.DB || getD1Database();
+    let rows = [];
+    if (d1) {
+      try {
+        const stmt = params.length > 0 ? d1.prepare(query).bind(...params) : d1.prepare(query);
+        const res = await stmt.all();
+        rows = res.results || [];
+      } catch (err) {
+        console.error('[D1_TASKS_GET_ERROR]:', err);
+      }
+    }
+    if (rows.length === 0) {
+      try {
+        rows = db.prepare(query).all(...params);
+      } catch (e) {}
+    }
 
     const documents = rows.map((row) => {
       const task = formatDoc(row);
@@ -214,7 +263,7 @@ const app = new Hono()
       return task;
     });
 
-    attachAssigneesToTasks(documents);
+    await attachAssigneesToTasks(documents, d1);
 
     return ctx.json({
       data: {
@@ -367,20 +416,42 @@ const app = new Hono()
   .get('/:taskId', sessionMiddleware, async (ctx) => {
     const { taskId } = ctx.req.param();
     const currentUser = ctx.get('user');
+    const d1 = ctx.env?.DB || getD1Database();
 
-    const row = db.prepare(`
-      SELECT t.*, 
-             p.id as p_id, p.name as p_name, p.key as p_key, p.image_url as p_image_url, p.workspace_id as p_workspace_id,
-             m.id as m_id, m.role as m_role, m.workspace_id as m_workspace_id, m.user_id as m_user_id,
-             u.name as u_name, u.email as u_email, u.avatar_url as u_avatar,
-             ru.name as rep_name, ru.email as rep_email, ru.avatar_url as rep_avatar
-      FROM tasks t
-      LEFT JOIN projects p ON t.project_id = p.id
-      LEFT JOIN members m ON t.assignee_id = m.id
-      LEFT JOIN users u ON m.user_id = u.id
-      LEFT JOIN users ru ON t.reporter_id = ru.id
-      WHERE t.id = ?
-    `).get(taskId);
+    let row = null;
+    if (d1) {
+      try {
+        row = await d1.prepare(`
+          SELECT t.*, 
+                 p.id as p_id, p.name as p_name, p.key as p_key, p.image_url as p_image_url, p.workspace_id as p_workspace_id,
+                 m.id as m_id, m.role as m_role, m.workspace_id as m_workspace_id, m.user_id as m_user_id,
+                 u.name as u_name, u.email as u_email, u.avatar_url as u_avatar,
+                 ru.name as rep_name, ru.email as rep_email, ru.avatar_url as rep_avatar
+          FROM tasks t
+          LEFT JOIN projects p ON t.project_id = p.id
+          LEFT JOIN members m ON t.assignee_id = m.id
+          LEFT JOIN users u ON m.user_id = u.id
+          LEFT JOIN users ru ON t.reporter_id = ru.id
+          WHERE t.id = ?
+        `).bind(taskId).first();
+      } catch (e) {}
+    }
+
+    if (!row) {
+      row = db.prepare(`
+        SELECT t.*, 
+               p.id as p_id, p.name as p_name, p.key as p_key, p.image_url as p_image_url, p.workspace_id as p_workspace_id,
+               m.id as m_id, m.role as m_role, m.workspace_id as m_workspace_id, m.user_id as m_user_id,
+               u.name as u_name, u.email as u_email, u.avatar_url as u_avatar,
+               ru.name as rep_name, ru.email as rep_email, ru.avatar_url as rep_avatar
+        FROM tasks t
+        LEFT JOIN projects p ON t.project_id = p.id
+        LEFT JOIN members m ON t.assignee_id = m.id
+        LEFT JOIN users u ON m.user_id = u.id
+        LEFT JOIN users ru ON t.reporter_id = ru.id
+        WHERE t.id = ?
+      `).get(taskId);
+    }
 
     if (!row) {
       return ctx.json({ error: 'Task not found.' }, 404);
@@ -432,7 +503,7 @@ const app = new Hono()
     `).all(taskId);
     task.comments = comments.map(formatDoc);
 
-    attachAssigneesToTask(task);
+    await attachAssigneesToTask(task, d1);
 
     return ctx.json({ data: task });
   })
@@ -472,14 +543,26 @@ const app = new Hono()
       return ctx.json({ error: 'Unauthorized.' }, 401);
     }
 
+    const d1 = ctx.env?.DB || getD1Database();
+
     // Auto-generate project-wise unique KlanserviceHub issue key (e.g. SW-1, IE-2, KLAN-101)
     const key = getNextTaskKeyForProject(projectId);
 
-    const highestPos = db.prepare(`
-      SELECT MAX(position) as max_pos FROM tasks WHERE status = ? AND workspace_id = ?
-    `).get(status, workspaceId);
+    let maxPosNum = 0;
+    if (d1) {
+      try {
+        const hp = await d1.prepare('SELECT MAX(position) as max_pos FROM tasks WHERE status = ? AND workspace_id = ?').bind(status, workspaceId).first();
+        if (hp && hp.max_pos) maxPosNum = hp.max_pos;
+      } catch (e) {}
+    }
+    if (maxPosNum === 0) {
+      const highestPos = db.prepare(`
+        SELECT MAX(position) as max_pos FROM tasks WHERE status = ? AND workspace_id = ?
+      `).get(status, workspaceId);
+      if (highestPos && highestPos.max_pos) maxPosNum = highestPos.max_pos;
+    }
 
-    const newPosition = highestPos && highestPos.max_pos ? highestPos.max_pos + 1000 : 1000;
+    const newPosition = maxPosNum ? maxPosNum + 1000 : 1000;
     const taskId = randomUUID();
     const dueDateStr = dueDate ? (dueDate instanceof Date ? dueDate.toISOString() : dueDate) : new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
 
@@ -492,6 +575,47 @@ const app = new Hono()
     const primaryAssigneeId = targetAssigneeIds[0] || member.$id || member.id;
     if (targetAssigneeIds.length === 0 && primaryAssigneeId) {
       targetAssigneeIds = [primaryAssigneeId];
+    }
+
+    if (d1) {
+      try {
+        await d1.prepare(`
+          INSERT INTO tasks (
+            id, key, name, description, status, priority, issue_type, workspace_id, project_id,
+            assignee_id, reporter_id, sprint_id, story_points, labels, epic_id, parent_task_id,
+            original_estimate_hours, due_date, position
+          )
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).bind(
+          taskId,
+          key,
+          name,
+          description || null,
+          status,
+          priority,
+          issueType,
+          workspaceId,
+          projectId,
+          primaryAssigneeId,
+          user.$id,
+          sprintId || null,
+          Number(storyPoints) || 1,
+          JSON.stringify(labels || []),
+          epicId || null,
+          parentTaskId || null,
+          Number(originalEstimateHours) || 0,
+          dueDateStr,
+          newPosition
+        ).run();
+
+        for (const mId of targetAssigneeIds) {
+          try {
+            await d1.prepare('INSERT OR IGNORE INTO task_assignees (id, task_id, member_id) VALUES (?, ?, ?)').bind(randomUUID(), taskId, mId).run();
+          } catch (e) {}
+        }
+      } catch (e) {
+        console.error('[D1_CREATE_TASK_ERROR]:', e);
+      }
     }
 
     db.prepare(`
@@ -566,15 +690,34 @@ const app = new Hono()
       });
     }
 
-    const task = db.prepare('SELECT * FROM tasks WHERE id = ?').get(taskId);
-    return ctx.json({ data: attachAssigneesToTask(formatDoc(task)) });
+    let task = null;
+    if (d1) {
+      try {
+        task = await d1.prepare('SELECT * FROM tasks WHERE id = ?').bind(taskId).first();
+      } catch (e) {}
+    }
+    if (!task) {
+      task = db.prepare('SELECT * FROM tasks WHERE id = ?').get(taskId);
+    }
+
+    return ctx.json({ data: await attachAssigneesToTask(formatDoc(task), d1) });
   })
   .patch('/:taskId', sessionMiddleware, async (ctx) => {
     const user = ctx.get('user');
     const body = await ctx.req.json();
     const { taskId } = ctx.req.param();
+    const d1 = ctx.env?.DB || getD1Database();
 
-    const existingTask = db.prepare('SELECT * FROM tasks WHERE id = ?').get(taskId);
+    let existingTask = null;
+    if (d1) {
+      try {
+        existingTask = await d1.prepare('SELECT * FROM tasks WHERE id = ?').bind(taskId).first();
+      } catch (e) {}
+    }
+    if (!existingTask) {
+      existingTask = db.prepare('SELECT * FROM tasks WHERE id = ?').get(taskId);
+    }
+
     if (!existingTask) {
       return ctx.json({ error: 'Task not found.' }, 404);
     }
@@ -650,6 +793,15 @@ const app = new Hono()
         updates.push('assignee_id = ?');
         params.push(primaryAssigneeId);
 
+        if (d1) {
+          try {
+            await d1.prepare('DELETE FROM task_assignees WHERE task_id = ?').bind(taskId).run();
+            for (const mId of targetAssigneeIds) {
+              await d1.prepare('INSERT OR IGNORE INTO task_assignees (id, task_id, member_id) VALUES (?, ?, ?)').bind(randomUUID(), taskId, mId).run();
+            }
+          } catch (e) {}
+        }
+
         try {
           db.prepare('DELETE FROM task_assignees WHERE task_id = ?').run(taskId);
           const insertAssigneeStmt = db.prepare('INSERT OR IGNORE INTO task_assignees (id, task_id, member_id) VALUES (?, ?, ?)');
@@ -675,6 +827,13 @@ const app = new Hono()
     if (updates.length > 0) {
       updates.push('updated_at = CURRENT_TIMESTAMP');
       params.push(taskId);
+      if (d1) {
+        try {
+          await d1.prepare(`UPDATE tasks SET ${updates.join(', ')} WHERE id = ?`).bind(...params).run();
+        } catch (e) {
+          console.error('[D1_PATCH_TASK_ERROR]:', e);
+        }
+      }
       db.prepare(`UPDATE tasks SET ${updates.join(', ')} WHERE id = ?`).run(...params);
     }
 
@@ -688,20 +847,48 @@ const app = new Hono()
       }
     }
 
-    const updated = db.prepare('SELECT * FROM tasks WHERE id = ?').get(taskId);
-    return ctx.json({ data: attachAssigneesToTask(formatDoc(updated)) });
+    let updated = null;
+    if (d1) {
+      try {
+        updated = await d1.prepare('SELECT * FROM tasks WHERE id = ?').bind(taskId).first();
+      } catch (e) {}
+    }
+    if (!updated) {
+      updated = db.prepare('SELECT * FROM tasks WHERE id = ?').get(taskId);
+    }
+
+    return ctx.json({ data: await attachAssigneesToTask(formatDoc(updated), d1) });
   })
   .post('/bulk-update', sessionMiddleware, async (ctx) => {
     const user = ctx.get('user');
     const { tasks } = await ctx.req.json();
+    const d1 = ctx.env?.DB || getD1Database();
 
     if (!tasks || tasks.length === 0) {
       return ctx.json({ data: { updatedTasks: [], workspaceId: '' } });
     }
 
-    const firstTask = db.prepare('SELECT workspace_id FROM tasks WHERE id = ?').get(tasks[0].$id || tasks[0].id);
+    let firstTask = null;
+    if (d1) {
+      try {
+        firstTask = await d1.prepare('SELECT workspace_id FROM tasks WHERE id = ?').bind(tasks[0].$id || tasks[0].id).first();
+      } catch (e) {}
+    }
+    if (!firstTask) {
+      firstTask = db.prepare('SELECT workspace_id FROM tasks WHERE id = ?').get(tasks[0].$id || tasks[0].id);
+    }
+
     if (!firstTask) {
       return ctx.json({ error: 'Task not found.' }, 404);
+    }
+
+    if (d1) {
+      for (const task of tasks) {
+        const id = task.$id || task.id;
+        try {
+          await d1.prepare('UPDATE tasks SET status = ?, position = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(task.status, task.position, id).run();
+        } catch (e) {}
+      }
     }
 
     const updateStmt = db.prepare('UPDATE tasks SET status = ?, position = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?');
@@ -718,23 +905,50 @@ const app = new Hono()
   })
   .get('/:taskId/comments', sessionMiddleware, async (ctx) => {
     const { taskId } = ctx.req.param();
-    const comments = db.prepare(`
-      SELECT c.*, u.name as user_name, u.email as user_email, u.avatar_url as user_avatar
-      FROM task_comments c
-      JOIN users u ON c.user_id = u.id
-      WHERE c.task_id = ?
-      ORDER BY c.created_at ASC
-    `).all(taskId);
+    const d1 = ctx.env?.DB || getD1Database();
+
+    let comments = [];
+    if (d1) {
+      try {
+        const res = await d1.prepare(`
+          SELECT c.*, u.name as user_name, u.email as user_email, u.avatar_url as user_avatar
+          FROM task_comments c
+          JOIN users u ON c.user_id = u.id
+          WHERE c.task_id = ?
+          ORDER BY c.created_at ASC
+        `).bind(taskId).all();
+        comments = res.results || [];
+      } catch (e) {}
+    }
+    if (comments.length === 0) {
+      comments = db.prepare(`
+        SELECT c.*, u.name as user_name, u.email as user_email, u.avatar_url as user_avatar
+        FROM task_comments c
+        JOIN users u ON c.user_id = u.id
+        WHERE c.task_id = ?
+        ORDER BY c.created_at ASC
+      `).all(taskId);
+    }
     return ctx.json({ data: comments.map(formatDoc) });
   })
   .post('/:taskId/comments', sessionMiddleware, async (ctx) => {
     const user = ctx.get('user');
     const { taskId } = ctx.req.param();
     const { content } = await ctx.req.json();
+    const d1 = ctx.env?.DB || getD1Database();
 
     if (!content) return ctx.json({ error: 'Comment content is required.' }, 400);
 
     const id = randomUUID();
+    if (d1) {
+      try {
+        await d1.prepare(`
+          INSERT INTO task_comments (id, task_id, user_id, content)
+          VALUES (?, ?, ?, ?)
+        `).bind(id, taskId, user.$id, content).run();
+      } catch (e) {}
+    }
+
     db.prepare(`
       INSERT INTO task_comments (id, task_id, user_id, content)
       VALUES (?, ?, ?, ?)
@@ -757,8 +971,18 @@ const app = new Hono()
   .delete('/:taskId', sessionMiddleware, async (ctx) => {
     const user = ctx.get('user');
     const { taskId } = ctx.req.param();
+    const d1 = ctx.env?.DB || getD1Database();
 
-    const task = db.prepare('SELECT * FROM tasks WHERE id = ?').get(taskId);
+    let task = null;
+    if (d1) {
+      try {
+        task = await d1.prepare('SELECT * FROM tasks WHERE id = ?').bind(taskId).first();
+      } catch (e) {}
+    }
+    if (!task) {
+      task = db.prepare('SELECT * FROM tasks WHERE id = ?').get(taskId);
+    }
+
     if (!task) {
       return ctx.json({ error: 'Task not found.' }, 404);
     }
@@ -778,6 +1002,14 @@ const app = new Hono()
     }
 
     // Clean up dependent child records
+    if (d1) {
+      try {
+        await d1.prepare('DELETE FROM task_assignees WHERE task_id = ?').bind(taskId).run();
+        await d1.prepare('DELETE FROM task_comments WHERE task_id = ?').bind(taskId).run();
+        await d1.prepare('DELETE FROM tasks WHERE id = ?').bind(taskId).run();
+      } catch (e) {}
+    }
+
     try { db.prepare('DELETE FROM task_assignees WHERE task_id = ?').run(taskId); } catch (e) {}
     db.prepare('DELETE FROM task_history WHERE task_id = ?').run(taskId);
     db.prepare('DELETE FROM task_comments WHERE task_id = ?').run(taskId);

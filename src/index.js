@@ -48,10 +48,18 @@ import assets from './features/assets/server/route.js';
 import deployments from './features/deployments/server/route.js';
 import portfolio from './features/portfolio/server/route.js';
 import search from './features/search/server/route.js';
+import { setD1Database } from './db.js';
 
 const app = new Hono();
 
 const allowedOrigin = process.env.FRONTEND_URL || 'https://klanservicehub-frontend.klanservicehub.workers.dev';
+
+app.use('*', async (c, next) => {
+  if (c.env?.DB) {
+    setD1Database(c.env.DB);
+  }
+  await next();
+});
 
 app.use(
   '*',
@@ -68,6 +76,7 @@ app.use(
     exposeHeaders: ['Set-Cookie'],
   }),
 );
+
 
 app.get('/', (ctx) => {
   return ctx.json({
