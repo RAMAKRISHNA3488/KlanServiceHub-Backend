@@ -119,6 +119,8 @@ export async function sendInvitationEmail({
   projectName,
   role = 'Member',
   inviteUrl,
+  password,
+  loginUrl,
   env = {},
 }) {
   if (!to || !inviteUrl) {
@@ -130,6 +132,40 @@ export async function sendInvitationEmail({
   const t = getTransporter(env);
 
   const roleText = projectName ? `${role} in project "${projectName}"` : `${role} in "${organizationName}"`;
+  const targetLoginUrl = loginUrl || inviteUrl;
+
+  const credentialsHtml = password ? `
+    <div style="background: #f8fafc; border: 1px solid #cbd5e1; border-radius: 8px; padding: 18px 20px; margin: 24px 0; text-align: left;">
+      <div style="font-size: 13px; font-weight: 700; color: #1e293b; margin-bottom: 12px;">
+        🔑 <strong>Your Account Login Credentials</strong>
+      </div>
+      <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
+        <tr>
+          <td style="padding: 6px 0; color: #64748b; width: 110px; font-weight: 600;">Email:</td>
+          <td style="padding: 6px 0; color: #0f172a; font-family: monospace; font-size: 13px; font-weight: bold;">${to}</td>
+        </tr>
+        <tr>
+          <td style="padding: 6px 0; color: #64748b; font-weight: 600;">Password:</td>
+          <td style="padding: 6px 0;">
+            <span style="display: inline-block; background: #e0f2fe; color: #0369a1; padding: 4px 10px; border-radius: 4px; font-family: monospace; font-size: 14px; font-weight: bold; letter-spacing: 0.5px; border: 1px dashed #38bdf8;">
+              ${password}
+            </span>
+          </td>
+        </tr>
+        <tr>
+          <td style="padding: 6px 0; color: #64748b; font-weight: 600;">Login Portal:</td>
+          <td style="padding: 6px 0;">
+            <a href="${targetLoginUrl}" style="color: #0284c7; text-decoration: underline; font-weight: 600;">
+              ${targetLoginUrl}
+            </a>
+          </td>
+        </tr>
+      </table>
+      <div style="margin-top: 10px; font-size: 11px; color: #64748b; border-top: 1px solid #e2e8f0; pt-2;">
+        🔒 You can log in directly using this password or click the button below to accept your invitation.
+      </div>
+    </div>
+  ` : '';
 
   const html = `
     <!DOCTYPE html>
@@ -143,7 +179,7 @@ export async function sendInvitationEmail({
           .header h1 { color: #ffffff; margin: 0; font-size: 24px; font-weight: 700; letter-spacing: -0.5px; }
           .content { padding: 32px 24px; text-align: center; }
           .title { font-size: 20px; font-weight: 600; margin-top: 0; margin-bottom: 16px; color: #172b4d; }
-          .cta-btn { display: inline-block; background-color: #0052cc; color: #ffffff !important; padding: 12px 28px; font-size: 15px; font-weight: 600; text-decoration: none; border-radius: 4px; margin: 20px 0; }
+          .cta-btn { display: inline-block; background-color: #0052cc; color: #ffffff !important; padding: 12px 28px; font-size: 15px; font-weight: 600; text-decoration: none; border-radius: 4px; margin: 16px 0; }
           .cta-btn:hover { background-color: #0747a6; }
           .footer { padding: 16px 24px; background: #fafbfc; border-top: 1px solid #ebecf0; font-size: 12px; color: #6b778c; text-align: center; }
         </style>
@@ -156,8 +192,9 @@ export async function sendInvitationEmail({
           <div class="content">
             <h2 class="title">You've been invited to join ${organizationName}!</h2>
             <p><strong>${inviterName}</strong> has invited you to collaborate as a <strong>${roleText}</strong> on klanservicehub.</p>
-            <a href="${inviteUrl}" class="cta-btn" target="_blank">Accept Invitation</a>
-            <p style="color: #6b778c; font-size: 13px; margin-top: 24px;">
+            ${credentialsHtml}
+            <a href="${inviteUrl}" class="cta-btn" target="_blank">Accept Invitation & Join</a>
+            <p style="color: #6b778c; font-size: 13px; margin-top: 20px;">
               Or copy and paste this link into your browser:<br>
               <a href="${inviteUrl}" style="color: #0052cc; word-break: break-all;">${inviteUrl}</a>
             </p>
@@ -171,12 +208,16 @@ export async function sendInvitationEmail({
     </html>
   `;
 
+  const textContent = `${inviterName} invited you to join ${organizationName} on klanservicehub as ${roleText}.\n` +
+    (password ? `\nYour Login Credentials:\nEmail: ${to}\nPassword: ${password}\nLogin URL: ${targetLoginUrl}\n` : '') +
+    `\nAccept Invitation: ${inviteUrl}`;
+
   try {
     const info = await t.sendMail({
       from: defaultFrom,
       to,
       subject: `Invitation: Join ${organizationName} on klanservicehub`,
-      text: `${inviterName} invited you to join ${organizationName} on klanservicehub. Click here to accept: ${inviteUrl}`,
+      text: textContent,
       html,
     });
     console.log(`✉️ [Mail] Invitation email sent to ${to}: ${info.messageId}`);

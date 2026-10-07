@@ -180,6 +180,37 @@ const app = new Hono()
       if (!email) continue;
 
       const cleanEmail = email.toLowerCase().trim();
+      const tempPassword = (item.password && String(item.password).trim().length >= 6)
+        ? String(item.password).trim()
+        : `Klan#${randomBytes(3).toString('hex').toUpperCase()}`;
+      const passwordHash = bcrypt.hashSync(tempPassword, 10);
+
+      // Ensure user exists in users table with credentials
+      let userRecord = await d1First('SELECT * FROM users WHERE email = ?', [cleanEmail], ctx.env?.DB);
+      let recipientUserId;
+
+      if (!userRecord) {
+        recipientUserId = randomUUID();
+        await d1Run(`
+          INSERT INTO users (id, name, email, password_hash, status, onboarding_status)
+          VALUES (?, ?, ?, ?, 'ACTIVE', 'COMPLETED')
+        `, [recipientUserId, item.name || cleanEmail.split('@')[0], cleanEmail, passwordHash], ctx.env?.DB);
+      } else {
+        recipientUserId = userRecord.id;
+        if (!userRecord.password_hash || item.password) {
+          await d1Run('UPDATE users SET password_hash = ? WHERE id = ?', [passwordHash, recipientUserId], ctx.env?.DB);
+        }
+      }
+
+      // Ensure membership record exists
+      const existingMember = await d1First('SELECT id FROM members WHERE workspace_id = ? AND user_id = ?', [workspaceId, recipientUserId], ctx.env?.DB);
+      if (!existingMember) {
+        await d1Run(`
+          INSERT INTO members (id, workspace_id, user_id, role, status)
+          VALUES (?, ?, ?, ?, 'ACTIVE')
+        `, [randomUUID(), workspaceId, recipientUserId, item.organizationRole || 'MEMBER'], ctx.env?.DB);
+      }
+
       const token = randomBytes(24).toString('hex');
       const inviteId = randomUUID();
       const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(); // 7 days
@@ -190,7 +221,7 @@ const app = new Hono()
       await d1Run(`
         INSERT INTO invitations (id, organization_id, email, invited_by, organization_role, project_id, project_role, token_hash, status, expires_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', ?)
-      `, [inviteId, workspaceId, cleanEmail, user.$id, orgRole, projId, projRole, token, expiresAt]);
+      `, [inviteId, workspaceId, cleanEmail, user.$id, orgRole, projId, projRole, token, expiresAt], ctx.env?.DB);
 
       logAudit({
         workspaceId,
@@ -208,10 +239,11 @@ const app = new Hono()
         role: orgRole,
       });
 
-      const workspace = await d1First('SELECT name FROM workspaces WHERE id = ?', [workspaceId]);
-      const project = projId ? await d1First('SELECT name FROM projects WHERE id = ?', [projId]) : null;
+      const workspace = await d1First('SELECT name FROM workspaces WHERE id = ?', [workspaceId], ctx.env?.DB);
+      const project = projId ? await d1First('SELECT name FROM projects WHERE id = ?', [projId], ctx.env?.DB) : null;
       const frontendUrl = ctx.env?.FRONTEND_URL || process.env.FRONTEND_URL || 'https://klanservicehub-frontend.klanservicehub.workers.dev';
       const fullInviteUrl = `${frontendUrl}/invite/${token}`;
+      const loginUrl = `${frontendUrl}/sign-in`;
 
       await sendInvitationEmail({
         to: cleanEmail,
@@ -220,6 +252,8 @@ const app = new Hono()
         projectName: project?.name,
         role: projRole || orgRole,
         inviteUrl: fullInviteUrl,
+        password: tempPassword,
+        loginUrl,
         env: ctx.env,
       });
 
@@ -228,6 +262,8 @@ const app = new Hono()
         email: cleanEmail,
         token,
         inviteUrl: `/invite/${token}`,
+        fullInviteUrl,
+        tempPassword,
         expiresAt,
       });
     }

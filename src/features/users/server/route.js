@@ -76,7 +76,14 @@ const app = new Hono()
   .post('/:workspaceId/invite', sessionMiddleware, async (ctx) => {
     const actor = ctx.get('user');
     const { workspaceId } = ctx.req.param();
-    const { email, name, roleName = 'Developer', jobTitle = 'Software Engineer', department = 'Engineering' } = await ctx.req.json();
+    const {
+      email,
+      name,
+      roleName = 'Developer',
+      jobTitle = 'Software Engineer',
+      department = 'Engineering',
+      password: providedPassword,
+    } = await ctx.req.json();
 
     if (!await hasPermission({ workspaceId, userId: actor.$id, permissionCode: 'USER_MANAGE' })) {
       return ctx.json({ error: 'Forbidden: Missing USER_MANAGE permission.' }, 403);
@@ -87,37 +94,45 @@ const app = new Hono()
     }
 
     const cleanEmail = email.toLowerCase().trim();
-    let user = await d1First('SELECT * FROM users WHERE email = ?', [cleanEmail]);
+    const tempPassword = (providedPassword && String(providedPassword).trim().length >= 6)
+      ? String(providedPassword).trim()
+      : `Klan#${randomBytes(3).toString('hex').toUpperCase()}`;
+    const passwordHash = bcrypt.hashSync(tempPassword, 10);
+
+    let user = await d1First('SELECT * FROM users WHERE email = ?', [cleanEmail], ctx.env?.DB);
     let userId;
 
     if (!user) {
       userId = randomUUID();
-      const defaultHash = bcrypt.hashSync('Password@123', 10);
       await d1Run(`
-        INSERT INTO users (id, name, email, password_hash, job_title, department)
-        VALUES (?, ?, ?, ?, ?, ?)
-      `, [userId, name || cleanEmail.split('@')[0], cleanEmail, defaultHash, jobTitle, department]);
+        INSERT INTO users (id, name, email, password_hash, job_title, department, status, onboarding_status)
+        VALUES (?, ?, ?, ?, ?, ?, 'ACTIVE', 'COMPLETED')
+      `, [userId, name || cleanEmail.split('@')[0], cleanEmail, passwordHash, jobTitle, department], ctx.env?.DB);
     } else {
       userId = user.id;
+      // If user had no password_hash or custom password was explicitly provided, update it
+      if (!user.password_hash || providedPassword) {
+        await d1Run('UPDATE users SET password_hash = ? WHERE id = ?', [passwordHash, userId], ctx.env?.DB);
+      }
     }
 
     // Check if already in workspace
-    const existingMember = await d1First('SELECT id FROM members WHERE workspace_id = ? AND user_id = ?', [workspaceId, userId]);
+    const existingMember = await d1First('SELECT id FROM members WHERE workspace_id = ? AND user_id = ?', [workspaceId, userId], ctx.env?.DB);
     if (!existingMember) {
       const memberId = randomUUID();
       await d1Run(`
         INSERT INTO members (id, workspace_id, user_id, role, status)
         VALUES (?, ?, ?, 'MEMBER', 'ACTIVE')
-      `, [memberId, workspaceId, userId]);
+      `, [memberId, workspaceId, userId], ctx.env?.DB);
     }
 
     // Find or assign role
-    const role = await d1First('SELECT id FROM roles WHERE workspace_id = ? AND name = ?', [workspaceId, roleName]);
+    const role = await d1First('SELECT id FROM roles WHERE workspace_id = ? AND name = ?', [workspaceId, roleName], ctx.env?.DB);
     if (role) {
       await d1Run(`
         INSERT OR REPLACE INTO user_roles (id, workspace_id, user_id, role_id)
         VALUES (?, ?, ?, ?)
-      `, [randomUUID(), workspaceId, userId, role.id]);
+      `, [randomUUID(), workspaceId, userId, role.id], ctx.env?.DB);
     }
 
     // Create invitation record with token
@@ -129,20 +144,23 @@ const app = new Hono()
     await d1Run(`
       INSERT INTO invitations (id, organization_id, email, invited_by, organization_role, token_hash, status, expires_at)
       VALUES (?, ?, ?, ?, ?, ?, 'PENDING', ?)
-    `, [inviteId, workspaceId, cleanEmail, actor.$id, orgRole, token, expiresAt]);
+    `, [inviteId, workspaceId, cleanEmail, actor.$id, orgRole, token, expiresAt], ctx.env?.DB);
 
     // Fetch workspace details for email
-    const workspace = await d1First('SELECT name FROM workspaces WHERE id = ?', [workspaceId]);
+    const workspace = await d1First('SELECT name FROM workspaces WHERE id = ?', [workspaceId], ctx.env?.DB);
     const frontendUrl = ctx.env?.FRONTEND_URL || process.env.FRONTEND_URL || 'https://klanservicehub-frontend.klanservicehub.workers.dev';
     const fullInviteUrl = `${frontendUrl}/invite/${token}`;
+    const loginUrl = `${frontendUrl}/sign-in`;
 
-    // Send real invitation email via Gmail SMTP
+    // Send real invitation email via Gmail SMTP with login credentials
     const mailResult = await sendInvitationEmail({
       to: cleanEmail,
       inviterName: actor.name || 'Company Owner',
       organizationName: workspace?.name || 'Company Workspace',
       role: roleName,
       inviteUrl: fullInviteUrl,
+      password: tempPassword,
+      loginUrl,
       env: ctx.env,
     });
 
@@ -168,8 +186,9 @@ const app = new Hono()
       userId,
       emailSent: mailResult.success,
       inviteUrl: fullInviteUrl,
+      tempPassword,
       message: mailResult.success
-        ? `Invitation email sent to ${cleanEmail}`
+        ? `Invitation email with login credentials sent to ${cleanEmail}`
         : `User added, but email delivery encountered an issue: ${mailResult.error || 'Check SMTP configuration'}`,
     });
   })
