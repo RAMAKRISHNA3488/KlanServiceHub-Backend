@@ -210,7 +210,7 @@ const app = new Hono()
 
       const workspace = await d1First('SELECT name FROM workspaces WHERE id = ?', [workspaceId]);
       const project = projId ? await d1First('SELECT name FROM projects WHERE id = ?', [projId]) : null;
-      const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+      const frontendUrl = ctx.env?.FRONTEND_URL || process.env.FRONTEND_URL || 'https://klanservicehub-frontend.klanservicehub.workers.dev';
       const fullInviteUrl = `${frontendUrl}/invite/${token}`;
 
       await sendInvitationEmail({
@@ -220,6 +220,7 @@ const app = new Hono()
         projectName: project?.name,
         role: projRole || orgRole,
         inviteUrl: fullInviteUrl,
+        env: ctx.env,
       });
 
       results.push({

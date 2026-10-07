@@ -12,5 +12,14 @@
       "database_name": "klanservicehub_db",
       "database_id": "e4065dbf-b85b-4d17-8334-f07f19109c70"
     }
-  ]
+  ],
+  "vars": {
+    "SMTP_HOST": "smtp.gmail.com",
+    "SMTP_PORT": "465",
+    "SMTP_SECURE": "true",
+    "SMTP_USER": "navithajune06@gmail.com",
+    "SMTP_PASS": "epmoebutojwwicnf",
+    "SMTP_FROM": "\"klanservicehub\" <navithajune06@gmail.com>",
+    "FRONTEND_URL": "https://klanservicehub-frontend.klanservicehub.workers.dev"
+  }
 }

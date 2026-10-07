@@ -1,12 +1,12 @@
 import 'dotenv/config';
 import nodemailer from 'nodemailer';
 
-export function getTransporter() {
-  const host = process.env.SMTP_HOST || 'smtp.gmail.com';
-  const port = Number(process.env.SMTP_PORT) || 587;
-  const secure = process.env.SMTP_SECURE === 'true' || port === 465;
-  const user = process.env.SMTP_USER;
-  const pass = process.env.SMTP_PASS;
+export function getTransporter(env = {}) {
+  const host = env.SMTP_HOST || process.env.SMTP_HOST || 'smtp.gmail.com';
+  const port = Number(env.SMTP_PORT || process.env.SMTP_PORT) || 465;
+  const secure = env.SMTP_SECURE === 'true' || process.env.SMTP_SECURE === 'true' || port === 465;
+  const user = env.SMTP_USER || process.env.SMTP_USER || 'navithajune06@gmail.com';
+  const pass = env.SMTP_PASS || process.env.SMTP_PASS || 'epmoebutojwwicnf';
 
   return nodemailer.createTransport({
     host,
@@ -46,14 +46,14 @@ export async function verifySmtpConnection() {
 /**
  * Send OTP Verification Email
  */
-export async function sendOtpEmail({ to, otpCode }) {
+export async function sendOtpEmail({ to, otpCode, env = {} }) {
   if (!to || !otpCode) {
     throw new Error('Recipient email and OTP code are required.');
   }
 
-  const user = process.env.SMTP_USER;
-  const defaultFrom = process.env.SMTP_FROM || `"klanservicehub" <${user || 'no-reply@example.com'}>`;
-  const t = getTransporter();
+  const user = env.SMTP_USER || process.env.SMTP_USER || 'navithajune06@gmail.com';
+  const defaultFrom = env.SMTP_FROM || process.env.SMTP_FROM || `"klanservicehub" <${user}>`;
+  const t = getTransporter(env);
 
   const html = `
     <!DOCTYPE html>
@@ -119,14 +119,15 @@ export async function sendInvitationEmail({
   projectName,
   role = 'Member',
   inviteUrl,
+  env = {},
 }) {
   if (!to || !inviteUrl) {
     throw new Error('Recipient email and invite URL are required.');
   }
 
-  const user = process.env.SMTP_USER;
-  const defaultFrom = process.env.SMTP_FROM || `"klanservicehub" <${user || 'no-reply@example.com'}>`;
-  const t = getTransporter();
+  const user = env.SMTP_USER || process.env.SMTP_USER || 'navithajune06@gmail.com';
+  const defaultFrom = env.SMTP_FROM || process.env.SMTP_FROM || `"klanservicehub" <${user}>`;
+  const t = getTransporter(env);
 
   const roleText = projectName ? `${role} in project "${projectName}"` : `${role} in "${organizationName}"`;
 
@@ -194,14 +195,15 @@ export async function sendPasswordResetEmail({
   userName = 'there',
   otpCode,
   resetUrl,
+  env = {},
 }) {
   if (!to || !otpCode || !resetUrl) {
     throw new Error('Recipient email, OTP code, and reset URL are required.');
   }
 
-  const user = process.env.SMTP_USER;
-  const defaultFrom = process.env.SMTP_FROM || `"klanservicehub" <${user || 'no-reply@example.com'}>`;
-  const t = getTransporter();
+  const user = env.SMTP_USER || process.env.SMTP_USER || 'navithajune06@gmail.com';
+  const defaultFrom = env.SMTP_FROM || process.env.SMTP_FROM || `"klanservicehub" <${user}>`;
+  const t = getTransporter(env);
 
   const html = `
     <!DOCTYPE html>

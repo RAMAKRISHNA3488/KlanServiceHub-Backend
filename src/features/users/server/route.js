@@ -133,7 +133,7 @@ const app = new Hono()
 
     // Fetch workspace details for email
     const workspace = await d1First('SELECT name FROM workspaces WHERE id = ?', [workspaceId]);
-    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+    const frontendUrl = ctx.env?.FRONTEND_URL || process.env.FRONTEND_URL || 'https://klanservicehub-frontend.klanservicehub.workers.dev';
     const fullInviteUrl = `${frontendUrl}/invite/${token}`;
 
     // Send real invitation email via Gmail SMTP
@@ -143,6 +143,7 @@ const app = new Hono()
       organizationName: workspace?.name || 'Company Workspace',
       role: roleName,
       inviteUrl: fullInviteUrl,
+      env: ctx.env,
     });
 
     logAudit({

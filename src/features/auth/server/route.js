@@ -70,7 +70,7 @@ const app = new Hono()
       console.log(`[KLANSERVICEHUB OTP] Verification code for ${cleanEmail}: ${otpCode}`);
 
       // Dispatch real email via configured SMTP
-      const mailResult = await sendOtpEmail({ to: cleanEmail, otpCode });
+      const mailResult = await sendOtpEmail({ to: cleanEmail, otpCode, env: ctx.env });
 
       return ctx.json({
         success: true,
@@ -521,7 +521,7 @@ const app = new Hono()
 
       console.log(`[KLANSERVICEHUB RESET OTP] Password reset code for ${cleanEmail}: ${otpCode}`);
 
-      const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+      const frontendUrl = ctx.env?.FRONTEND_URL || process.env.FRONTEND_URL || 'https://klanservicehub-frontend.klanservicehub.workers.dev';
       const resetUrl = `${frontendUrl}/reset-password?token=${token}&email=${encodeURIComponent(cleanEmail)}`;
 
       const mailResult = await sendPasswordResetEmail({
@@ -529,6 +529,7 @@ const app = new Hono()
         userName: user.name,
         otpCode,
         resetUrl,
+        env: ctx.env,
       });
 
       return ctx.json({
