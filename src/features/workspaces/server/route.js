@@ -198,7 +198,26 @@ const app = new Hono()
       userId: user.$id,
     });
 
-    if (!member || member.role !== MemberRole.ADMIN) {
+    const d1 = ctx.env?.DB || getD1Database();
+    let workspace = null;
+    if (d1) {
+      try {
+        workspace = await d1.prepare('SELECT * FROM workspaces WHERE id = ?').bind(workspaceId).first();
+      } catch (e) {}
+    }
+    if (!workspace) {
+      workspace = db.prepare('SELECT * FROM workspaces WHERE id = ?').get(workspaceId);
+    }
+
+    const isOwner = workspace && workspace.user_id === user.$id;
+    const isAdmin = member && (
+      member.role === MemberRole.ADMIN ||
+      member.role === 'ADMIN' ||
+      member.organization_role === 'COMPANY_OWNER' ||
+      member.organization_role === 'COMPANY_ADMIN'
+    );
+
+    if (!isOwner && !isAdmin) {
       return ctx.json({ error: 'Unauthorized.' }, 401);
     }
 
@@ -211,7 +230,6 @@ const app = new Hono()
       imageId = randomUUID();
     }
 
-    const d1 = ctx.env?.DB || getD1Database();
     if (d1) {
       try {
         if (name && imageUrl !== undefined) {
@@ -234,17 +252,17 @@ const app = new Hono()
       db.prepare('UPDATE workspaces SET image_id = ?, image_url = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(imageId || null, imageUrl, workspaceId);
     }
 
-    let workspace = null;
+    let updatedWorkspace = null;
     if (d1) {
       try {
-        workspace = await d1.prepare('SELECT * FROM workspaces WHERE id = ?').bind(workspaceId).first();
+        updatedWorkspace = await d1.prepare('SELECT * FROM workspaces WHERE id = ?').bind(workspaceId).first();
       } catch (e) {}
     }
-    if (!workspace) {
-      workspace = db.prepare('SELECT * FROM workspaces WHERE id = ?').get(workspaceId);
+    if (!updatedWorkspace) {
+      updatedWorkspace = db.prepare('SELECT * FROM workspaces WHERE id = ?').get(workspaceId);
     }
 
-    return ctx.json({ data: formatDoc(workspace) });
+    return ctx.json({ data: formatDoc(updatedWorkspace) });
   })
   .delete('/:workspaceId', sessionMiddleware, async (ctx) => {
     const user = ctx.get('user');
@@ -270,6 +288,21 @@ const app = new Hono()
       userId: user.$id,
     });
 
+    if (!member && workspace.user_id !== user.$id) {
+      return ctx.json({ error: 'Unauthorized.' }, 401);
+    }
+
+    let memberCountNum = 1;
+    if (d1) {
+      try {
+        const mc = await d1.prepare('SELECT COUNT(*) as count FROM members WHERE workspace_id = ?').bind(workspaceId).first();
+        if (mc) memberCountNum = mc.count;
+      } catch (e) {}
+    } else {
+      const mc = db.prepare('SELECT COUNT(*) as count FROM members WHERE workspace_id = ?').get(workspaceId);
+      if (mc) memberCountNum = mc.count;
+    }
+
     const isOwner = workspace.user_id === user.$id;
     const isAdmin = member && (
       member.role === MemberRole.ADMIN ||
@@ -278,8 +311,18 @@ const app = new Hono()
       member.organization_role === 'COMPANY_ADMIN'
     );
 
-    if (!isOwner && !isAdmin) {
-      return ctx.json({ error: 'Unauthorized: Only an admin or workspace owner can delete this workspace.' }, 401);
+    // If regular member in a multi-member workspace, leave the workspace instead of full purge
+    if (!isOwner && !isAdmin && memberCountNum > 1) {
+      if (d1) {
+        try {
+          await d1.prepare('DELETE FROM members WHERE workspace_id = ? AND user_id = ?').bind(workspaceId, user.$id).run();
+        } catch (e) {}
+      }
+      try {
+        db.prepare('DELETE FROM members WHERE workspace_id = ? AND user_id = ?').run(workspaceId, user.$id);
+      } catch (e) {}
+
+      return ctx.json({ data: { $id: workspaceId, id: workspaceId, success: true, left: true } });
     }
 
     const tablesToClean = [
@@ -322,6 +365,56 @@ const app = new Hono()
     db.prepare('DELETE FROM workspaces WHERE id = ?').run(workspaceId);
 
     return ctx.json({ data: { $id: workspaceId, id: workspaceId, success: true } });
+  })
+  .post('/:workspaceId/leave', sessionMiddleware, async (ctx) => {
+    const user = ctx.get('user');
+    const { workspaceId } = ctx.req.param();
+    const d1 = ctx.env?.DB || getD1Database();
+
+    const member = await getMember({
+      workspaceId,
+      userId: user.$id,
+    });
+
+    if (!member) {
+      return ctx.json({ error: 'You are not a member of this workspace.' }, 404);
+    }
+
+    let memberCountNum = 1;
+    if (d1) {
+      try {
+        const mc = await d1.prepare('SELECT COUNT(*) as count FROM members WHERE workspace_id = ?').bind(workspaceId).first();
+        if (mc) memberCountNum = mc.count;
+      } catch (e) {}
+    } else {
+      const mc = db.prepare('SELECT COUNT(*) as count FROM members WHERE workspace_id = ?').get(workspaceId);
+      if (mc) memberCountNum = mc.count;
+    }
+
+    if (memberCountNum <= 1) {
+      if (d1) {
+        try {
+          await d1.prepare('DELETE FROM members WHERE workspace_id = ?').bind(workspaceId).run();
+          await d1.prepare('DELETE FROM workspaces WHERE id = ?').bind(workspaceId).run();
+        } catch (e) {}
+      }
+      try {
+        db.prepare('DELETE FROM members WHERE workspace_id = ?').run(workspaceId);
+        db.prepare('DELETE FROM workspaces WHERE id = ?').run(workspaceId);
+      } catch (e) {}
+      return ctx.json({ data: { $id: workspaceId, success: true, removed: true } });
+    }
+
+    if (d1) {
+      try {
+        await d1.prepare('DELETE FROM members WHERE workspace_id = ? AND user_id = ?').bind(workspaceId, user.$id).run();
+      } catch (e) {}
+    }
+    try {
+      db.prepare('DELETE FROM members WHERE workspace_id = ? AND user_id = ?').run(workspaceId, user.$id);
+    } catch (e) {}
+
+    return ctx.json({ data: { $id: workspaceId, success: true } });
   })
   .post('/:workspaceId/resetInviteCode', sessionMiddleware, async (ctx) => {
     const user = ctx.get('user');

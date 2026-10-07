@@ -128,24 +128,6 @@ const app = new Hono()
       // Invalidate used verification code
       db.prepare('UPDATE email_verifications SET verified = 1 WHERE id = ?').run(verification.id);
 
-      // Check if user has active workspace
-      let ws = db.prepare(`
-        SELECT w.id FROM workspaces w 
-        JOIN members m ON w.id = m.workspace_id 
-        WHERE m.user_id = ? AND m.status = 'ACTIVE'
-        LIMIT 1
-      `).get(user.id);
-
-      if (!ws) {
-        const wsId = randomUUID();
-        const wsName = `${(user.name || 'My').split(' ')[0]}'s Workspace`;
-        const inviteCode = randomUUID().slice(0, 6).toUpperCase();
-        db.prepare('INSERT INTO workspaces (id, name, user_id, invite_code) VALUES (?, ?, ?, ?)').run(wsId, wsName, user.id, inviteCode);
-        db.prepare("INSERT INTO members (id, workspace_id, user_id, role, status) VALUES (?, ?, ?, 'ADMIN', 'ACTIVE')").run(randomUUID(), wsId, user.id);
-        ensureWorkspaceDefaults(wsId, user.id);
-        ws = { id: wsId };
-      }
-
       const sessionSecret = randomUUID();
       const expiresAt = new Date(Date.now() + SESSION_MAX_AGE_MS).toISOString();
 
@@ -379,49 +361,6 @@ const app = new Hono()
         return ctx.json({ error: 'Your account has been deactivated. Please contact support or your organization owner.' }, 403);
       }
 
-      // Check if user has any workspace, if not auto-provision one
-      let ws = null;
-      if (ctx.env?.DB) {
-        try {
-          ws = await ctx.env.DB.prepare(`
-            SELECT w.id FROM workspaces w 
-            JOIN members m ON w.id = m.workspace_id 
-            WHERE m.user_id = ? AND m.status = 'ACTIVE'
-            LIMIT 1
-          `).bind(user.id).first();
-        } catch (e) {
-          console.error('[D1_FIND_WORKSPACE_ERROR]:', e);
-        }
-      }
-      if (!ws) {
-        ws = db.prepare(`
-          SELECT w.id FROM workspaces w 
-          JOIN members m ON w.id = m.workspace_id 
-          WHERE m.user_id = ? AND m.status = 'ACTIVE'
-          LIMIT 1
-        `).get(user.id);
-      }
-
-      if (!ws) {
-        const wsId = randomUUID();
-        const wsName = `${(user.name || 'My').split(' ')[0]}'s Workspace`;
-        const inviteCode = randomUUID().slice(0, 6).toUpperCase();
-
-        if (ctx.env?.DB) {
-          try {
-            await ctx.env.DB.prepare('INSERT INTO workspaces (id, name, user_id, invite_code) VALUES (?, ?, ?, ?)').bind(wsId, wsName, user.id, inviteCode).run();
-            await ctx.env.DB.prepare("INSERT INTO members (id, workspace_id, user_id, role, status) VALUES (?, ?, ?, 'ADMIN', 'ACTIVE')").bind(randomUUID(), wsId, user.id).run();
-          } catch (e) {
-            console.error('[D1_AUTO_WORKSPACE_ERROR]:', e);
-          }
-        }
-
-        db.prepare('INSERT INTO workspaces (id, name, user_id, invite_code) VALUES (?, ?, ?, ?)').run(wsId, wsName, user.id, inviteCode);
-        db.prepare("INSERT INTO members (id, workspace_id, user_id, role, status) VALUES (?, ?, ?, 'ADMIN', 'ACTIVE')").run(randomUUID(), wsId, user.id);
-        ensureWorkspaceDefaults(wsId, user.id);
-        ws = { id: wsId };
-      }
-
       const sessionSecret = randomUUID();
       const expiresAt = new Date(Date.now() + SESSION_MAX_AGE_MS).toISOString();
 
@@ -506,19 +445,9 @@ const app = new Hono()
         let ws = db.prepare(`
           SELECT w.id FROM workspaces w 
           JOIN members m ON w.id = m.workspace_id 
-          WHERE m.user_id = ? AND m.status = 'ACTIVE'
+          WHERE m.user_id = ?
           LIMIT 1
         `).get(user.id);
-
-        if (!ws) {
-          const wsId = randomUUID();
-          const wsName = `${(user.name || 'My').split(' ')[0]}'s Workspace`;
-          const inviteCode = randomUUID().slice(0, 6).toUpperCase();
-          db.prepare('INSERT INTO workspaces (id, name, user_id, invite_code) VALUES (?, ?, ?, ?)').run(wsId, wsName, user.id, inviteCode);
-          db.prepare("INSERT INTO members (id, workspace_id, user_id, role, status) VALUES (?, ?, ?, 'ADMIN', 'ACTIVE')").run(randomUUID(), wsId, user.id);
-          ensureWorkspaceDefaults(wsId, user.id);
-          ws = { id: wsId };
-        }
 
         const sessionSecret = randomUUID();
         const expiresAt = new Date(Date.now() + SESSION_MAX_AGE_MS).toISOString();
