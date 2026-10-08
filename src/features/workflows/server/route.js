@@ -4,12 +4,43 @@ import { sessionMiddleware } from '../../../lib/session-middleware.js';
 import { db, d1All, d1First, d1Run, getD1Database, formatDoc, logAudit } from '../../../db.js';
 import { hasPermission } from '../../../lib/permissions.js';
 
+const seedDefaultWorkflow = async (workspaceId, d1) => {
+  const workflowId = randomUUID();
+  await d1Run(`
+    INSERT INTO workflows (id, workspace_id, name, description, is_default)
+    VALUES (?, ?, ?, ?, 1)
+  `, [workflowId, workspaceId, 'Standard Software Development Workflow', 'Default enterprise workflow for software development lifecycle'], d1);
+
+  const statuses = [
+    { name: 'BACKLOG', category: 'TODO', color: '#94A3B8', position: 0 },
+    { name: 'TODO', category: 'TODO', color: '#3B82F6', position: 1 },
+    { name: 'IN_PROGRESS', category: 'IN_PROGRESS', color: '#F59E0B', position: 2 },
+    { name: 'CODE_REVIEW', category: 'IN_PROGRESS', color: '#8B5CF6', position: 3 },
+    { name: 'TESTING', category: 'IN_PROGRESS', color: '#06B6D4', position: 4 },
+    { name: 'DONE', category: 'DONE', color: '#10B981', position: 5 },
+  ];
+
+  for (const s of statuses) {
+    await d1Run(`
+      INSERT INTO workflow_statuses (id, workflow_id, name, category, color, position)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `, [randomUUID(), workflowId, s.name, s.category, s.color, s.position], d1);
+  }
+
+  return workflowId;
+};
+
 const app = new Hono()
   .get('/:workspaceId', sessionMiddleware, async (ctx) => {
     const { workspaceId } = ctx.req.param();
     const d1 = ctx.env?.DB || getD1Database();
 
-    const workflows = await d1All('SELECT * FROM workflows WHERE workspace_id = ?', [workspaceId], d1);
+    let workflows = await d1All('SELECT * FROM workflows WHERE workspace_id = ?', [workspaceId], d1);
+
+    if (!workflows || workflows.length === 0) {
+      await seedDefaultWorkflow(workspaceId, d1);
+      workflows = await d1All('SELECT * FROM workflows WHERE workspace_id = ?', [workspaceId], d1);
+    }
 
     const workflowsWithDetails = [];
     for (const wf of workflows) {
