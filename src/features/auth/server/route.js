@@ -11,6 +11,61 @@ import { sessionMiddleware } from '../../../lib/session-middleware.js';
 import { db, formatDoc, logAudit, ensureWorkspaceDefaults } from '../../../db.js';
 import { sendOtpEmail, sendPasswordResetEmail } from '../../../lib/mail.js';
 
+const getUserWorkspaceId = async (ctx, userOrId, fallbackName = 'My') => {
+  const userId = typeof userOrId === 'object' ? userOrId?.id : userOrId;
+  const userName = (typeof userOrId === 'object' ? userOrId?.name : null) || fallbackName;
+  if (!userId) return null;
+
+  if (ctx.env?.DB) {
+    try {
+      const row = await ctx.env.DB.prepare(`
+        SELECT w.id FROM workspaces w 
+        JOIN members m ON w.id = m.workspace_id 
+        WHERE m.user_id = ? AND m.status = 'ACTIVE'
+        LIMIT 1
+      `).bind(userId).first();
+      if (row?.id) return row.id;
+    } catch (e) {
+      console.error('[D1_FIND_WORKSPACE_ERROR]:', e);
+    }
+  }
+  try {
+    const row = db.prepare(`
+      SELECT w.id FROM workspaces w 
+      JOIN members m ON w.id = m.workspace_id 
+      WHERE m.user_id = ? AND m.status = 'ACTIVE'
+      LIMIT 1
+    `).get(userId);
+    if (row?.id) return row.id;
+  } catch (e) {
+    console.error('[DB_FIND_WORKSPACE_ERROR]:', e);
+  }
+
+  // If user has no workspace yet, auto-create one so they are not stranded
+  try {
+    const wsId = randomUUID();
+    const wsName = `${(userName || 'User').split(' ')[0]}'s Workspace`;
+    const inviteCode = randomUUID().slice(0, 6).toUpperCase();
+
+    if (ctx.env?.DB) {
+      try {
+        await ctx.env.DB.prepare('INSERT INTO workspaces (id, name, user_id, invite_code) VALUES (?, ?, ?, ?)').bind(wsId, wsName, userId, inviteCode).run();
+        await ctx.env.DB.prepare("INSERT INTO members (id, workspace_id, user_id, role, status) VALUES (?, ?, ?, 'ADMIN', 'ACTIVE')").bind(randomUUID(), wsId, userId).run();
+      } catch (e) {
+        console.error('[D1_AUTO_WORKSPACE_ERROR]:', e);
+      }
+    }
+
+    db.prepare('INSERT INTO workspaces (id, name, user_id, invite_code) VALUES (?, ?, ?, ?)').run(wsId, wsName, userId, inviteCode);
+    db.prepare("INSERT INTO members (id, workspace_id, user_id, role, status) VALUES (?, ?, ?, 'ADMIN', 'ACTIVE')").run(randomUUID(), wsId, userId);
+    ensureWorkspaceDefaults(wsId, userId);
+    return wsId;
+  } catch (err) {
+    console.error('[AUTO_WORKSPACE_CREATE_ERROR]:', err);
+    return null;
+  }
+};
+
 const app = new Hono()
   .post(
     '/check-email',
@@ -153,11 +208,13 @@ const app = new Hono()
         maxAge: SESSION_MAX_AGE_SECONDS,
       });
 
+      const workspaceId = await getUserWorkspaceId(ctx, user.id);
+
       return ctx.json({
         success: true,
         token: sessionSecret,
         user: formatDoc(user),
-        workspaceId: ws.id,
+        workspaceId,
       });
     },
   )
@@ -386,11 +443,13 @@ const app = new Hono()
         maxAge: SESSION_MAX_AGE_SECONDS,
       });
 
+      const workspaceId = await getUserWorkspaceId(ctx, user.id);
+
       return ctx.json({ 
         success: true, 
         token: sessionSecret,
         user: formatDoc(user),
-        workspaceId: ws.id,
+        workspaceId,
       });
     } catch (error) {
       console.error('[AUTH_LOGIN_ERROR]:', error);
@@ -441,14 +500,6 @@ const app = new Hono()
           return ctx.json({ error: 'Your account has been deactivated. Please contact support.' }, 403);
         }
 
-        // Check if user has active workspace
-        let ws = db.prepare(`
-          SELECT w.id FROM workspaces w 
-          JOIN members m ON w.id = m.workspace_id 
-          WHERE m.user_id = ?
-          LIMIT 1
-        `).get(user.id);
-
         const sessionSecret = randomUUID();
         const expiresAt = new Date(Date.now() + SESSION_MAX_AGE_MS).toISOString();
 
@@ -474,11 +525,13 @@ const app = new Hono()
           maxAge: SESSION_MAX_AGE_SECONDS,
         });
 
+        const workspaceId = await getUserWorkspaceId(ctx, user.id);
+
         return ctx.json({
           success: true,
           token: sessionSecret,
           user: formatDoc(user),
-          workspaceId: ws.id,
+          workspaceId,
           provider,
         });
       } catch (err) {
@@ -648,18 +701,12 @@ const app = new Hono()
         maxAge: SESSION_MAX_AGE_SECONDS,
       });
 
-      // Find user's workspace
-      const ws = db.prepare(`
-        SELECT w.id FROM workspaces w 
-        JOIN members m ON w.id = m.workspace_id 
-        WHERE m.user_id = ? AND m.status = 'ACTIVE'
-        LIMIT 1
-      `).get(reset.user_id);
+      const workspaceId = await getUserWorkspaceId(ctx, reset.user_id);
 
       return ctx.json({
         success: true,
         message: 'Password reset successfully!',
-        workspaceId: ws?.id,
+        workspaceId,
       });
     },
   )
