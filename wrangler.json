@@ -15,8 +15,8 @@
   ],
   "vars": {
     "SMTP_HOST": "smtp.gmail.com",
-    "SMTP_PORT": "465",
-    "SMTP_SECURE": "true",
+    "SMTP_PORT": "587",
+    "SMTP_SECURE": "false",
     "SMTP_USER": "navithajune06@gmail.com",
     "SMTP_PASS": "epmoebutojwwicnf",
     "SMTP_FROM": "\"klanservicehub\" <navithajune06@gmail.com>",

@@ -8,7 +8,7 @@ import { z } from 'zod';
 import { AUTH_COOKIE, SESSION_MAX_AGE_SECONDS, SESSION_MAX_AGE_MS } from '../constants.js';
 import { signInFormSchema, signUpFormSchema } from '../schema.js';
 import { sessionMiddleware } from '../../../lib/session-middleware.js';
-import { db, formatDoc, logAudit, ensureWorkspaceDefaults } from '../../../db.js';
+import { db, formatDoc, logAudit, ensureWorkspaceDefaults, d1First, d1All, d1Run } from '../../../db.js';
 import { sendOtpEmail, sendPasswordResetEmail } from '../../../lib/mail.js';
 
 const getUserWorkspaceId = async (ctx, userOrId, fallbackName = 'My') => {
@@ -16,29 +16,16 @@ const getUserWorkspaceId = async (ctx, userOrId, fallbackName = 'My') => {
   const userName = (typeof userOrId === 'object' ? userOrId?.name : null) || fallbackName;
   if (!userId) return null;
 
-  if (ctx.env?.DB) {
-    try {
-      const row = await ctx.env.DB.prepare(`
-        SELECT w.id FROM workspaces w 
-        JOIN members m ON w.id = m.workspace_id 
-        WHERE m.user_id = ? AND m.status = 'ACTIVE'
-        LIMIT 1
-      `).bind(userId).first();
-      if (row?.id) return row.id;
-    } catch (e) {
-      console.error('[D1_FIND_WORKSPACE_ERROR]:', e);
-    }
-  }
   try {
-    const row = db.prepare(`
+    const row = await d1First(`
       SELECT w.id FROM workspaces w 
       JOIN members m ON w.id = m.workspace_id 
       WHERE m.user_id = ? AND m.status = 'ACTIVE'
       LIMIT 1
-    `).get(userId);
+    `, [userId], ctx.env?.DB);
     if (row?.id) return row.id;
   } catch (e) {
-    console.error('[DB_FIND_WORKSPACE_ERROR]:', e);
+    console.error('[FIND_WORKSPACE_ERROR]:', e);
   }
 
   // If user has no workspace yet, auto-create one so they are not stranded
@@ -47,17 +34,8 @@ const getUserWorkspaceId = async (ctx, userOrId, fallbackName = 'My') => {
     const wsName = `${(userName || 'User').split(' ')[0]}'s Workspace`;
     const inviteCode = randomUUID().slice(0, 6).toUpperCase();
 
-    if (ctx.env?.DB) {
-      try {
-        await ctx.env.DB.prepare('INSERT INTO workspaces (id, name, user_id, invite_code) VALUES (?, ?, ?, ?)').bind(wsId, wsName, userId, inviteCode).run();
-        await ctx.env.DB.prepare("INSERT INTO members (id, workspace_id, user_id, role, status) VALUES (?, ?, ?, 'ADMIN', 'ACTIVE')").bind(randomUUID(), wsId, userId).run();
-      } catch (e) {
-        console.error('[D1_AUTO_WORKSPACE_ERROR]:', e);
-      }
-    }
-
-    db.prepare('INSERT INTO workspaces (id, name, user_id, invite_code) VALUES (?, ?, ?, ?)').run(wsId, wsName, userId, inviteCode);
-    db.prepare("INSERT INTO members (id, workspace_id, user_id, role, status) VALUES (?, ?, ?, 'ADMIN', 'ACTIVE')").run(randomUUID(), wsId, userId);
+    await d1Run('INSERT INTO workspaces (id, name, user_id, invite_code) VALUES (?, ?, ?, ?)', [wsId, wsName, userId, inviteCode], ctx.env?.DB);
+    await d1Run("INSERT INTO members (id, workspace_id, user_id, role, status) VALUES (?, ?, ?, 'ADMIN', 'ACTIVE')", [randomUUID(), wsId, userId], ctx.env?.DB);
     ensureWorkspaceDefaults(wsId, userId);
     return wsId;
   } catch (err) {
@@ -77,11 +55,12 @@ const app = new Hono()
     ),
     async (ctx) => {
       const { email } = ctx.req.valid('json');
-      const user = db.prepare('SELECT id, name, email FROM users WHERE email = ?').get(email.toLowerCase().trim());
+      const cleanEmail = email.toLowerCase().trim();
+      const user = await d1First('SELECT id, name, email FROM users WHERE email = ?', [cleanEmail], ctx.env?.DB);
       if (user) {
         return ctx.json({ exists: true, email: user.email, name: user.name });
       }
-      return ctx.json({ exists: false, email: email.toLowerCase().trim() });
+      return ctx.json({ exists: false, email: cleanEmail });
     },
   )
   .post(
@@ -94,12 +73,12 @@ const app = new Hono()
       }),
     ),
     async (ctx) => {
-      const { email, purpose = 'LOGIN' } = ctx.req.valid('json');
+      const { email, purpose = 'VERIFY' } = ctx.req.valid('json');
       const cleanEmail = email.toLowerCase().trim();
 
       // If signing in with OTP, verify that the user already exists
       if (purpose === 'LOGIN') {
-        const user = db.prepare('SELECT id, name, email, status FROM users WHERE email = ?').get(cleanEmail);
+        const user = await d1First('SELECT id, name, email, status FROM users WHERE email = ?', [cleanEmail], ctx.env?.DB);
         if (!user) {
           return ctx.json({ error: 'User does not exist. Please check your email or register a new account.' }, 404);
         }
@@ -113,14 +92,14 @@ const app = new Hono()
       const otpHash = bcrypt.hashSync(otpCode, 10);
       const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString(); // 10 minutes
 
-      // Invalidate old OTPs for this email
-      db.prepare('DELETE FROM email_verifications WHERE email = ?').run(cleanEmail);
+      // Invalidate old OTPs for this email in D1
+      await d1Run('DELETE FROM email_verifications WHERE email = ?', [cleanEmail], ctx.env?.DB);
 
       const verificationId = randomUUID();
-      db.prepare(`
+      await d1Run(`
         INSERT INTO email_verifications (id, email, otp_hash, expires_at, attempt_count, verified)
         VALUES (?, ?, ?, ?, 0, 0)
-      `).run(verificationId, cleanEmail, otpHash, expiresAt);
+      `, [verificationId, cleanEmail, otpHash, expiresAt], ctx.env?.DB);
 
       console.log(`[KLANSERVICEHUB OTP] Verification code for ${cleanEmail}: ${otpCode}`);
 
@@ -131,9 +110,8 @@ const app = new Hono()
         success: true,
         message: mailResult.success
           ? `Verification code sent to ${cleanEmail}`
-          : `Verification code generated for ${cleanEmail} (email delivery: ${mailResult.error || 'failed'})`,
+          : `Verification code generated for ${cleanEmail} (email delivery: ${mailResult.error || 'simulated'})`,
         emailSent: mailResult.success,
-        // For development/demo convenience, return simulated OTP
         simulatedOtp: otpCode,
       });
     },
@@ -151,7 +129,7 @@ const app = new Hono()
       const { email, otp } = ctx.req.valid('json');
       const cleanEmail = email.toLowerCase().trim();
 
-      const user = db.prepare('SELECT * FROM users WHERE email = ?').get(cleanEmail);
+      const user = await d1First('SELECT * FROM users WHERE email = ?', [cleanEmail], ctx.env?.DB);
       if (!user) {
         return ctx.json({ error: 'User does not exist. Please check your email or register a new account.' }, 404);
       }
@@ -160,45 +138,36 @@ const app = new Hono()
         return ctx.json({ error: 'Your account has been deactivated. Please contact support.' }, 403);
       }
 
-      const verification = db.prepare(`
+      const verification = await d1First(`
         SELECT * FROM email_verifications 
         WHERE email = ? AND datetime(expires_at) > datetime('now') AND verified = 0
-      `).get(cleanEmail);
+        ORDER BY created_at DESC LIMIT 1
+      `, [cleanEmail], ctx.env?.DB);
 
       if (!verification) {
         return ctx.json({ error: 'Verification code has expired or is invalid. Please request a new code.' }, 400);
       }
 
       if (verification.attempt_count >= 5) {
-        db.prepare('DELETE FROM email_verifications WHERE id = ?').run(verification.id);
+        await d1Run('DELETE FROM email_verifications WHERE id = ?', [verification.id], ctx.env?.DB);
         return ctx.json({ error: 'Too many failed attempts. Please request a new code.' }, 400);
       }
 
       const isValid = bcrypt.compareSync(otp, verification.otp_hash);
       if (!isValid) {
-        db.prepare('UPDATE email_verifications SET attempt_count = attempt_count + 1 WHERE id = ?').run(verification.id);
+        await d1Run('UPDATE email_verifications SET attempt_count = attempt_count + 1 WHERE id = ?', [verification.id], ctx.env?.DB);
         return ctx.json({ error: 'Invalid verification code. Please try again.' }, 400);
       }
 
       // Invalidate used verification code
-      db.prepare('UPDATE email_verifications SET verified = 1 WHERE id = ?').run(verification.id);
+      await d1Run('UPDATE email_verifications SET verified = 1 WHERE id = ?', [verification.id], ctx.env?.DB);
 
       const sessionSecret = randomUUID();
       const expiresAt = new Date(Date.now() + SESSION_MAX_AGE_MS).toISOString();
 
-      if (ctx.env?.DB) {
-        try {
-          await ctx.env.DB.prepare(`
-            INSERT INTO sessions (id, user_id, secret, expires_at) VALUES (?, ?, ?, ?)
-          `).bind(randomUUID(), user.id, sessionSecret, expiresAt).run();
-        } catch (e) {
-          console.error('[D1_OTP_SESSION_ERROR]:', e);
-        }
-      }
-
-      db.prepare(`
+      await d1Run(`
         INSERT INTO sessions (id, user_id, secret, expires_at) VALUES (?, ?, ?, ?)
-      `).run(randomUUID(), user.id, sessionSecret, expiresAt);
+      `, [randomUUID(), user.id, sessionSecret, expiresAt], ctx.env?.DB);
 
       setCookie(ctx, AUTH_COOKIE, sessionSecret, {
         path: '/',
@@ -231,28 +200,29 @@ const app = new Hono()
       const { email, otp } = ctx.req.valid('json');
       const cleanEmail = email.toLowerCase().trim();
 
-      const verification = db.prepare(`
+      const verification = await d1First(`
         SELECT * FROM email_verifications 
         WHERE email = ? AND datetime(expires_at) > datetime('now') AND verified = 0
-      `).get(cleanEmail);
+        ORDER BY created_at DESC LIMIT 1
+      `, [cleanEmail], ctx.env?.DB);
 
       if (!verification) {
         return ctx.json({ error: 'Verification code has expired or is invalid. Please request a new code.' }, 400);
       }
 
       if (verification.attempt_count >= 5) {
-        db.prepare('DELETE FROM email_verifications WHERE id = ?').run(verification.id);
+        await d1Run('DELETE FROM email_verifications WHERE id = ?', [verification.id], ctx.env?.DB);
         return ctx.json({ error: 'Too many failed attempts. Please request a new code.' }, 400);
       }
 
       const isValid = bcrypt.compareSync(otp, verification.otp_hash);
       if (!isValid) {
-        db.prepare('UPDATE email_verifications SET attempt_count = attempt_count + 1 WHERE id = ?').run(verification.id);
+        await d1Run('UPDATE email_verifications SET attempt_count = attempt_count + 1 WHERE id = ?', [verification.id], ctx.env?.DB);
         return ctx.json({ error: 'Invalid verification code. Please try again.' }, 400);
       }
 
       // Mark verified
-      db.prepare('UPDATE email_verifications SET verified = 1 WHERE id = ?').run(verification.id);
+      await d1Run('UPDATE email_verifications SET verified = 1 WHERE id = ?', [verification.id], ctx.env?.DB);
 
       return ctx.json({ success: true, verified: true });
     },
@@ -266,23 +236,31 @@ const app = new Hono()
     const otpHash = bcrypt.hashSync(otpCode, 8);
     const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
 
-    db.prepare('DELETE FROM email_verifications WHERE email = ?').run(cleanEmail);
-    db.prepare(`
+    await d1Run('DELETE FROM email_verifications WHERE email = ?', [cleanEmail], ctx.env?.DB);
+    await d1Run(`
       INSERT INTO email_verifications (id, email, otp_hash, expires_at, attempt_count, verified)
       VALUES (?, ?, ?, ?, 0, 0)
-    `).run(randomUUID(), cleanEmail, otpHash, expiresAt);
+    `, [randomUUID(), cleanEmail, otpHash, expiresAt], ctx.env?.DB);
 
-    return ctx.json({ success: true, message: `Verification code sent to ${cleanEmail}`, simulatedOtp: otpCode });
+    const mailResult = await sendOtpEmail({ to: cleanEmail, otpCode, env: ctx.env });
+
+    return ctx.json({
+      success: true,
+      message: `Verification code sent to ${cleanEmail}`,
+      simulatedOtp: otpCode,
+      emailSent: mailResult.success,
+    });
   })
   .post('/verify-email', async (ctx) => {
     const { email, code, otp } = await ctx.req.json();
     const cleanEmail = (email || '').toLowerCase().trim();
     const codeToVerify = otp || code;
 
-    const verification = db.prepare(`
+    const verification = await d1First(`
       SELECT * FROM email_verifications 
       WHERE email = ? AND datetime(expires_at) > datetime('now') AND verified = 0
-    `).get(cleanEmail);
+      ORDER BY created_at DESC LIMIT 1
+    `, [cleanEmail], ctx.env?.DB);
 
     if (!verification) {
       return ctx.json({ error: 'Verification code has expired or is invalid.' }, 400);
@@ -290,11 +268,11 @@ const app = new Hono()
 
     const isValid = bcrypt.compareSync(codeToVerify, verification.otp_hash);
     if (!isValid) {
-      db.prepare('UPDATE email_verifications SET attempt_count = attempt_count + 1 WHERE id = ?').run(verification.id);
+      await d1Run('UPDATE email_verifications SET attempt_count = attempt_count + 1 WHERE id = ?', [verification.id], ctx.env?.DB);
       return ctx.json({ error: 'Invalid verification code.' }, 400);
     }
 
-    db.prepare('UPDATE email_verifications SET verified = 1 WHERE id = ?').run(verification.id);
+    await d1Run('UPDATE email_verifications SET verified = 1 WHERE id = ?', [verification.id], ctx.env?.DB);
     return ctx.json({ success: true, verified: true });
   })
   .post('/register', zValidator('json', signUpFormSchema), async (ctx) => {
@@ -302,18 +280,7 @@ const app = new Hono()
       const { name, email, password } = ctx.req.valid('json');
       const cleanEmail = email.toLowerCase().trim();
 
-      let existingUser = null;
-      if (ctx.env?.DB) {
-        try {
-          existingUser = await ctx.env.DB.prepare('SELECT id FROM users WHERE email = ?').bind(cleanEmail).first();
-        } catch (e) {
-          console.error('[D1_CHECK_EXISTING_USER_ERROR]:', e);
-        }
-      }
-      if (!existingUser) {
-        existingUser = db.prepare('SELECT id FROM users WHERE email = ?').get(cleanEmail);
-      }
-
+      const existingUser = await d1First('SELECT id FROM users WHERE email = ?', [cleanEmail], ctx.env?.DB);
       if (existingUser) {
         return ctx.json({ error: 'A user with this email already exists.' }, 400);
       }
@@ -321,58 +288,26 @@ const app = new Hono()
       const userId = randomUUID();
       const passwordHash = bcrypt.hashSync(password, 10);
 
-      // Save to Cloudflare D1 if available
-      if (ctx.env?.DB) {
-        try {
-          await ctx.env.DB.prepare(`
-            INSERT INTO users (id, name, email, password_hash, onboarding_status, status) 
-            VALUES (?, ?, ?, ?, 'COMPLETED', 'ACTIVE')
-          `).bind(userId, name, cleanEmail, passwordHash).run();
-        } catch (e) {
-          console.error('[D1_INSERT_USER_ERROR]:', e);
-        }
-      }
-
-      // Also save to local memory db
-      db.prepare(`
+      await d1Run(`
         INSERT INTO users (id, name, email, password_hash, onboarding_status, status) 
-        VALUES (?, ?, ?, ?, 'COMPLETED', 'ACTIVE')
-      `).run(userId, name, cleanEmail, passwordHash);
+        VALUES (?, ?, ?, ?, 'ACCOUNT_CREATED', 'ACTIVE')
+      `, [userId, name, cleanEmail, passwordHash], ctx.env?.DB);
 
       // Automatically create a default workspace with defaults for immediate productivity
       const wsId = randomUUID();
       const wsName = `${name.split(' ')[0]}'s Workspace`;
       const inviteCode = randomUUID().slice(0, 6).toUpperCase();
 
-      if (ctx.env?.DB) {
-        try {
-          await ctx.env.DB.prepare('INSERT INTO workspaces (id, name, user_id, invite_code) VALUES (?, ?, ?, ?)').bind(wsId, wsName, userId, inviteCode).run();
-          await ctx.env.DB.prepare("INSERT INTO members (id, workspace_id, user_id, role, status) VALUES (?, ?, ?, 'ADMIN', 'ACTIVE')").bind(randomUUID(), wsId, userId).run();
-        } catch (e) {
-          console.error('[D1_WORKSPACE_CREATE_ERROR]:', e);
-        }
-      }
-
-      db.prepare('INSERT INTO workspaces (id, name, user_id, invite_code) VALUES (?, ?, ?, ?)').run(wsId, wsName, userId, inviteCode);
-      db.prepare("INSERT INTO members (id, workspace_id, user_id, role, status) VALUES (?, ?, ?, 'ADMIN', 'ACTIVE')").run(randomUUID(), wsId, userId);
+      await d1Run('INSERT INTO workspaces (id, name, user_id, invite_code) VALUES (?, ?, ?, ?)', [wsId, wsName, userId, inviteCode], ctx.env?.DB);
+      await d1Run("INSERT INTO members (id, workspace_id, user_id, role, status) VALUES (?, ?, ?, 'ADMIN', 'ACTIVE')", [randomUUID(), wsId, userId], ctx.env?.DB);
       ensureWorkspaceDefaults(wsId, userId);
 
       const sessionSecret = randomUUID();
       const expiresAt = new Date(Date.now() + SESSION_MAX_AGE_MS).toISOString();
 
-      if (ctx.env?.DB) {
-        try {
-          await ctx.env.DB.prepare(`
-            INSERT INTO sessions (id, user_id, secret, expires_at) VALUES (?, ?, ?, ?)
-          `).bind(randomUUID(), userId, sessionSecret, expiresAt).run();
-        } catch (e) {
-          console.error('[D1_SESSION_CREATE_ERROR]:', e);
-        }
-      }
-
-      db.prepare(`
+      await d1Run(`
         INSERT INTO sessions (id, user_id, secret, expires_at) VALUES (?, ?, ?, ?)
-      `).run(randomUUID(), userId, sessionSecret, expiresAt);
+      `, [randomUUID(), userId, sessionSecret, expiresAt], ctx.env?.DB);
 
       setCookie(ctx, AUTH_COOKIE, sessionSecret, {
         path: '/',
@@ -385,7 +320,7 @@ const app = new Hono()
       return ctx.json({
         success: true,
         token: sessionSecret,
-        user: { id: userId, name, email: cleanEmail, onboardingStatus: 'COMPLETED' },
+        user: { id: userId, name, email: cleanEmail, onboardingStatus: 'ACCOUNT_CREATED' },
         workspaceId: wsId,
       });
     } catch (error) {
@@ -398,17 +333,7 @@ const app = new Hono()
       const { email, password } = ctx.req.valid('json');
       const cleanEmail = email.toLowerCase().trim();
 
-      let user = null;
-      if (ctx.env?.DB) {
-        try {
-          user = await ctx.env.DB.prepare('SELECT * FROM users WHERE email = ?').bind(cleanEmail).first();
-        } catch (e) {
-          console.error('[D1_FIND_USER_ERROR]:', e);
-        }
-      }
-      if (!user) {
-        user = db.prepare('SELECT * FROM users WHERE email = ?').get(cleanEmail);
-      }
+      const user = await d1First('SELECT * FROM users WHERE email = ?', [cleanEmail], ctx.env?.DB);
 
       if (!user || !bcrypt.compareSync(password, user.password_hash)) {
         return ctx.json({ error: 'Invalid email or password.' }, 400);
@@ -421,19 +346,9 @@ const app = new Hono()
       const sessionSecret = randomUUID();
       const expiresAt = new Date(Date.now() + SESSION_MAX_AGE_MS).toISOString();
 
-      if (ctx.env?.DB) {
-        try {
-          await ctx.env.DB.prepare(`
-            INSERT INTO sessions (id, user_id, secret, expires_at) VALUES (?, ?, ?, ?)
-          `).bind(randomUUID(), user.id, sessionSecret, expiresAt).run();
-        } catch (e) {
-          console.error('[D1_LOGIN_SESSION_ERROR]:', e);
-        }
-      }
-
-      db.prepare(`
+      await d1Run(`
         INSERT INTO sessions (id, user_id, secret, expires_at) VALUES (?, ?, ?, ?)
-      `).run(randomUUID(), user.id, sessionSecret, expiresAt);
+      `, [randomUUID(), user.id, sessionSecret, expiresAt], ctx.env?.DB);
 
       setCookie(ctx, AUTH_COOKIE, sessionSecret, {
         path: '/',
@@ -445,8 +360,8 @@ const app = new Hono()
 
       const workspaceId = await getUserWorkspaceId(ctx, user.id);
 
-      return ctx.json({ 
-        success: true, 
+      return ctx.json({
+        success: true,
         token: sessionSecret,
         user: formatDoc(user),
         workspaceId,
@@ -456,13 +371,12 @@ const app = new Hono()
       return ctx.json({ error: error.message || 'Failed to login' }, 400);
     }
   })
-
   .post(
     '/social-login',
     zValidator(
       'json',
       z.object({
-        provider: z.enum(['google', 'microsoft', 'github', 'apple']),
+        provider: z.enum(['google', 'github']),
         email: z.string().email(),
         name: z.string().optional(),
         avatarUrl: z.string().optional(),
@@ -474,26 +388,26 @@ const app = new Hono()
         const cleanEmail = email.toLowerCase().trim();
         const userName = name || cleanEmail.split('@')[0] || 'Team User';
 
-        let user = db.prepare('SELECT * FROM users WHERE email = ?').get(cleanEmail);
+        let user = await d1First('SELECT * FROM users WHERE email = ?', [cleanEmail], ctx.env?.DB);
 
         if (!user) {
           // Auto-provision user with OAuth Provider
           const userId = randomUUID();
           const dummyHash = bcrypt.hashSync(randomUUID(), 10);
-          db.prepare(`
+          await d1Run(`
             INSERT INTO users (id, name, email, password_hash, onboarding_status, status, image_url)
             VALUES (?, ?, ?, ?, 'COMPLETED', 'ACTIVE', ?)
-          `).run(userId, userName, cleanEmail, dummyHash, avatarUrl || null);
+          `, [userId, userName, cleanEmail, dummyHash, avatarUrl || null], ctx.env?.DB);
 
           // Auto-create workspace
           const wsId = randomUUID();
           const wsName = `${userName.split(' ')[0]}'s Workspace`;
           const inviteCode = randomUUID().slice(0, 6).toUpperCase();
-          db.prepare('INSERT INTO workspaces (id, name, user_id, invite_code) VALUES (?, ?, ?, ?)').run(wsId, wsName, userId, inviteCode);
-          db.prepare("INSERT INTO members (id, workspace_id, user_id, role, status) VALUES (?, ?, ?, 'ADMIN', 'ACTIVE')").run(randomUUID(), wsId, userId);
+          await d1Run('INSERT INTO workspaces (id, name, user_id, invite_code) VALUES (?, ?, ?, ?)', [wsId, wsName, userId, inviteCode], ctx.env?.DB);
+          await d1Run("INSERT INTO members (id, workspace_id, user_id, role, status) VALUES (?, ?, ?, 'ADMIN', 'ACTIVE')", [randomUUID(), wsId, userId], ctx.env?.DB);
           ensureWorkspaceDefaults(wsId, userId);
 
-          user = db.prepare('SELECT * FROM users WHERE id = ?').get(userId);
+          user = await d1First('SELECT * FROM users WHERE id = ?', [userId], ctx.env?.DB);
         }
 
         if (user.status === 'SUSPENDED' || user.status === 'DEACTIVATED') {
@@ -503,19 +417,9 @@ const app = new Hono()
         const sessionSecret = randomUUID();
         const expiresAt = new Date(Date.now() + SESSION_MAX_AGE_MS).toISOString();
 
-        if (ctx.env?.DB) {
-          try {
-            await ctx.env.DB.prepare(`
-              INSERT INTO sessions (id, user_id, secret, expires_at) VALUES (?, ?, ?, ?)
-            `).bind(randomUUID(), user.id, sessionSecret, expiresAt).run();
-          } catch (e) {
-            console.error('[D1_SOCIAL_SESSION_ERROR]:', e);
-          }
-        }
-
-        db.prepare(`
+        await d1Run(`
           INSERT INTO sessions (id, user_id, secret, expires_at) VALUES (?, ?, ?, ?)
-        `).run(randomUUID(), user.id, sessionSecret, expiresAt);
+        `, [randomUUID(), user.id, sessionSecret, expiresAt], ctx.env?.DB);
 
         setCookie(ctx, AUTH_COOKIE, sessionSecret, {
           path: '/',
@@ -552,7 +456,7 @@ const app = new Hono()
       const { email } = ctx.req.valid('json');
       const cleanEmail = email.toLowerCase().trim();
 
-      const user = db.prepare('SELECT id, name, email FROM users WHERE email = ?').get(cleanEmail);
+      const user = await d1First('SELECT id, name, email FROM users WHERE email = ?', [cleanEmail], ctx.env?.DB);
       if (!user) {
         return ctx.json({ error: 'No account found with this email address.' }, 404);
       }
@@ -563,14 +467,14 @@ const app = new Hono()
       const token = randomBytes(24).toString('hex');
       const expiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString(); // 15 minutes
 
-      // Invalidate old password resets for this user
-      db.prepare('DELETE FROM password_resets WHERE email = ?').run(cleanEmail);
+      // Invalidate old password resets for this user in D1
+      await d1Run('DELETE FROM password_resets WHERE email = ?', [cleanEmail], ctx.env?.DB);
 
       const resetId = randomUUID();
-      db.prepare(`
+      await d1Run(`
         INSERT INTO password_resets (id, user_id, email, otp_hash, token, expires_at, attempt_count, used)
         VALUES (?, ?, ?, ?, ?, ?, 0, 0)
-      `).run(resetId, user.id, cleanEmail, otpHash, token, expiresAt);
+      `, [resetId, user.id, cleanEmail, otpHash, token, expiresAt], ctx.env?.DB);
 
       console.log(`[KLANSERVICEHUB RESET OTP] Password reset code for ${cleanEmail}: ${otpCode}`);
 
@@ -589,7 +493,7 @@ const app = new Hono()
         success: true,
         message: mailResult.success
           ? `Password reset code and link sent to ${cleanEmail}`
-          : `Reset code generated for ${cleanEmail} (email delivery: ${mailResult.error || 'Check SMTP configuration'})`,
+          : `Reset code generated for ${cleanEmail} (email delivery: ${mailResult.error || 'simulated'})`,
         emailSent: mailResult.success,
         token,
         simulatedOtp: otpCode,
@@ -610,24 +514,24 @@ const app = new Hono()
       const { email, otp } = ctx.req.valid('json');
       const cleanEmail = email.toLowerCase().trim();
 
-      const reset = db.prepare(`
+      const reset = await d1First(`
         SELECT * FROM password_resets 
         WHERE email = ? AND used = 0 AND datetime(expires_at) > datetime('now')
         ORDER BY created_at DESC LIMIT 1
-      `).get(cleanEmail);
+      `, [cleanEmail], ctx.env?.DB);
 
       if (!reset) {
         return ctx.json({ error: 'Reset code has expired or is invalid. Please request a new code.' }, 400);
       }
 
       if (reset.attempt_count >= 5) {
-        db.prepare('DELETE FROM password_resets WHERE id = ?').run(reset.id);
+        await d1Run('DELETE FROM password_resets WHERE id = ?', [reset.id], ctx.env?.DB);
         return ctx.json({ error: 'Too many failed attempts. Please request a new code.' }, 400);
       }
 
       const isValid = bcrypt.compareSync(otp, reset.otp_hash);
       if (!isValid) {
-        db.prepare('UPDATE password_resets SET attempt_count = attempt_count + 1 WHERE id = ?').run(reset.id);
+        await d1Run('UPDATE password_resets SET attempt_count = attempt_count + 1 WHERE id = ?', [reset.id], ctx.env?.DB);
         return ctx.json({ error: 'Invalid verification code. Please check and try again.' }, 400);
       }
 
@@ -653,11 +557,11 @@ const app = new Hono()
         return ctx.json({ error: 'Verification code or reset token is required.' }, 400);
       }
 
-      const reset = db.prepare(`
+      const reset = await d1First(`
         SELECT * FROM password_resets 
         WHERE email = ? AND used = 0 AND datetime(expires_at) > datetime('now')
         ORDER BY created_at DESC LIMIT 1
-      `).get(cleanEmail);
+      `, [cleanEmail], ctx.env?.DB);
 
       if (!reset) {
         return ctx.json({ error: 'Password reset request has expired or is invalid. Please request a new code.' }, 400);
@@ -675,29 +579,29 @@ const app = new Hono()
         return ctx.json({ error: 'Invalid verification code or token. Please try again.' }, 400);
       }
 
-      // Hash and update password
+      // Hash and update password in D1
       const newPasswordHash = bcrypt.hashSync(password, 10);
-      db.prepare('UPDATE users SET password_hash = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(newPasswordHash, reset.user_id);
+      await d1Run('UPDATE users SET password_hash = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [newPasswordHash, reset.user_id], ctx.env?.DB);
 
       // Invalidate the reset record
-      db.prepare('UPDATE password_resets SET used = 1 WHERE id = ?').run(reset.id);
+      await d1Run('UPDATE password_resets SET used = 1 WHERE id = ?', [reset.id], ctx.env?.DB);
 
       // Clear any older sessions for security
-      db.prepare('DELETE FROM sessions WHERE user_id = ?').run(reset.user_id);
+      await d1Run('DELETE FROM sessions WHERE user_id = ?', [reset.user_id], ctx.env?.DB);
 
       // Create a fresh session and log user in immediately
       const sessionSecret = randomUUID();
       const sessionExpires = new Date(Date.now() + SESSION_MAX_AGE_MS).toISOString();
 
-      db.prepare(`
+      await d1Run(`
         INSERT INTO sessions (id, user_id, secret, expires_at) VALUES (?, ?, ?, ?)
-      `).run(randomUUID(), reset.user_id, sessionSecret, sessionExpires);
+      `, [randomUUID(), reset.user_id, sessionSecret, sessionExpires], ctx.env?.DB);
 
       setCookie(ctx, AUTH_COOKIE, sessionSecret, {
         path: '/',
         httpOnly: true,
-        secure: process.env.NODE_ENV === 'production',
-        sameSite: 'lax',
+        secure: true,
+        sameSite: 'none',
         maxAge: SESSION_MAX_AGE_SECONDS,
       });
 
@@ -706,6 +610,7 @@ const app = new Hono()
       return ctx.json({
         success: true,
         message: 'Password reset successfully!',
+        token: sessionSecret,
         workspaceId,
       });
     },
@@ -724,49 +629,28 @@ const app = new Hono()
     let workspaces = [];
 
     // Query Cloudflare D1 first
-    if (ctx.env?.DB) {
-      try {
-        session = await ctx.env.DB.prepare(`
-          SELECT * FROM sessions WHERE secret = ? AND datetime(expires_at) > datetime('now')
-        `).bind(sessionSecret).first();
-
-        if (session) {
-          user = await ctx.env.DB.prepare(`
-            SELECT id, name, email, created_at, updated_at FROM users WHERE id = ?
-          `).bind(session.user_id).first();
-
-          if (user) {
-            const wsQuery = await ctx.env.DB.prepare(`
-              SELECT w.id, w.name, w.domain_slug, w.image_url, m.role, m.organization_role, m.status, w.user_id = ? as is_owner
-              FROM members m
-              JOIN workspaces w ON m.workspace_id = w.id
-              WHERE m.user_id = ? AND m.status = 'ACTIVE'
-            `).bind(user.id, user.id).all();
-            workspaces = wsQuery?.results || [];
-          }
-        }
-      } catch (e) {
-        console.error('[D1_GET_CURRENT_ERROR]:', e);
-      }
-    }
-
-    // Fallback to local db if not in D1
-    if (!session) {
-      session = db.prepare(`
+    try {
+      session = await d1First(`
         SELECT * FROM sessions WHERE secret = ? AND datetime(expires_at) > datetime('now')
-      `).get(sessionSecret);
+      `, [sessionSecret], ctx.env?.DB);
 
       if (session) {
-        user = db.prepare('SELECT id, name, email, created_at, updated_at FROM users WHERE id = ?').get(session.user_id);
+        user = await d1First(`
+          SELECT id, name, email, created_at, updated_at FROM users WHERE id = ?
+        `, [session.user_id], ctx.env?.DB);
+
         if (user) {
-          workspaces = db.prepare(`
+          const wsQuery = await d1All(`
             SELECT w.id, w.name, w.domain_slug, w.image_url, m.role, m.organization_role, m.status, w.user_id = ? as is_owner
             FROM members m
             JOIN workspaces w ON m.workspace_id = w.id
             WHERE m.user_id = ? AND m.status = 'ACTIVE'
-          `).all(user.id, user.id);
+          `, [user.id, user.id], ctx.env?.DB);
+          workspaces = wsQuery || [];
         }
       }
+    } catch (e) {
+      console.error('[AUTH_CURRENT_ERROR]:', e);
     }
 
     if (!session || !user) {
@@ -786,19 +670,11 @@ const app = new Hono()
     const sessionSecret = getCookie(ctx, AUTH_COOKIE) || bearerToken;
 
     if (sessionSecret) {
-      if (ctx.env?.DB) {
-        try {
-          await ctx.env.DB.prepare('DELETE FROM sessions WHERE secret = ?').bind(sessionSecret).run();
-        } catch (e) {
-          console.error('[D1_DELETE_SESSION_ERROR]:', e);
-        }
-      }
-      db.prepare('DELETE FROM sessions WHERE secret = ?').run(sessionSecret);
+      await d1Run('DELETE FROM sessions WHERE secret = ?', [sessionSecret], ctx.env?.DB);
     }
 
     deleteCookie(ctx, AUTH_COOKIE);
     return ctx.json({ success: true });
   });
-
 
 export default app;

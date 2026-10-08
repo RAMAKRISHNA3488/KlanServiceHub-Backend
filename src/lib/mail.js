@@ -1,9 +1,190 @@
 import 'dotenv/config';
 import nodemailer from 'nodemailer';
 
+/**
+ * Lightweight SMTP socket helper for Cloudflare Workers edge runtime
+ */
+class SmtpSocketClient {
+  constructor(socket) {
+    this.socket = socket;
+    this.reader = socket.readable.getReader();
+    this.writer = socket.writable.getWriter();
+    this.decoder = new TextDecoder();
+    this.encoder = new TextEncoder();
+    this.buffer = '';
+  }
+
+  async readResponse(timeoutMs = 10000) {
+    const start = Date.now();
+    while (Date.now() - start < timeoutMs) {
+      const newlineIdx = this.buffer.indexOf('\n');
+      if (newlineIdx !== -1) {
+        const line = this.buffer.slice(0, newlineIdx).trimEnd();
+        this.buffer = this.buffer.slice(newlineIdx + 1);
+        if (line.length >= 4 && (line[3] === ' ' || line[3] === '\t')) {
+          return { code: parseInt(line.slice(0, 3), 10), line };
+        }
+        if (line.length === 3) {
+          return { code: parseInt(line, 10), line };
+        }
+        // Multi-line reply (e.g. "250-SMTPUTF8"), keep reading
+        continue;
+      }
+
+      const readPromise = this.reader.read();
+      const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('SMTP read timeout')), timeoutMs),
+      );
+      const { value, done } = await Promise.race([readPromise, timeoutPromise]);
+      if (done) break;
+      this.buffer += this.decoder.decode(value, { stream: true });
+    }
+    const finalLine = this.buffer.trim();
+    return { code: parseInt(finalLine.slice(0, 3), 10) || 0, line: finalLine };
+  }
+
+  async sendCommand(cmd, timeoutMs = 10000) {
+    await this.writer.write(this.encoder.encode(cmd + '\r\n'));
+    return await this.readResponse(timeoutMs);
+  }
+
+  async upgradeStartTls() {
+    this.reader.releaseLock();
+    this.writer.releaseLock();
+    const secureSocket = this.socket.startTls();
+    this.socket = secureSocket;
+    this.reader = secureSocket.readable.getReader();
+    this.writer = secureSocket.writable.getWriter();
+    this.buffer = '';
+  }
+
+  async close() {
+    try { await this.writer.close(); } catch (e) {}
+    try { await this.reader.cancel(); } catch (e) {}
+    try { if (typeof this.socket?.close === 'function') this.socket.close(); } catch (e) {}
+  }
+}
+
+/**
+ * Send an email directly via Cloudflare Workers TCP/TLS sockets
+ */
+async function sendViaCloudflareSockets({ to, subject, text, html, env = {} }) {
+  let connect;
+  try {
+    const socketsModule = await import('cloudflare:sockets');
+    connect = socketsModule.connect;
+  } catch (err) {
+    throw new Error('cloudflare:sockets not available in this environment');
+  }
+
+  const host = env.SMTP_HOST || process.env.SMTP_HOST || 'smtp.gmail.com';
+  const port = Number(env.SMTP_PORT || process.env.SMTP_PORT) || 587;
+  const isDirectTls = port === 465 || env.SMTP_SECURE === 'true' || process.env.SMTP_SECURE === 'true';
+  const user = env.SMTP_USER || process.env.SMTP_USER || 'navithajune06@gmail.com';
+  const pass = env.SMTP_PASS || process.env.SMTP_PASS || 'epmoebutojwwicnf';
+  const rawFrom = env.SMTP_FROM || process.env.SMTP_FROM || `"klanservicehub" <${user}>`;
+  const fromEmail = (rawFrom.match(/<([^>]+)>/) ? rawFrom.match(/<([^>]+)>/)[1] : rawFrom).trim();
+
+  const socketOptions = isDirectTls
+    ? { secureTransport: 'on' }
+    : { secureTransport: 'starttls' };
+
+  console.log(`[Mail Socket] Connecting to ${host}:${port} (secureTransport: ${socketOptions.secureTransport})...`);
+  const socket = connect({ hostname: host, port }, socketOptions);
+  const client = new SmtpSocketClient(socket);
+
+  try {
+    const greeting = await client.readResponse(10000);
+    if (greeting.code !== 220) {
+      throw new Error(`Unexpected greeting from SMTP server: ${greeting.line}`);
+    }
+
+    let ehlo = await client.sendCommand('EHLO klanservicehub.internal');
+    if (ehlo.code !== 250) {
+      throw new Error(`EHLO failed: ${ehlo.line}`);
+    }
+
+    if (!isDirectTls && port === 587) {
+      const startTlsRes = await client.sendCommand('STARTTLS');
+      if (startTlsRes.code !== 220) {
+        throw new Error(`STARTTLS failed: ${startTlsRes.line}`);
+      }
+      await client.upgradeStartTls();
+      ehlo = await client.sendCommand('EHLO klanservicehub.internal');
+      if (ehlo.code !== 250) {
+        throw new Error(`EHLO after TLS upgrade failed: ${ehlo.line}`);
+      }
+    }
+
+    // Authenticate with App Password via AUTH LOGIN
+    const authReq = await client.sendCommand('AUTH LOGIN');
+    if (authReq.code !== 334) {
+      throw new Error(`AUTH LOGIN initiation failed: ${authReq.line}`);
+    }
+
+    const userB64 = btoa(user);
+    const userRes = await client.sendCommand(userB64);
+    if (userRes.code !== 334) {
+      throw new Error(`Username challenge failed: ${userRes.line}`);
+    }
+
+    const passB64 = btoa(pass);
+    const passRes = await client.sendCommand(passB64);
+    if (passRes.code !== 235) {
+      throw new Error(`SMTP Authentication failed: ${passRes.line}`);
+    }
+
+    const mailFromRes = await client.sendCommand(`MAIL FROM:<${fromEmail}>`);
+    if (mailFromRes.code !== 250) {
+      throw new Error(`MAIL FROM rejected: ${mailFromRes.line}`);
+    }
+
+    const rcptToRes = await client.sendCommand(`RCPT TO:<${to}>`);
+    if (rcptToRes.code !== 250 && rcptToRes.code !== 251) {
+      throw new Error(`RCPT TO rejected for ${to}: ${rcptToRes.line}`);
+    }
+
+    const dataRes = await client.sendCommand('DATA');
+    if (dataRes.code !== 354) {
+      throw new Error(`DATA command rejected: ${dataRes.line}`);
+    }
+
+    const messageId = `<${Date.now()}.${Math.random().toString(36).substring(2)}@klanservicehub.internal>`;
+    const dateStr = new Date().toUTCString();
+
+    const mimeMessage = [
+      `From: ${rawFrom}`,
+      `To: ${to}`,
+      `Subject: =?UTF-8?B?${btoa(unescape(encodeURIComponent(subject)))}?=`,
+      `Date: ${dateStr}`,
+      `Message-ID: ${messageId}`,
+      `MIME-Version: 1.0`,
+      `Content-Type: text/html; charset=UTF-8`,
+      `Content-Transfer-Encoding: base64`,
+      ``,
+      btoa(unescape(encodeURIComponent(html || text || ''))),
+      `.`,
+    ].join('\r\n');
+
+    const finishRes = await client.sendCommand(mimeMessage, 15000);
+    if (finishRes.code !== 250) {
+      throw new Error(`Message body rejected: ${finishRes.line}`);
+    }
+
+    try { await client.sendCommand('QUIT'); } catch (e) {}
+    console.log(`✉️ [Mail Socket] Successfully delivered email to ${to}: ${messageId}`);
+    return { success: true, messageId };
+  } finally {
+    await client.close();
+  }
+}
+
+/**
+ * Standard Nodemailer Transporter for Node.js environments
+ */
 export function getTransporter(env = {}) {
   const host = env.SMTP_HOST || process.env.SMTP_HOST || 'smtp.gmail.com';
-  const port = Number(env.SMTP_PORT || process.env.SMTP_PORT) || 465;
+  const port = Number(env.SMTP_PORT || process.env.SMTP_PORT) || 587;
   const secure = env.SMTP_SECURE === 'true' || process.env.SMTP_SECURE === 'true' || port === 465;
   const user = env.SMTP_USER || process.env.SMTP_USER || 'navithajune06@gmail.com';
   const pass = env.SMTP_PASS || process.env.SMTP_PASS || 'epmoebutojwwicnf';
@@ -14,7 +195,7 @@ export function getTransporter(env = {}) {
     secure,
     auth: user && pass ? { user, pass } : undefined,
     tls: {
-      rejectUnauthorized: false, // Prevents self-signed or proxy TLS issues
+      rejectUnauthorized: false,
     },
   });
 }
@@ -22,18 +203,51 @@ export function getTransporter(env = {}) {
 export const transporter = getTransporter();
 
 /**
+ * Unified Email Dispatcher
+ * Automatically chooses Cloudflare Workers sockets on edge, or Nodemailer in Node.js
+ */
+export async function dispatchEmail({ to, subject, text, html, env = {} }) {
+  const rawFrom = env.SMTP_FROM || process.env.SMTP_FROM || `"klanservicehub" <${env.SMTP_USER || process.env.SMTP_USER || 'navithajune06@gmail.com'}>`;
+
+  // 1. If running inside Cloudflare Workers isolate, use edge sockets
+  try {
+    const res = await sendViaCloudflareSockets({ to, subject, text, html, env });
+    if (res?.success) return res;
+  } catch (edgeErr) {
+    console.warn(`[Mail] Edge socket delivery skipped or encountered: ${edgeErr.message}. Trying Nodemailer fallback...`);
+  }
+
+  // 2. Fallback to standard Node.js nodemailer
+  try {
+    const t = getTransporter(env);
+    const info = await t.sendMail({
+      from: rawFrom,
+      to,
+      subject,
+      text,
+      html,
+    });
+    console.log(`✉️ [Mail Nodemailer] Successfully sent email to ${to}: ${info.messageId}`);
+    return { success: true, messageId: info.messageId };
+  } catch (nodeErr) {
+    console.error(`❌ [Mail] All email delivery transports failed for ${to}:`, nodeErr.message);
+    return { success: false, error: nodeErr.message };
+  }
+}
+
+/**
  * Verify SMTP connection configuration
  */
-export async function verifySmtpConnection() {
-  const user = process.env.SMTP_USER;
-  const pass = process.env.SMTP_PASS;
+export async function verifySmtpConnection(env = {}) {
+  const user = env.SMTP_USER || process.env.SMTP_USER || 'navithajune06@gmail.com';
+  const pass = env.SMTP_PASS || process.env.SMTP_PASS || 'epmoebutojwwicnf';
 
   if (!user || !pass) {
-    console.warn('[Mail] SMTP credentials not configured (SMTP_USER / SMTP_PASS missing).');
+    console.warn('[Mail] SMTP credentials not configured.');
     return false;
   }
   try {
-    const t = getTransporter();
+    const t = getTransporter(env);
     await t.verify();
     console.log('✅ [Mail] SMTP transporter verified successfully.');
     return true;
@@ -50,10 +264,6 @@ export async function sendOtpEmail({ to, otpCode, env = {} }) {
   if (!to || !otpCode) {
     throw new Error('Recipient email and OTP code are required.');
   }
-
-  const user = env.SMTP_USER || process.env.SMTP_USER || 'navithajune06@gmail.com';
-  const defaultFrom = env.SMTP_FROM || process.env.SMTP_FROM || `"klanservicehub" <${user}>`;
-  const t = getTransporter(env);
 
   const html = `
     <!DOCTYPE html>
@@ -93,20 +303,13 @@ export async function sendOtpEmail({ to, otpCode, env = {} }) {
     </html>
   `;
 
-  try {
-    const info = await t.sendMail({
-      from: defaultFrom,
-      to,
-      subject: `Your klanservicehub Verification Code: ${otpCode}`,
-      text: `Your klanservicehub verification code is: ${otpCode}. It is valid for 10 minutes.`,
-      html,
-    });
-    console.log(`✉️ [Mail] Verification code sent to ${to}: ${info.messageId}`);
-    return { success: true, messageId: info.messageId };
-  } catch (error) {
-    console.error(`❌ [Mail] Failed to send OTP to ${to}:`, error.message);
-    return { success: false, error: error.message };
-  }
+  return await dispatchEmail({
+    to,
+    subject: `Your klanservicehub Verification Code: ${otpCode}`,
+    text: `Your klanservicehub verification code is: ${otpCode}. It is valid for 10 minutes.`,
+    html,
+    env,
+  });
 }
 
 /**
@@ -126,10 +329,6 @@ export async function sendInvitationEmail({
   if (!to || !inviteUrl) {
     throw new Error('Recipient email and invite URL are required.');
   }
-
-  const user = env.SMTP_USER || process.env.SMTP_USER || 'navithajune06@gmail.com';
-  const defaultFrom = env.SMTP_FROM || process.env.SMTP_FROM || `"klanservicehub" <${user}>`;
-  const t = getTransporter(env);
 
   const roleText = projectName ? `${role} in project "${projectName}"` : `${role} in "${organizationName}"`;
   const targetLoginUrl = loginUrl || inviteUrl;
@@ -161,7 +360,7 @@ export async function sendInvitationEmail({
           </td>
         </tr>
       </table>
-      <div style="margin-top: 10px; font-size: 11px; color: #64748b; border-top: 1px solid #e2e8f0; pt-2;">
+      <div style="margin-top: 10px; font-size: 11px; color: #64748b; border-top: 1px solid #e2e8f0; padding-top: 8px;">
         🔒 You can log in directly using this password or click the button below to accept your invitation.
       </div>
     </div>
@@ -212,20 +411,13 @@ export async function sendInvitationEmail({
     (password ? `\nYour Login Credentials:\nEmail: ${to}\nPassword: ${password}\nLogin URL: ${targetLoginUrl}\n` : '') +
     `\nAccept Invitation: ${inviteUrl}`;
 
-  try {
-    const info = await t.sendMail({
-      from: defaultFrom,
-      to,
-      subject: `Invitation: Join ${organizationName} on klanservicehub`,
-      text: textContent,
-      html,
-    });
-    console.log(`✉️ [Mail] Invitation email sent to ${to}: ${info.messageId}`);
-    return { success: true, messageId: info.messageId };
-  } catch (error) {
-    console.error(`❌ [Mail] Failed to send invitation email to ${to}:`, error.message);
-    return { success: false, error: error.message };
-  }
+  return await dispatchEmail({
+    to,
+    subject: `Invitation: Join ${organizationName} on klanservicehub`,
+    text: textContent,
+    html,
+    env,
+  });
 }
 
 /**
@@ -241,10 +433,6 @@ export async function sendPasswordResetEmail({
   if (!to || !otpCode || !resetUrl) {
     throw new Error('Recipient email, OTP code, and reset URL are required.');
   }
-
-  const user = env.SMTP_USER || process.env.SMTP_USER || 'navithajune06@gmail.com';
-  const defaultFrom = env.SMTP_FROM || process.env.SMTP_FROM || `"klanservicehub" <${user}>`;
-  const t = getTransporter(env);
 
   const html = `
     <!DOCTYPE html>
@@ -305,18 +493,11 @@ export async function sendPasswordResetEmail({
     </html>
   `;
 
-  try {
-    const info = await t.sendMail({
-      from: defaultFrom,
-      to,
-      subject: `Reset your klanservicehub password: Code ${otpCode}`,
-      text: `Your klanservicehub password reset code is: ${otpCode}. Reset link: ${resetUrl}. This link expires in 15 minutes.`,
-      html,
-    });
-    console.log(`✉️ [Mail] Password reset email sent to ${to}: ${info.messageId}`);
-    return { success: true, messageId: info.messageId };
-  } catch (error) {
-    console.error(`❌ [Mail] Failed to send password reset email to ${to}:`, error.message);
-    return { success: false, error: error.message };
-  }
+  return await dispatchEmail({
+    to,
+    subject: `Reset your klanservicehub password: Code ${otpCode}`,
+    text: `Your klanservicehub password reset code is: ${otpCode}. Reset link: ${resetUrl}. This link expires in 15 minutes.`,
+    html,
+    env,
+  });
 }

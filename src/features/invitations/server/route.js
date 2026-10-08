@@ -278,9 +278,45 @@ const app = new Hono()
       invitations: results,
     });
   })
+  .post('/:workspaceId/:id/resend', sessionMiddleware, async (ctx) => {
+    const user = ctx.get('user');
+    const { workspaceId, id } = ctx.req.param();
+
+    const invite = await d1First('SELECT * FROM invitations WHERE id = ? AND organization_id = ?', [id, workspaceId], ctx.env?.DB);
+    if (!invite) {
+      return ctx.json({ error: 'Invitation not found.' }, 404);
+    }
+
+    const token = randomBytes(24).toString('hex');
+    const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+
+    await d1Run("UPDATE invitations SET token_hash = ?, expires_at = ?, status = 'PENDING' WHERE id = ?", [token, expiresAt, id], ctx.env?.DB);
+
+    const workspace = await d1First('SELECT name FROM workspaces WHERE id = ?', [workspaceId], ctx.env?.DB);
+    const frontendUrl = ctx.env?.FRONTEND_URL || process.env.FRONTEND_URL || 'https://klanservicehub-frontend.klanservicehub.workers.dev';
+    const fullInviteUrl = `${frontendUrl}/invite/${token}`;
+
+    const mailResult = await sendInvitationEmail({
+      to: invite.email,
+      inviterName: user.name || 'A team member',
+      organizationName: workspace?.name || 'Workspace',
+      role: invite.project_role || invite.organization_role || 'Member',
+      inviteUrl: fullInviteUrl,
+      env: ctx.env,
+    });
+
+    return ctx.json({
+      success: true,
+      message: mailResult.success
+        ? `Invitation re-sent successfully to ${invite.email}`
+        : `Invitation updated, but email delivery status: ${mailResult.error || 'simulated'}`,
+      emailSent: mailResult.success,
+      inviteUrl: fullInviteUrl,
+    });
+  })
   .delete('/:workspaceId/:id', sessionMiddleware, async (ctx) => {
     const { workspaceId, id } = ctx.req.param();
-    await d1Run("UPDATE invitations SET status = 'REVOKED' WHERE id = ? AND organization_id = ?", [id, workspaceId]);
+    await d1Run("UPDATE invitations SET status = 'REVOKED' WHERE id = ?", [id], ctx.env?.DB);
     return ctx.json({ success: true });
   });
 

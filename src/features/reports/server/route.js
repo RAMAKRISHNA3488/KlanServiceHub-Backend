@@ -1620,7 +1620,7 @@ app.get('/:workspaceId/export', sessionMiddleware, async (ctx) => {
 app.get('/:workspaceId', sessionMiddleware, async (ctx) => {
   const { workspaceId } = ctx.req.param();
   const query = ctx.req.query();
-  const auth = checkAccess(ctx, workspaceId);
+  const auth = await checkAccess(ctx, workspaceId);
   if (!auth.allowed) return ctx.json({ error: auth.error }, auth.status);
 
   const { whereSql, params } = buildTaskFilter(query, workspaceId, 't');
