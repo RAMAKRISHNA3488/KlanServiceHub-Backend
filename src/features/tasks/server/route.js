@@ -392,11 +392,19 @@ const app = new Hono()
         }
       }
 
-      await d1Run(`
-        UPDATE tasks 
-        SET status = ?, position = ?, updated_at = CURRENT_TIMESTAMP
-        WHERE id = ?
-      `, [newStatus, newPosition, taskId], d1);
+      if (newStatus === 'BACKLOG') {
+        await d1Run(`
+          UPDATE tasks 
+          SET status = ?, position = ?, sprint_id = NULL, updated_at = CURRENT_TIMESTAMP
+          WHERE id = ?
+        `, [newStatus, newPosition, taskId], d1);
+      } else {
+        await d1Run(`
+          UPDATE tasks 
+          SET status = ?, position = ?, updated_at = CURRENT_TIMESTAMP
+          WHERE id = ?
+        `, [newStatus, newPosition, taskId], d1);
+      }
 
       if (newStatus !== existingTask.status) {
         await d1Run(`
@@ -780,7 +788,13 @@ const app = new Hono()
     const params = [];
 
     if (name !== undefined) { updates.push('name = ?'); params.push(name); }
-    if (status !== undefined) { updates.push('status = ?'); params.push(status); }
+    if (status !== undefined) {
+      updates.push('status = ?');
+      params.push(status);
+      if (status === 'BACKLOG' && sprintId === undefined) {
+        updates.push('sprint_id = NULL');
+      }
+    }
     if (description !== undefined) { updates.push('description = ?'); params.push(description); }
     if (projectId !== undefined) { updates.push('project_id = ?'); params.push(projectId); }
     if (priority !== undefined) { updates.push('priority = ?'); params.push(priority); }

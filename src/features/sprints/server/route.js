@@ -175,9 +175,19 @@ const app = new Hono()
       return ctx.json({ error: 'Forbidden.' }, 403);
     }
 
-    await d1Run('UPDATE tasks SET sprint_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND workspace_id = ?', [sprintId, taskId, workspaceId]);
+    if (!sprintId) {
+      await d1Run(
+        'UPDATE tasks SET sprint_id = NULL, status = "BACKLOG", updated_at = CURRENT_TIMESTAMP WHERE id = ? AND workspace_id = ?',
+        [taskId, workspaceId]
+      );
+    } else {
+      await d1Run(
+        'UPDATE tasks SET sprint_id = ?, status = CASE WHEN status = "BACKLOG" THEN "TODO" ELSE status END, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND workspace_id = ?',
+        [sprintId, taskId, workspaceId]
+      );
+    }
 
-    return ctx.json({ success: true, taskId, sprintId });
+    return ctx.json({ success: true, taskId, sprintId, status: !sprintId ? 'BACKLOG' : undefined });
   })
   .patch('/:workspaceId/:sprintId', sessionMiddleware, async (ctx) => {
     const actor = ctx.get('user');
