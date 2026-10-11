@@ -366,7 +366,9 @@ const app = new Hono()
       else if (clean === 'IN_PROGRESS') newStatus = 'IN_PROGRESS';
       else if (clean === 'DONE') newStatus = 'DONE';
       else if (clean === 'BACKLOG') newStatus = 'BACKLOG';
-      else newStatus = 'TODO';
+      else if (clean === 'TESTING' || clean === 'TEST') newStatus = 'TESTING';
+      else if (clean === 'TODO' || clean === 'TO_DO') newStatus = 'TODO';
+      else newStatus = clean;
 
       const newPosition = item.position !== undefined ? Number(item.position) : existingTask.position;
 
@@ -417,7 +419,7 @@ const app = new Hono()
       });
     }
 
-    return ctx.json({ data: updatedTasks[0] || { workspaceId } });
+    return ctx.json({ data: { updatedTasks, ...(updatedTasks[0] || {}), workspaceId } });
   })
   .get('/:taskId', sessionMiddleware, async (ctx) => {
     const { taskId } = ctx.req.param();
@@ -864,50 +866,6 @@ const app = new Hono()
     }
 
     return ctx.json({ data: await attachAssigneesToTask(formatDoc(updated), d1) });
-  })
-  .post('/bulk-update', sessionMiddleware, async (ctx) => {
-    const user = ctx.get('user');
-    const { tasks } = await ctx.req.json();
-    const d1 = ctx.env?.DB || getD1Database();
-
-    if (!tasks || tasks.length === 0) {
-      return ctx.json({ data: { updatedTasks: [], workspaceId: '' } });
-    }
-
-    let firstTask = null;
-    if (d1) {
-      try {
-        firstTask = await d1.prepare('SELECT workspace_id FROM tasks WHERE id = ?').bind(tasks[0].$id || tasks[0].id).first();
-      } catch (e) {}
-    }
-    if (!firstTask) {
-      firstTask = db.prepare('SELECT workspace_id FROM tasks WHERE id = ?').get(tasks[0].$id || tasks[0].id);
-    }
-
-    if (!firstTask) {
-      return ctx.json({ error: 'Task not found.' }, 404);
-    }
-
-    if (d1) {
-      for (const task of tasks) {
-        const id = task.$id || task.id;
-        try {
-          await d1.prepare('UPDATE tasks SET status = ?, position = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(task.status, task.position, id).run();
-        } catch (e) {}
-      }
-    }
-
-    const updateStmt = db.prepare('UPDATE tasks SET status = ?, position = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?');
-    const updatedTasks = [];
-
-    for (const task of tasks) {
-      const id = task.$id || task.id;
-      updateStmt.run(task.status, task.position, id);
-      const t = db.prepare('SELECT * FROM tasks WHERE id = ?').get(id);
-      if (t) updatedTasks.push(formatDoc(t));
-    }
-
-    return ctx.json({ data: { updatedTasks, workspaceId: firstTask.workspace_id } });
   })
   .get('/:taskId/comments', sessionMiddleware, async (ctx) => {
     const { taskId } = ctx.req.param();
