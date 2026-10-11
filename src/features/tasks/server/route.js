@@ -347,10 +347,18 @@ const app = new Hono()
       return ctx.json({ data: [] });
     }
 
+    const dedupedTasksMap = new Map();
+    for (const item of tasks) {
+      const taskId = item.$id || item.id;
+      if (taskId) {
+        dedupedTasksMap.set(taskId, item);
+      }
+    }
+    const cleanTaskList = Array.from(dedupedTasksMap.values());
     const updatedTasks = [];
     let workspaceId = null;
 
-    for (const item of tasks) {
+    for (const item of cleanTaskList) {
       const taskId = item.$id || item.id;
       if (!taskId) continue;
 
