@@ -344,7 +344,7 @@ const app = new Hono()
     const d1 = ctx.env?.DB || getD1Database();
 
     if (!Array.isArray(tasks) || tasks.length === 0) {
-      return ctx.json({ data: [] });
+      return ctx.json({ data: { updatedTasks: [], workspaceId: null } });
     }
 
     const dedupedTasksMap = new Map();
