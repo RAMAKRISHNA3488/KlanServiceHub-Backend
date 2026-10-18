@@ -431,7 +431,7 @@ app.get('/:workspaceId/priorities', sessionMiddleware, async (ctx) => {
 app.get('/:workspaceId/teams', sessionMiddleware, async (ctx) => {
   const { workspaceId } = ctx.req.param();
   const query = ctx.req.query();
-  const auth = checkAccess(ctx, workspaceId);
+  const auth = await checkAccess(ctx, workspaceId);
   if (!auth.allowed) return ctx.json({ error: auth.error }, auth.status);
 
   const teams = db.prepare(`
@@ -529,7 +529,7 @@ app.get('/:workspaceId/teams', sessionMiddleware, async (ctx) => {
 app.get('/:workspaceId/members', sessionMiddleware, async (ctx) => {
   const { workspaceId } = ctx.req.param();
   const query = ctx.req.query();
-  const auth = checkAccess(ctx, workspaceId);
+  const auth = await checkAccess(ctx, workspaceId);
   if (!auth.allowed) return ctx.json({ error: auth.error }, auth.status);
 
   const sortBy = query.sortBy || 'workload';
@@ -636,7 +636,7 @@ app.get('/:workspaceId/members', sessionMiddleware, async (ctx) => {
 app.get('/:workspaceId/projects', sessionMiddleware, async (ctx) => {
   const { workspaceId } = ctx.req.param();
   const query = ctx.req.query();
-  const auth = checkAccess(ctx, workspaceId);
+  const auth = await checkAccess(ctx, workspaceId);
   if (!auth.allowed) return ctx.json({ error: auth.error }, auth.status);
 
   const projects = db.prepare(`
@@ -701,7 +701,7 @@ app.get('/:workspaceId/projects', sessionMiddleware, async (ctx) => {
 app.get('/:workspaceId/epics', sessionMiddleware, async (ctx) => {
   const { workspaceId } = ctx.req.param();
   const query = ctx.req.query();
-  const auth = checkAccess(ctx, workspaceId);
+  const auth = await checkAccess(ctx, workspaceId);
   if (!auth.allowed) return ctx.json({ error: auth.error }, auth.status);
 
   let whereClauses = [
@@ -857,7 +857,7 @@ app.get('/:workspaceId/epics', sessionMiddleware, async (ctx) => {
 app.get('/:workspaceId/trends', sessionMiddleware, async (ctx) => {
   const { workspaceId } = ctx.req.param();
   const query = ctx.req.query();
-  const auth = checkAccess(ctx, workspaceId);
+  const auth = await checkAccess(ctx, workspaceId);
   if (!auth.allowed) return ctx.json({ error: auth.error }, auth.status);
 
   const interval = query.interval || 'daily';
@@ -915,7 +915,7 @@ app.get('/:workspaceId/trends', sessionMiddleware, async (ctx) => {
 app.get('/:workspaceId/sprints', sessionMiddleware, async (ctx) => {
   const { workspaceId } = ctx.req.param();
   const query = ctx.req.query();
-  const auth = checkAccess(ctx, workspaceId);
+  const auth = await checkAccess(ctx, workspaceId);
   if (!auth.allowed) return ctx.json({ error: auth.error }, auth.status);
 
   const sprints = db.prepare(`
@@ -984,7 +984,7 @@ app.get('/:workspaceId/sprints', sessionMiddleware, async (ctx) => {
 app.get('/:workspaceId/bugs', sessionMiddleware, async (ctx) => {
   const { workspaceId } = ctx.req.param();
   const query = ctx.req.query();
-  const auth = checkAccess(ctx, workspaceId);
+  const auth = await checkAccess(ctx, workspaceId);
   if (!auth.allowed) return ctx.json({ error: auth.error }, auth.status);
 
   const { whereSql, params } = buildTaskFilter(query, workspaceId, 't');
@@ -1039,7 +1039,7 @@ app.get('/:workspaceId/bugs', sessionMiddleware, async (ctx) => {
 app.get('/:workspaceId/overdue', sessionMiddleware, async (ctx) => {
   const { workspaceId } = ctx.req.param();
   const query = ctx.req.query();
-  const auth = checkAccess(ctx, workspaceId);
+  const auth = await checkAccess(ctx, workspaceId);
   if (!auth.allowed) return ctx.json({ error: auth.error }, auth.status);
 
   const { whereSql, params } = buildTaskFilter(query, workspaceId, 't');
@@ -1087,7 +1087,7 @@ app.get('/:workspaceId/overdue', sessionMiddleware, async (ctx) => {
 app.get('/:workspaceId/activity', sessionMiddleware, async (ctx) => {
   const { workspaceId } = ctx.req.param();
   const limit = parseInt(ctx.req.query('limit') || '30', 10);
-  const auth = checkAccess(ctx, workspaceId);
+  const auth = await checkAccess(ctx, workspaceId);
   if (!auth.allowed) return ctx.json({ error: auth.error }, auth.status);
 
   const activities = db.prepare(`
@@ -1113,7 +1113,7 @@ app.get('/:workspaceId/activity', sessionMiddleware, async (ctx) => {
 app.get('/:workspaceId/drilldown', sessionMiddleware, async (ctx) => {
   const { workspaceId } = ctx.req.param();
   const query = ctx.req.query();
-  const auth = checkAccess(ctx, workspaceId);
+  const auth = await checkAccess(ctx, workspaceId);
   if (!auth.allowed) return ctx.json({ error: auth.error }, auth.status);
 
   const entityType = query.entityType || 'tasks';
@@ -1322,7 +1322,7 @@ app.get('/:workspaceId/drilldown', sessionMiddleware, async (ctx) => {
 app.get('/:workspaceId/export', sessionMiddleware, async (ctx) => {
   const { workspaceId } = ctx.req.param();
   const query = ctx.req.query();
-  const auth = checkAccess(ctx, workspaceId);
+  const auth = await checkAccess(ctx, workspaceId);
   if (!auth.allowed) return ctx.json({ error: auth.error }, auth.status);
 
   const format = query.format || 'csv';
