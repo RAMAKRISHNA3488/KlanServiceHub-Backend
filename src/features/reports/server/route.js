@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import { sessionMiddleware } from '../../../lib/session-middleware.js';
-import { db, formatDoc, d1All, d1First, d1Run } from '../../../db.js';
+import { db, formatDoc, d1All, d1First, d1Run, pruneActivities, getD1Database } from '../../../db.js';
 import { hasPermission } from '../../../lib/permissions.js';
 
 const app = new Hono();
@@ -1139,12 +1139,17 @@ app.get('/:workspaceId/overdue', sessionMiddleware, async (ctx) => {
   });
 });
 
-// 13. ORGANIZATION ACTIVITY
+// 13. ORGANIZATION ACTIVITY (Max 50 events)
 app.get('/:workspaceId/activity', sessionMiddleware, async (ctx) => {
   const { workspaceId } = ctx.req.param();
-  const limit = parseInt(ctx.req.query('limit') || '30', 10);
+  const limit = Math.min(parseInt(ctx.req.query('limit') || '50', 10), 50);
   const auth = await checkAccess(ctx, workspaceId);
   if (!auth.allowed) return ctx.json({ error: auth.error }, auth.status);
+
+  const d1 = ctx.env?.DB || getD1Database();
+
+  // Prune any legacy events beyond the 50 newest
+  await pruneActivities(workspaceId, d1);
 
   const activities = await d1All(`
     SELECT a.id, a.action, a.details, a.created_at,
@@ -1158,7 +1163,7 @@ app.get('/:workspaceId/activity', sessionMiddleware, async (ctx) => {
     WHERE a.workspace_id = ?
     ORDER BY a.created_at DESC
     LIMIT ?
-  `, [workspaceId, limit]);
+  `, [workspaceId, limit], d1);
 
   return ctx.json({
     data: (activities || []).map(formatDoc),

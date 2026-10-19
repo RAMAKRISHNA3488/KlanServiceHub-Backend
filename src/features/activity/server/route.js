@@ -1,12 +1,14 @@
 import { Hono } from 'hono';
 import { sessionMiddleware } from '../../../lib/session-middleware.js';
-import { db, formatDoc, d1All, d1First, d1Run, getD1Database } from '../../../db.js';
+import { db, formatDoc, d1All, d1First, d1Run, getD1Database, pruneActivities } from '../../../db.js';
 
 const app = new Hono()
   .get('/:workspaceId', sessionMiddleware, async (ctx) => {
     const { workspaceId } = ctx.req.param();
-    const limit = parseInt(ctx.req.query('limit') || '50', 10);
+    const limit = Math.min(parseInt(ctx.req.query('limit') || '50', 10), 50);
     const d1 = ctx.env?.DB || getD1Database();
+
+    await pruneActivities(workspaceId, d1);
 
     const activities = await d1All(`
       SELECT a.*, u.name as user_name, u.email as user_email, u.avatar_url as user_avatar,

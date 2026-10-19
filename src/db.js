@@ -1630,7 +1630,37 @@ export async function logAudit({ workspaceId, actorId, actorName, action, entity
   } catch (e) {}
 }
 
-// User Business Activity Stream Helper
+// User Business Activity Stream Helper (Strict maximum 50 events per workspace; older events expire FIFO)
+export async function pruneActivities(workspaceId, explicitD1 = null) {
+  const d1 = explicitD1 || getD1Database();
+  if (d1) {
+    try {
+      await d1Run(`
+        DELETE FROM activities
+        WHERE workspace_id = ?
+          AND id IN (
+            SELECT id FROM activities
+            WHERE workspace_id = ?
+            ORDER BY created_at DESC
+            LIMIT -1 OFFSET 50
+          )
+      `, [workspaceId, workspaceId], d1);
+    } catch (e) {}
+  }
+  try {
+    db.prepare(`
+      DELETE FROM activities
+      WHERE workspace_id = ?
+        AND id IN (
+          SELECT id FROM activities
+          WHERE workspace_id = ?
+          ORDER BY created_at DESC
+          LIMIT -1 OFFSET 50
+        )
+    `).run(workspaceId, workspaceId);
+  } catch (e) {}
+}
+
 export async function logActivity({ workspaceId, projectId = null, taskId = null, userId, action, details = '' }, explicitD1 = null) {
   const d1 = explicitD1 || getD1Database();
   const id = randomUUID();
@@ -1641,6 +1671,18 @@ export async function logActivity({ workspaceId, projectId = null, taskId = null
         INSERT INTO activities (id, workspace_id, project_id, task_id, user_id, action, details)
         VALUES (?, ?, ?, ?, ?, ?, ?)
       `, [id, workspaceId, projectId || null, taskId || null, userId, action, serializedDetails], d1);
+
+      // Enforce max 50 events: expire/delete oldest events beyond the 50 newest
+      await d1Run(`
+        DELETE FROM activities
+        WHERE workspace_id = ?
+          AND id IN (
+            SELECT id FROM activities
+            WHERE workspace_id = ?
+            ORDER BY created_at DESC
+            LIMIT -1 OFFSET 50
+          )
+      `, [workspaceId, workspaceId], d1);
     } catch (e) {}
   }
   try {
@@ -1656,6 +1698,17 @@ export async function logActivity({ workspaceId, projectId = null, taskId = null
       action,
       serializedDetails
     );
+
+    db.prepare(`
+      DELETE FROM activities
+      WHERE workspace_id = ?
+        AND id IN (
+          SELECT id FROM activities
+          WHERE workspace_id = ?
+          ORDER BY created_at DESC
+          LIMIT -1 OFFSET 50
+        )
+    `).run(workspaceId, workspaceId);
   } catch (e) {}
 }
 
