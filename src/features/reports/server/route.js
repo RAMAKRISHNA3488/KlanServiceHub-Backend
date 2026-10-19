@@ -434,45 +434,93 @@ app.get('/:workspaceId/teams', sessionMiddleware, async (ctx) => {
   const auth = await checkAccess(ctx, workspaceId);
   if (!auth.allowed) return ctx.json({ error: auth.error }, auth.status);
 
-  const teams = db.prepare(`
+  let teams = await d1All(`
     SELECT t.id, t.name, t.description, t.lead_id, u.name as lead_name, u.avatar_url as lead_avatar
     FROM teams t
     LEFT JOIN users u ON t.lead_id = u.id
     WHERE t.workspace_id = ?
     ORDER BY t.name ASC
-  `).all(workspaceId);
+  `, [workspaceId]);
 
-  const totalWorkspaceTasks = db.prepare('SELECT COUNT(*) as c FROM tasks WHERE workspace_id = ?').get(workspaceId)?.c || 1;
+  const totalTasksRow = await d1First('SELECT COUNT(*) as c FROM tasks WHERE workspace_id = ?', [workspaceId]);
+  const totalWorkspaceTasks = totalTasksRow?.c || 1;
 
-  const teamAnalytics = teams.map((team) => {
-    const members = db.prepare(`
-      SELECT tm.user_id, u.name, u.email, u.avatar_url, m.id as member_id
-      FROM team_members tm
-      JOIN users u ON tm.user_id = u.id
-      LEFT JOIN members m ON m.user_id = u.id AND m.workspace_id = ?
-      WHERE tm.team_id = ?
-    `).all(workspaceId, team.id);
+  // Fallback: If no teams exist yet in the workspace, create a default squad aggregating workspace members
+  if (!teams || teams.length === 0) {
+    const workspaceMembers = await d1All(`
+      SELECT m.id as member_id, m.user_id, u.name, u.email, u.avatar_url
+      FROM members m
+      JOIN users u ON m.user_id = u.id
+      WHERE m.workspace_id = ? AND m.status = 'ACTIVE'
+    `, [workspaceId]);
 
-    const stats = db.prepare(`
-      SELECT 
-        COUNT(t.id) as total_tasks,
-        SUM(CASE WHEN t.status IN ${COMPLETED_STATUSES} THEN 1 ELSE 0 END) as completed_tasks,
-        SUM(CASE WHEN t.status IN ('IN_PROGRESS', 'In Progress', 'IN_REVIEW', 'In Review') THEN 1 ELSE 0 END) as in_progress_tasks,
-        SUM(CASE WHEN datetime(t.due_date) < datetime('now') AND t.status NOT IN ${TERMINAL_STATUSES} THEN 1 ELSE 0 END) as overdue_tasks,
-        SUM(CASE WHEN t.status IN ('BLOCKED', 'Blocked') THEN 1 ELSE 0 END) as blocked_tasks,
-        COALESCE(SUM(t.story_points), 0) as total_story_points
-      FROM tasks t
-      WHERE t.workspace_id = ? AND (
-        t.assignee_id IN (
-          SELECT m.id FROM members m 
-          JOIN team_members tm ON m.user_id = tm.user_id 
-          WHERE tm.team_id = ?
+    if (workspaceMembers && workspaceMembers.length > 0) {
+      teams = [{
+        id: 'default-team',
+        name: 'General Squad',
+        description: 'All workspace members and contributors',
+        lead_id: workspaceMembers[0]?.user_id || null,
+        lead_name: workspaceMembers[0]?.name || null,
+        lead_avatar: workspaceMembers[0]?.avatar_url || null,
+        isDefaultSquad: true,
+      }];
+    }
+  }
+
+  const teamAnalytics = await Promise.all((teams || []).map(async (team) => {
+    let members = [];
+    if (team.isDefaultSquad) {
+      members = await d1All(`
+        SELECT m.user_id, u.name, u.email, u.avatar_url, m.id as member_id
+        FROM members m
+        JOIN users u ON m.user_id = u.id
+        WHERE m.workspace_id = ? AND m.status = 'ACTIVE'
+      `, [workspaceId]);
+    } else {
+      members = await d1All(`
+        SELECT tm.user_id, u.name, u.email, u.avatar_url, m.id as member_id
+        FROM team_members tm
+        JOIN users u ON tm.user_id = u.id
+        LEFT JOIN members m ON m.user_id = u.id AND m.workspace_id = ?
+        WHERE tm.team_id = ?
+      `, [workspaceId, team.id]);
+    }
+
+    let stats = null;
+    if (team.isDefaultSquad) {
+      stats = await d1First(`
+        SELECT 
+          COUNT(t.id) as total_tasks,
+          SUM(CASE WHEN t.status IN ${COMPLETED_STATUSES} THEN 1 ELSE 0 END) as completed_tasks,
+          SUM(CASE WHEN t.status IN ('IN_PROGRESS', 'In Progress', 'IN_REVIEW', 'In Review') THEN 1 ELSE 0 END) as in_progress_tasks,
+          SUM(CASE WHEN datetime(t.due_date) < datetime('now') AND t.status NOT IN ${TERMINAL_STATUSES} THEN 1 ELSE 0 END) as overdue_tasks,
+          SUM(CASE WHEN t.status IN ('BLOCKED', 'Blocked') THEN 1 ELSE 0 END) as blocked_tasks,
+          COALESCE(SUM(t.story_points), 0) as total_story_points
+        FROM tasks t
+        WHERE t.workspace_id = ?
+      `, [workspaceId]);
+    } else {
+      stats = await d1First(`
+        SELECT 
+          COUNT(t.id) as total_tasks,
+          SUM(CASE WHEN t.status IN ${COMPLETED_STATUSES} THEN 1 ELSE 0 END) as completed_tasks,
+          SUM(CASE WHEN t.status IN ('IN_PROGRESS', 'In Progress', 'IN_REVIEW', 'In Review') THEN 1 ELSE 0 END) as in_progress_tasks,
+          SUM(CASE WHEN datetime(t.due_date) < datetime('now') AND t.status NOT IN ${TERMINAL_STATUSES} THEN 1 ELSE 0 END) as overdue_tasks,
+          SUM(CASE WHEN t.status IN ('BLOCKED', 'Blocked') THEN 1 ELSE 0 END) as blocked_tasks,
+          COALESCE(SUM(t.story_points), 0) as total_story_points
+        FROM tasks t
+        WHERE t.workspace_id = ? AND (
+          t.assignee_id IN (
+            SELECT m.id FROM members m 
+            JOIN team_members tm ON m.user_id = tm.user_id 
+            WHERE tm.team_id = ?
+          )
+          OR t.project_id IN (
+            SELECT project_id FROM team_projects WHERE team_id = ?
+          )
         )
-        OR t.project_id IN (
-          SELECT project_id FROM team_projects WHERE team_id = ?
-        )
-      )
-    `).get(workspaceId, team.id, team.id);
+      `, [workspaceId, team.id, team.id]);
+    }
 
     const total = stats?.total_tasks || 0;
     const completed = stats?.completed_tasks || 0;
@@ -483,13 +531,19 @@ app.get('/:workspaceId/teams', sessionMiddleware, async (ctx) => {
     const completionPercentage = total > 0 ? Math.round((completed / total) * 100) : 0;
     const workDistribution = Math.round((total / totalWorkspaceTasks) * 100);
 
-    const memberCapacities = db.prepare(`
-      SELECT COALESCE(SUM(capacity_hours), 0) as total_capacity
-      FROM team_capacities
-      WHERE team_id = ? OR user_id IN (SELECT user_id FROM team_members WHERE team_id = ?)
-    `).get(team.id, team.id);
+    const memberCapacities = team.isDefaultSquad
+      ? await d1First(`
+          SELECT COALESCE(SUM(capacity_hours), 0) as total_capacity
+          FROM team_capacities
+          WHERE workspace_id = ?
+        `, [workspaceId])
+      : await d1First(`
+          SELECT COALESCE(SUM(capacity_hours), 0) as total_capacity
+          FROM team_capacities
+          WHERE team_id = ? OR user_id IN (SELECT user_id FROM team_members WHERE team_id = ?)
+        `, [team.id, team.id]);
 
-    const teamCapacityHours = memberCapacities?.total_capacity || (members.length * 40.0) || 40.0;
+    const teamCapacityHours = memberCapacities?.total_capacity || ((members?.length || 1) * 40.0) || 40.0;
     const activeTasksCount = inProgress + (total - completed);
     const estimatedWorkHours = (storyPoints > 0 ? storyPoints : activeTasksCount) * 8.0;
     const utilizationRate = Math.round((estimatedWorkHours / teamCapacityHours) * 100);
@@ -506,8 +560,8 @@ app.get('/:workspaceId/teams', sessionMiddleware, async (ctx) => {
       name: team.name,
       description: team.description,
       lead: team.lead_id ? { id: team.lead_id, name: team.lead_name, avatarUrl: team.lead_avatar } : null,
-      memberCount: members.length,
-      members,
+      memberCount: (members || []).length,
+      members: members || [],
       totalAssigned: total,
       completed,
       inProgress,
@@ -520,7 +574,7 @@ app.get('/:workspaceId/teams', sessionMiddleware, async (ctx) => {
       utilizationRate,
       balanceStatus,
     };
-  });
+  }));
 
   return ctx.json({ data: teamAnalytics });
 });
@@ -535,22 +589,22 @@ app.get('/:workspaceId/members', sessionMiddleware, async (ctx) => {
   const sortBy = query.sortBy || 'workload';
   const sortOrder = query.order === 'asc' ? 'asc' : 'desc';
 
-  const members = db.prepare(`
+  const members = await d1All(`
     SELECT m.id as member_id, m.role, m.user_id, u.name, u.email, u.avatar_url, u.job_title, u.department
     FROM members m
     JOIN users u ON m.user_id = u.id
     WHERE m.workspace_id = ? AND m.status = 'ACTIVE'
-  `).all(workspaceId);
+  `, [workspaceId]);
 
-  const memberAnalytics = members.map((m) => {
-    const userTeams = db.prepare(`
+  const memberAnalytics = await Promise.all((members || []).map(async (m) => {
+    const userTeams = await d1All(`
       SELECT t.id, t.name
       FROM team_members tm
       JOIN teams t ON tm.team_id = t.id
       WHERE tm.user_id = ? AND t.workspace_id = ?
-    `).all(m.user_id, workspaceId);
+    `, [m.user_id, workspaceId]);
 
-    const stats = db.prepare(`
+    const stats = await d1First(`
       SELECT 
         COUNT(t.id) as total_assigned,
         SUM(CASE WHEN t.status IN ('TODO', 'BACKLOG', 'To Do', 'Backlog') THEN 1 ELSE 0 END) as open_items,
@@ -564,7 +618,7 @@ app.get('/:workspaceId/members', sessionMiddleware, async (ctx) => {
         t.assignee_id = ? 
         OR t.id IN (SELECT task_id FROM task_assignees WHERE member_id = ?)
       )
-    `).get(workspaceId, m.member_id, m.member_id);
+    `, [workspaceId, m.member_id, m.member_id]);
 
     const total = stats?.total_assigned || 0;
     const completed = stats?.completed_items || 0;
@@ -575,9 +629,9 @@ app.get('/:workspaceId/members', sessionMiddleware, async (ctx) => {
     const storyPoints = stats?.total_story_points || 0;
     const completionRate = total > 0 ? Math.round((completed / total) * 100) : 0;
 
-    const capacity = db.prepare(`
+    const capacity = await d1First(`
       SELECT capacity_hours FROM team_capacities WHERE user_id = ? AND workspace_id = ?
-    `).get(m.user_id, workspaceId);
+    `, [m.user_id, workspaceId]);
 
     const capacityHours = capacity?.capacity_hours || 40.0;
     const estimatedHours = ((storyPoints > 0 ? storyPoints : (open + inProgress)) * 8.0);
@@ -598,7 +652,7 @@ app.get('/:workspaceId/members', sessionMiddleware, async (ctx) => {
       avatarUrl: m.avatar_url,
       jobTitle: m.job_title || 'Team Member',
       department: m.department || 'Engineering',
-      teams: userTeams,
+      teams: userTeams || [],
       totalAssigned: total,
       open,
       inProgress,
@@ -611,7 +665,7 @@ app.get('/:workspaceId/members', sessionMiddleware, async (ctx) => {
       utilizationRate,
       workloadStatus,
     };
-  });
+  }));
 
   memberAnalytics.sort((a, b) => {
     if (sortBy === 'workload') {
@@ -639,22 +693,22 @@ app.get('/:workspaceId/projects', sessionMiddleware, async (ctx) => {
   const auth = await checkAccess(ctx, workspaceId);
   if (!auth.allowed) return ctx.json({ error: auth.error }, auth.status);
 
-  const projects = db.prepare(`
+  const projects = await d1All(`
     SELECT p.id, p.name, p.key, p.image_url, p.category, p.lead_id, u.name as lead_name, u.avatar_url as lead_avatar
     FROM projects p
     LEFT JOIN users u ON p.lead_id = u.id
     WHERE p.workspace_id = ? AND p.is_archived = 0
     ORDER BY p.name ASC
-  `).all(workspaceId);
+  `, [workspaceId]);
 
-  const projectAnalytics = projects.map((p) => {
-    const teams = db.prepare(`
+  const projectAnalytics = await Promise.all((projects || []).map(async (p) => {
+    const teams = await d1All(`
       SELECT t.id, t.name FROM team_projects tp
       JOIN teams t ON tp.team_id = t.id
       WHERE tp.project_id = ?
-    `).all(p.id);
+    `, [p.id]);
 
-    const stats = db.prepare(`
+    const stats = await d1First(`
       SELECT 
         COUNT(t.id) as total_tasks,
         SUM(CASE WHEN t.status IN ('TODO', 'BACKLOG', 'To Do', 'Backlog') THEN 1 ELSE 0 END) as open_tasks,
@@ -665,7 +719,7 @@ app.get('/:workspaceId/projects', sessionMiddleware, async (ctx) => {
         COALESCE(SUM(t.story_points), 0) as total_story_points
       FROM tasks t
       WHERE t.project_id = ?
-    `).get(p.id);
+    `, [p.id]);
 
     const total = stats?.total_tasks || 0;
     const completed = stats?.completed_tasks || 0;
@@ -682,7 +736,7 @@ app.get('/:workspaceId/projects', sessionMiddleware, async (ctx) => {
       imageUrl: p.image_url,
       category: p.category || 'Software',
       lead: p.lead_id ? { id: p.lead_id, name: p.lead_name, avatarUrl: p.lead_avatar } : null,
-      teams,
+      teams: teams || [],
       totalWork: total,
       open,
       inProgress,
@@ -692,7 +746,7 @@ app.get('/:workspaceId/projects', sessionMiddleware, async (ctx) => {
       completionPercentage,
       storyPoints: stats?.total_story_points || 0,
     };
-  });
+  }));
 
   return ctx.json({ data: projectAnalytics });
 });
@@ -715,7 +769,7 @@ app.get('/:workspaceId/epics', sessionMiddleware, async (ctx) => {
     params.push(query.projectId);
   }
 
-  const epics = db.prepare(`
+  const epics = await d1All(`
     SELECT t.id, t.key, t.name, t.description, t.status, t.priority, t.due_date, t.created_at, t.updated_at, t.project_id,
            t.assignee_id,
            p.name as project_name, p.key as project_key, p.image_url as project_image
@@ -723,13 +777,13 @@ app.get('/:workspaceId/epics', sessionMiddleware, async (ctx) => {
     LEFT JOIN projects p ON t.project_id = p.id
     WHERE ${whereClauses.join(' AND ')}
     ORDER BY CASE WHEN t.status IN ${COMPLETED_STATUSES} THEN 1 ELSE 0 END ASC, t.created_at DESC
-  `).all(...params);
+  `, params);
 
   const now = new Date();
 
-  const epicProgressList = epics.map((epic) => {
+  const epicProgressList = await Promise.all((epics || []).map(async (epic) => {
     // 1. Calculate aggregated child stats
-    const childStats = db.prepare(`
+    const childStats = await d1First(`
       SELECT 
         COUNT(id) as total_child_items,
         SUM(CASE WHEN status IN ${COMPLETED_STATUSES} THEN 1 ELSE 0 END) as completed_items,
@@ -742,7 +796,7 @@ app.get('/:workspaceId/epics', sessionMiddleware, async (ctx) => {
         MAX(updated_at) as last_child_activity
       FROM tasks
       WHERE workspace_id = ? AND (epic_id = ? OR parent_id = ?) AND id != ?
-    `).get(workspaceId, epic.id, epic.id, epic.id);
+    `, [workspaceId, epic.id, epic.id, epic.id]);
 
     const totalChildItems = childStats?.total_child_items || 0;
     const completed = childStats?.completed_items || 0;
@@ -784,7 +838,7 @@ app.get('/:workspaceId/epics', sessionMiddleware, async (ctx) => {
     // 2. Fetch recent child tasks (up to 8) for real-time inspection
     let childTasks = [];
     try {
-      childTasks = db.prepare(`
+      const ctRows = await d1All(`
         SELECT t.id, t.key, t.name, t.status, t.priority, t.issue_type, t.due_date, t.story_points,
                u.name as assignee_name, u.avatar_url as assignee_avatar
         FROM tasks t
@@ -793,7 +847,9 @@ app.get('/:workspaceId/epics', sessionMiddleware, async (ctx) => {
         WHERE t.workspace_id = ? AND (t.epic_id = ? OR t.parent_id = ?) AND t.id != ?
         ORDER BY CASE WHEN t.status IN ${COMPLETED_STATUSES} THEN 1 ELSE 0 END ASC, t.updated_at DESC
         LIMIT 8
-      `).all(workspaceId, epic.id, epic.id, epic.id).map(ct => ({
+      `, [workspaceId, epic.id, epic.id, epic.id]);
+
+      childTasks = (ctRows || []).map(ct => ({
         id: ct.id,
         key: ct.key || 'TASK',
         name: ct.name,
@@ -809,14 +865,14 @@ app.get('/:workspaceId/epics', sessionMiddleware, async (ctx) => {
     // 3. Fetch distinct assigned members on this epic
     let assignees = [];
     try {
-      assignees = db.prepare(`
+      assignees = await d1All(`
         SELECT DISTINCT u.id, u.name, u.email, u.avatar_url
         FROM tasks t
         JOIN members m ON t.assignee_id = m.id
         JOIN users u ON m.user_id = u.id
         WHERE t.workspace_id = ? AND (t.epic_id = ? OR t.parent_id = ? OR t.id = ?)
         LIMIT 6
-      `).all(workspaceId, epic.id, epic.id, epic.id);
+      `, [workspaceId, epic.id, epic.id, epic.id]);
     } catch (e) {}
 
     return {
@@ -845,10 +901,10 @@ app.get('/:workspaceId/epics', sessionMiddleware, async (ctx) => {
       completionPercentage,
       healthStatus,
       childTasks,
-      assignees,
+      assignees: assignees || [],
       lastActivityAt: childStats?.last_child_activity || epic.updated_at || epic.created_at,
     };
-  });
+  }));
 
   return ctx.json({ data: epicProgressList });
 });
@@ -870,30 +926,30 @@ app.get('/:workspaceId/trends', sessionMiddleware, async (ctx) => {
     dateFormat = '%Y-W%W';
   }
 
-  const createdRows = db.prepare(`
+  const createdRows = await d1All(`
     SELECT strftime('${dateFormat}', t.created_at) as date_key, COUNT(*) as count
     FROM tasks t
     WHERE ${whereSql}
     GROUP BY date_key
     ORDER BY date_key ASC
-  `).all(...params);
+  `, params);
 
-  const completedRows = db.prepare(`
+  const completedRows = await d1All(`
     SELECT strftime('${dateFormat}', t.updated_at) as date_key, COUNT(*) as count
     FROM tasks t
     WHERE ${whereSql} AND t.status IN ${COMPLETED_STATUSES}
     GROUP BY date_key
     ORDER BY date_key ASC
-  `).all(...params);
+  `, params);
 
   const dateMap = new Map();
-  for (const r of createdRows) {
+  for (const r of (createdRows || [])) {
     if (r.date_key) {
       dateMap.set(r.date_key, { date: r.date_key, created: Number(r.count), completed: 0 });
     }
   }
 
-  for (const r of completedRows) {
+  for (const r of (completedRows || [])) {
     if (r.date_key) {
       const existing = dateMap.get(r.date_key) || { date: r.date_key, created: 0, completed: 0 };
       existing.completed = Number(r.count);
@@ -918,17 +974,17 @@ app.get('/:workspaceId/sprints', sessionMiddleware, async (ctx) => {
   const auth = await checkAccess(ctx, workspaceId);
   if (!auth.allowed) return ctx.json({ error: auth.error }, auth.status);
 
-  const sprints = db.prepare(`
+  const sprints = await d1All(`
     SELECT s.id, s.name, s.goal, s.start_date, s.end_date, s.status, s.project_id,
            p.name as project_name, p.key as project_key
     FROM sprints s
     LEFT JOIN projects p ON s.project_id = p.id
     WHERE s.workspace_id = ?
     ORDER BY s.created_at DESC
-  `).all(workspaceId);
+  `, [workspaceId]);
 
-  const sprintAnalytics = sprints.map((s) => {
-    const taskStats = db.prepare(`
+  const sprintAnalytics = await Promise.all((sprints || []).map(async (s) => {
+    const taskStats = await d1First(`
       SELECT 
         COUNT(id) as total_tasks,
         SUM(CASE WHEN status IN ${COMPLETED_STATUSES} THEN 1 ELSE 0 END) as completed_tasks,
@@ -936,7 +992,7 @@ app.get('/:workspaceId/sprints', sessionMiddleware, async (ctx) => {
         COALESCE(SUM(CASE WHEN status IN ${COMPLETED_STATUSES} THEN story_points ELSE 0 END), 0) as completed_points
       FROM tasks
       WHERE sprint_id = ?
-    `).get(s.id);
+    `, [s.id]);
 
     const plannedWork = taskStats?.total_tasks || 0;
     const completedWork = taskStats?.completed_tasks || 0;
@@ -963,7 +1019,7 @@ app.get('/:workspaceId/sprints', sessionMiddleware, async (ctx) => {
       storyPointsCompleted,
       velocity,
     };
-  });
+  }));
 
   const currentSprint = sprintAnalytics.find(s => s.status === 'ACTIVE') || sprintAnalytics[0] || null;
   const previousSprint = sprintAnalytics.find(s => s.status === 'CLOSED') || null;
@@ -989,7 +1045,7 @@ app.get('/:workspaceId/bugs', sessionMiddleware, async (ctx) => {
 
   const { whereSql, params } = buildTaskFilter(query, workspaceId, 't');
 
-  const bugStats = db.prepare(`
+  const bugStats = await d1First(`
     SELECT 
       COUNT(*) as total_bugs,
       SUM(CASE WHEN t.status IN ('TODO', 'BACKLOG', 'To Do', 'Backlog') THEN 1 ELSE 0 END) as open_bugs,
@@ -1000,9 +1056,9 @@ app.get('/:workspaceId/bugs', sessionMiddleware, async (ctx) => {
       SUM(CASE WHEN datetime(t.due_date) < datetime('now') AND t.status NOT IN ${TERMINAL_STATUSES} THEN 1 ELSE 0 END) as overdue_bugs
     FROM tasks t
     WHERE ${whereSql} AND LOWER(t.issue_type) = 'bug'
-  `).get(...params);
+  `, params);
 
-  const byProject = db.prepare(`
+  const byProject = await d1All(`
     SELECT p.id, p.name, p.key, COUNT(t.id) as bug_count,
            SUM(CASE WHEN t.status NOT IN ${TERMINAL_STATUSES} THEN 1 ELSE 0 END) as open_bug_count
     FROM projects p
@@ -1011,14 +1067,14 @@ app.get('/:workspaceId/bugs', sessionMiddleware, async (ctx) => {
     GROUP BY p.id
     ORDER BY open_bug_count DESC
     LIMIT 8
-  `).all(workspaceId);
+  `, [workspaceId]);
 
-  const byPriority = db.prepare(`
+  const byPriority = await d1All(`
     SELECT t.priority, COUNT(*) as count
     FROM tasks t
     WHERE ${whereSql} AND LOWER(t.issue_type) = 'bug'
     GROUP BY t.priority
-  `).all(...params);
+  `, params);
 
   return ctx.json({
     data: {
@@ -1029,8 +1085,8 @@ app.get('/:workspaceId/bugs', sessionMiddleware, async (ctx) => {
       closedBugs: bugStats?.closed_bugs || 0,
       criticalBugs: bugStats?.critical_bugs || 0,
       overdueBugs: bugStats?.overdue_bugs || 0,
-      byProject,
-      byPriority,
+      byProject: byProject || [],
+      byPriority: byPriority || [],
     },
   });
 });
@@ -1044,7 +1100,7 @@ app.get('/:workspaceId/overdue', sessionMiddleware, async (ctx) => {
 
   const { whereSql, params } = buildTaskFilter(query, workspaceId, 't');
 
-  const overdueTasks = db.prepare(`
+  const overdueTasks = await d1All(`
     SELECT t.id, t.key, t.name, t.status, t.priority, t.issue_type, t.due_date,
            CAST((julianday('now') - julianday(t.due_date)) AS INTEGER) as days_overdue,
            p.id as project_id, p.name as project_name, p.key as project_key,
@@ -1058,14 +1114,14 @@ app.get('/:workspaceId/overdue', sessionMiddleware, async (ctx) => {
       AND t.status NOT IN ${TERMINAL_STATUSES}
     ORDER BY days_overdue DESC
     LIMIT 50
-  `).all(...params);
+  `, params);
 
-  const totalOverdue = overdueTasks.length;
+  const totalOverdue = (overdueTasks || []).length;
 
   const byProjectMap = new Map();
   const byPriorityMap = new Map();
 
-  for (const t of overdueTasks) {
+  for (const t of (overdueTasks || [])) {
     const pName = t.project_name || 'General';
     byProjectMap.set(pName, (byProjectMap.get(pName) || 0) + 1);
 
@@ -1076,7 +1132,7 @@ app.get('/:workspaceId/overdue', sessionMiddleware, async (ctx) => {
   return ctx.json({
     data: {
       totalOverdue,
-      overdueTasks,
+      overdueTasks: overdueTasks || [],
       byProject: Array.from(byProjectMap.entries()).map(([name, count]) => ({ name, count })),
       byPriority: Array.from(byPriorityMap.entries()).map(([priority, count]) => ({ priority, count })),
     },
@@ -1090,7 +1146,7 @@ app.get('/:workspaceId/activity', sessionMiddleware, async (ctx) => {
   const auth = await checkAccess(ctx, workspaceId);
   if (!auth.allowed) return ctx.json({ error: auth.error }, auth.status);
 
-  const activities = db.prepare(`
+  const activities = await d1All(`
     SELECT a.id, a.action, a.details, a.created_at,
            u.id as user_id, u.name as actor_name, u.email as actor_email, u.avatar_url as actor_avatar,
            p.id as project_id, p.name as project_name, p.key as project_key,
@@ -1102,10 +1158,10 @@ app.get('/:workspaceId/activity', sessionMiddleware, async (ctx) => {
     WHERE a.workspace_id = ?
     ORDER BY a.created_at DESC
     LIMIT ?
-  `).all(workspaceId, limit);
+  `, [workspaceId, limit]);
 
   return ctx.json({
-    data: activities.map(formatDoc),
+    data: (activities || []).map(formatDoc),
   });
 });
 
@@ -1122,7 +1178,7 @@ app.get('/:workspaceId/drilldown', sessionMiddleware, async (ctx) => {
 
   // 1. Projects Entity Drilldown
   if (entityType === 'projects' || entityType === 'all_projects') {
-    const projects = db.prepare(`
+    const projects = await d1All(`
       SELECT p.id, p.name, p.key, p.category, p.image_url, p.created_at,
              u.name as lead_name, u.avatar_url as lead_avatar,
              (SELECT COUNT(*) FROM tasks WHERE project_id = p.id) as total_tasks,
@@ -1133,14 +1189,15 @@ app.get('/:workspaceId/drilldown', sessionMiddleware, async (ctx) => {
       WHERE p.workspace_id = ? AND p.is_archived = 0
       ORDER BY p.name ASC
       LIMIT ? OFFSET ?
-    `).all(workspaceId, limit, offset);
+    `, [workspaceId, limit, offset]);
 
-    const totalCount = db.prepare('SELECT COUNT(*) as c FROM projects WHERE workspace_id = ? AND is_archived = 0').get(workspaceId)?.c ?? 0;
+    const totalCountRow = await d1First('SELECT COUNT(*) as c FROM projects WHERE workspace_id = ? AND is_archived = 0', [workspaceId]);
+    const totalCount = totalCountRow?.c ?? 0;
 
     return ctx.json({
       data: {
         entityType: 'projects',
-        items: projects.map(p => {
+        items: (projects || []).map(p => {
           const tot = p.total_tasks || 0;
           const comp = p.completed_tasks || 0;
           return {
@@ -1157,7 +1214,7 @@ app.get('/:workspaceId/drilldown', sessionMiddleware, async (ctx) => {
 
   // 2. Active Projects Drilldown (Projects with work currently in delivery)
   if (entityType === 'active_projects') {
-    const activeProjects = db.prepare(`
+    const activeProjects = await d1All(`
       SELECT p.id, p.name, p.key, p.category, p.image_url, p.created_at,
              u.name as lead_name, u.avatar_url as lead_avatar,
              COUNT(t.id) as active_tasks_count,
@@ -1170,18 +1227,19 @@ app.get('/:workspaceId/drilldown', sessionMiddleware, async (ctx) => {
       GROUP BY p.id
       ORDER BY active_tasks_count DESC, p.name ASC
       LIMIT ? OFFSET ?
-    `).all(workspaceId, limit, offset);
+    `, [workspaceId, limit, offset]);
 
-    const totalCount = db.prepare(`
+    const totalCountRow = await d1First(`
       SELECT COUNT(DISTINCT p.id) as c FROM projects p
       JOIN tasks t ON p.id = t.project_id
       WHERE p.workspace_id = ? AND p.is_archived = 0 AND t.status NOT IN ${TERMINAL_STATUSES}
-    `).get(workspaceId).c;
+    `, [workspaceId]);
+    const totalCount = totalCountRow?.c ?? 0;
 
     return ctx.json({
       data: {
         entityType: 'active_projects',
-        items: activeProjects.map(p => {
+        items: (activeProjects || []).map(p => {
           const tot = p.total_tasks || 0;
           const comp = p.completed_tasks || 0;
           return {
@@ -1198,7 +1256,7 @@ app.get('/:workspaceId/drilldown', sessionMiddleware, async (ctx) => {
 
   // 3. Teams Entity Drilldown
   if (entityType === 'teams') {
-    const teams = db.prepare(`
+    let teams = await d1All(`
       SELECT t.id, t.name, t.description, t.created_at,
              u.name as lead_name, u.avatar_url as lead_avatar,
              (SELECT COUNT(*) FROM team_members WHERE team_id = t.id) as member_count,
@@ -1215,14 +1273,43 @@ app.get('/:workspaceId/drilldown', sessionMiddleware, async (ctx) => {
       WHERE t.workspace_id = ?
       ORDER BY t.name ASC
       LIMIT ? OFFSET ?
-    `).all(workspaceId, limit, offset);
+    `, [workspaceId, limit, offset]);
 
-    const totalCount = db.prepare('SELECT COUNT(*) as c FROM teams WHERE workspace_id = ?').get(workspaceId)?.c ?? 0;
+    const totalCountRow = await d1First('SELECT COUNT(*) as c FROM teams WHERE workspace_id = ?', [workspaceId]);
+    let totalCount = totalCountRow?.c ?? 0;
+
+    if ((!teams || teams.length === 0) && offset === 0) {
+      const workspaceMembers = await d1All(`
+        SELECT m.id FROM members m WHERE m.workspace_id = ? AND m.status = 'ACTIVE'
+      `, [workspaceId]);
+
+      if (workspaceMembers && workspaceMembers.length > 0) {
+        const taskCounts = await d1First(`
+          SELECT 
+            COUNT(id) as total_tasks,
+            SUM(CASE WHEN status IN ${COMPLETED_STATUSES} THEN 1 ELSE 0 END) as completed_tasks
+          FROM tasks WHERE workspace_id = ?
+        `, [workspaceId]);
+
+        teams = [{
+          id: 'default-team',
+          name: 'General Squad',
+          description: 'All workspace members',
+          created_at: new Date().toISOString(),
+          lead_name: 'Squad Lead',
+          lead_avatar: null,
+          member_count: workspaceMembers.length,
+          total_tasks: taskCounts?.total_tasks || 0,
+          completed_tasks: taskCounts?.completed_tasks || 0,
+        }];
+        totalCount = 1;
+      }
+    }
 
     return ctx.json({
       data: {
         entityType: 'teams',
-        items: teams.map(t => {
+        items: (teams || []).map(t => {
           const tot = t.total_tasks || 0;
           const comp = t.completed_tasks || 0;
           return {
@@ -1239,7 +1326,7 @@ app.get('/:workspaceId/drilldown', sessionMiddleware, async (ctx) => {
 
   // 4. Members Entity Drilldown
   if (entityType === 'members') {
-    const members = db.prepare(`
+    const members = await d1All(`
       SELECT m.id as member_id, m.role, m.status as member_status, m.created_at,
              u.id as user_id, u.name, u.email, u.avatar_url, u.job_title, u.department,
              (SELECT COUNT(*) FROM tasks WHERE workspace_id = m.workspace_id AND (assignee_id = m.id OR id IN (SELECT task_id FROM task_assignees WHERE member_id = m.id))) as total_assigned,
@@ -1250,14 +1337,15 @@ app.get('/:workspaceId/drilldown', sessionMiddleware, async (ctx) => {
       WHERE m.workspace_id = ? AND m.status = 'ACTIVE'
       ORDER BY u.name ASC
       LIMIT ? OFFSET ?
-    `).all(workspaceId, limit, offset);
+    `, [workspaceId, limit, offset]);
 
-    const totalCount = db.prepare("SELECT COUNT(*) as c FROM members WHERE workspace_id = ? AND status = 'ACTIVE'").get(workspaceId)?.c ?? 0;
+    const totalCountRow = await d1First("SELECT COUNT(*) as c FROM members WHERE workspace_id = ? AND status = 'ACTIVE'", [workspaceId]);
+    const totalCount = totalCountRow?.c ?? 0;
 
     return ctx.json({
       data: {
         entityType: 'members',
-        items: members.map(m => {
+        items: (members || []).map(m => {
           const tot = m.total_assigned || 0;
           const comp = m.completed_assigned || 0;
           return {
@@ -1276,7 +1364,6 @@ app.get('/:workspaceId/drilldown', sessionMiddleware, async (ctx) => {
   const { whereSql, params } = buildTaskFilter(query, workspaceId, 't');
 
   let extraWhere = '';
-  const extraParams = [];
 
   if (query.drillType === 'OVERDUE') {
     extraWhere += ` AND datetime(t.due_date) < datetime('now') AND t.status NOT IN ${TERMINAL_STATUSES}`;
@@ -1286,7 +1373,7 @@ app.get('/:workspaceId/drilldown', sessionMiddleware, async (ctx) => {
     extraWhere += ` AND t.status IN ('BLOCKED', 'Blocked')`;
   }
 
-  const tasks = db.prepare(`
+  const tasks = await d1All(`
     SELECT t.id, t.key, t.name, t.status, t.priority, t.issue_type, t.due_date, t.story_points, t.created_at,
            p.id as project_id, p.name as project_name, p.key as project_key,
            m.id as member_id, u.name as assignee_name, u.avatar_url as assignee_avatar,
@@ -1299,18 +1386,19 @@ app.get('/:workspaceId/drilldown', sessionMiddleware, async (ctx) => {
     WHERE ${whereSql} ${extraWhere}
     ORDER BY t.created_at DESC
     LIMIT ? OFFSET ?
-  `).all(...params, ...extraParams, limit, offset);
+  `, [...params, limit, offset]);
 
-  const totalCount = db.prepare(`
+  const totalCountRow = await d1First(`
     SELECT COUNT(*) as c FROM tasks t
     WHERE ${whereSql} ${extraWhere}
-  `).get(...params, ...extraParams).c;
+  `, params);
+  const totalCount = totalCountRow?.c ?? 0;
 
   return ctx.json({
     data: {
       entityType: 'tasks',
-      tasks: tasks.map(formatDoc),
-      items: tasks.map(formatDoc),
+      tasks: (tasks || []).map(formatDoc),
+      items: (tasks || []).map(formatDoc),
       total: totalCount,
       limit,
       offset,
@@ -1328,7 +1416,7 @@ app.get('/:workspaceId/export', sessionMiddleware, async (ctx) => {
   const format = query.format || 'csv';
   const { whereSql, params } = buildTaskFilter(query, workspaceId, 't');
 
-  const tasks = db.prepare(`
+  const tasks = await d1All(`
     SELECT t.key, t.name, t.issue_type, t.status, t.priority, t.due_date, t.story_points, t.created_at,
            p.name as project_name, p.key as project_key,
            u.name as assignee_name, u.email as assignee_email
@@ -1338,10 +1426,10 @@ app.get('/:workspaceId/export', sessionMiddleware, async (ctx) => {
     LEFT JOIN users u ON m.user_id = u.id
     WHERE ${whereSql}
     ORDER BY t.created_at DESC
-  `).all(...params);
+  `, params);
 
   // Fetch projects and team aggregates for comprehensive export
-  const projects = db.prepare(`
+  const projects = await d1All(`
     SELECT p.name, p.key, p.category,
            (SELECT COUNT(*) FROM tasks WHERE project_id = p.id) as total_tasks,
            (SELECT COUNT(*) FROM tasks WHERE project_id = p.id AND status IN ${COMPLETED_STATUSES}) as completed_tasks,
@@ -1349,9 +1437,9 @@ app.get('/:workspaceId/export', sessionMiddleware, async (ctx) => {
     FROM projects p
     WHERE p.workspace_id = ? AND p.is_archived = 0
     ORDER BY p.name ASC
-  `).all(workspaceId);
+  `, [workspaceId]);
 
-  const teams = db.prepare(`
+  const teams = await d1All(`
     SELECT t.name, t.description,
            (SELECT COUNT(*) FROM team_members WHERE team_id = t.id) as member_count,
            (SELECT COUNT(*) FROM tasks WHERE workspace_id = t.workspace_id AND (
@@ -1361,10 +1449,10 @@ app.get('/:workspaceId/export', sessionMiddleware, async (ctx) => {
     FROM teams t
     WHERE t.workspace_id = ?
     ORDER BY t.name ASC
-  `).all(workspaceId);
+  `, [workspaceId]);
 
   // Fetch Dependency Links (Cross-Project Topology)
-  const dependencyLinks = db.prepare(`
+  const dependencyLinks = await d1All(`
     SELECT l.id, l.relationship_type, l.created_at,
            st.key as source_key, st.name as source_name, st.status as source_status,
            tt.key as target_key, tt.name as target_name, tt.status as target_status,
@@ -1376,10 +1464,10 @@ app.get('/:workspaceId/export', sessionMiddleware, async (ctx) => {
     JOIN projects tp ON tt.project_id = tp.id
     WHERE st.workspace_id = ?
     ORDER BY l.created_at DESC
-  `).all(workspaceId);
+  `, [workspaceId]);
 
   // Fetch Sprints
-  const sprints = db.prepare(`
+  const sprints = await d1All(`
     SELECT s.id, s.name, s.goal, s.status, s.start_date, s.end_date, p.name as project_name, p.key as project_key,
            (SELECT COUNT(*) FROM tasks WHERE sprint_id = s.id) as total_tasks,
            (SELECT COUNT(*) FROM tasks WHERE sprint_id = s.id AND status IN ${COMPLETED_STATUSES}) as completed_tasks
@@ -1387,10 +1475,10 @@ app.get('/:workspaceId/export', sessionMiddleware, async (ctx) => {
     LEFT JOIN projects p ON s.project_id = p.id
     WHERE s.workspace_id = ?
     ORDER BY s.created_at DESC
-  `).all(workspaceId);
+  `, [workspaceId]);
 
   // Fetch Epics
-  const epics = db.prepare(`
+  const epics = await d1All(`
     SELECT e.id, e.name, e.status, e.start_date, e.end_date, p.name as project_name, p.key as project_key,
            (SELECT COUNT(*) FROM tasks WHERE epic_id = e.id) as total_tasks,
            (SELECT COUNT(*) FROM tasks WHERE epic_id = e.id AND status IN ${COMPLETED_STATUSES}) as completed_tasks
@@ -1398,10 +1486,10 @@ app.get('/:workspaceId/export', sessionMiddleware, async (ctx) => {
     LEFT JOIN projects p ON e.project_id = p.id
     WHERE e.workspace_id = ?
     ORDER BY e.created_at DESC
-  `).all(workspaceId);
+  `, [workspaceId]);
 
   // Fetch Employee Roster & Capacities
-  const employees = db.prepare(`
+  const employees = await d1All(`
     SELECT m.id as member_id, m.role, u.name, u.email, u.job_title, u.department,
            (SELECT COUNT(*) FROM tasks WHERE assignee_id = m.id) as assigned_tasks,
            (SELECT COUNT(*) FROM tasks WHERE assignee_id = m.id AND status IN ${COMPLETED_STATUSES}) as completed_tasks,
@@ -1410,10 +1498,10 @@ app.get('/:workspaceId/export', sessionMiddleware, async (ctx) => {
     JOIN users u ON m.user_id = u.id
     WHERE m.workspace_id = ? AND m.status = 'ACTIVE'
     ORDER BY u.name ASC
-  `).all(workspaceId);
+  `, [workspaceId]);
 
   // Fetch Recent Activity Audit Logs
-  const auditLogs = db.prepare(`
+  const auditLogs = await d1All(`
     SELECT a.action, a.created_at, u.name as user_name, t.key as task_key, p.name as project_name
     FROM activities a
     LEFT JOIN users u ON a.user_id = u.id
@@ -1422,7 +1510,7 @@ app.get('/:workspaceId/export', sessionMiddleware, async (ctx) => {
     WHERE a.workspace_id = ?
     ORDER BY a.created_at DESC
     LIMIT 50
-  `).all(workspaceId);
+  `, [workspaceId]);
 
   const totalTasks = tasks.length;
   const completedTasks = tasks.filter(t => ['DONE', 'Done', 'RESOLVED', 'CLOSED'].includes(t.status)).length;
@@ -1625,12 +1713,17 @@ app.get('/:workspaceId', sessionMiddleware, async (ctx) => {
 
   const { whereSql, params } = buildTaskFilter(query, workspaceId, 't');
 
-  const projectCount = db.prepare('SELECT COUNT(*) as c FROM projects WHERE workspace_id = ?').get(workspaceId).c;
-  const userCount = db.prepare('SELECT COUNT(*) as c FROM members WHERE workspace_id = ?').get(workspaceId).c;
-  const totalIssues = db.prepare(`SELECT COUNT(*) as c FROM tasks t WHERE ${whereSql}`).get(...params).c;
-  const completedIssues = db.prepare(`SELECT COUNT(*) as c FROM tasks t WHERE ${whereSql} AND t.status IN ${COMPLETED_STATUSES}`).get(...params).c;
+  const projectCountRow = await d1First('SELECT COUNT(*) as c FROM projects WHERE workspace_id = ?', [workspaceId]);
+  const projectCount = projectCountRow?.c || 0;
+  const userCountRow = await d1First('SELECT COUNT(*) as c FROM members WHERE workspace_id = ?', [workspaceId]);
+  const userCount = userCountRow?.c || 0;
+  const totalIssuesRow = await d1First(`SELECT COUNT(*) as c FROM tasks t WHERE ${whereSql}`, params);
+  const totalIssues = totalIssuesRow?.c || 0;
+  const completedIssuesRow = await d1First(`SELECT COUNT(*) as c FROM tasks t WHERE ${whereSql} AND t.status IN ${COMPLETED_STATUSES}`, params);
+  const completedIssues = completedIssuesRow?.c || 0;
   const openIssues = totalIssues - completedIssues;
-  const activeSprints = db.prepare("SELECT COUNT(*) as c FROM sprints WHERE workspace_id = ? AND status = 'ACTIVE'").get(workspaceId).c;
+  const activeSprintsRow = await d1First("SELECT COUNT(*) as c FROM sprints WHERE workspace_id = ? AND status = 'ACTIVE'", [workspaceId]);
+  const activeSprints = activeSprintsRow?.c || 0;
 
   return ctx.json({
     data: {
