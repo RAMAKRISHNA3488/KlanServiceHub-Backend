@@ -838,7 +838,12 @@ const app = new Hono()
     if (priority !== undefined) { updates.push('priority = ?'); params.push(priority); }
     if (issueType !== undefined) { updates.push('issue_type = ?'); params.push(issueType); }
     if (sprintId !== undefined) { updates.push('sprint_id = ?'); params.push(sprintId || null); }
-    if (storyPoints !== undefined) { updates.push('story_points = ?'); params.push(Number(storyPoints)); }
+    const effectiveStoryPoints = storyPoints !== undefined ? storyPoints : body.story_points;
+    if (effectiveStoryPoints !== undefined) {
+      const parsedPoints = Number(effectiveStoryPoints);
+      updates.push('story_points = ?');
+      params.push(isNaN(parsedPoints) ? 0 : parsedPoints);
+    }
     if (labels !== undefined) { updates.push('labels = ?'); params.push(JSON.stringify(labels)); }
     if (epicId !== undefined) { updates.push('epic_id = ?'); params.push(epicId || null); }
     if (loggedHours !== undefined) { updates.push('logged_hours = logged_hours + ?'); params.push(Number(loggedHours)); }

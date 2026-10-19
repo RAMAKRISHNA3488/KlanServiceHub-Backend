@@ -1791,6 +1791,8 @@ export function formatDoc(row) {
   if (row.start_date !== undefined) doc.startDate = row.start_date;
   if (row.end_date !== undefined) doc.endDate = row.end_date;
   if (row.sprint_id !== undefined) doc.sprintId = row.sprint_id;
+  if (row.story_points !== undefined) doc.storyPoints = row.story_points;
+  if (row.issue_type !== undefined) doc.issueType = row.issue_type;
   return doc;
 }
 
