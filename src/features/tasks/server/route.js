@@ -514,17 +514,45 @@ const app = new Hono()
     task.priority = row.priority || 'MEDIUM';
 
     // Subtasks
-    const subtasks = db.prepare('SELECT * FROM tasks WHERE parent_task_id = ?').all(taskId);
+    let subtasks = [];
+    if (d1) {
+      try {
+        const subRes = await d1.prepare('SELECT * FROM tasks WHERE parent_task_id = ?').bind(taskId).all();
+        subtasks = subRes.results || [];
+      } catch (e) {}
+    }
+    if (subtasks.length === 0) {
+      try {
+        subtasks = db.prepare('SELECT * FROM tasks WHERE parent_task_id = ?').all(taskId);
+      } catch (e) {}
+    }
     task.subtasks = subtasks.map(formatDoc);
 
     // Comments
-    const comments = db.prepare(`
-      SELECT c.*, u.name as user_name, u.email as user_email, u.avatar_url as user_avatar
-      FROM task_comments c
-      JOIN users u ON c.user_id = u.id
-      WHERE c.task_id = ?
-      ORDER BY c.created_at ASC
-    `).all(taskId);
+    let comments = [];
+    if (d1) {
+      try {
+        const comRes = await d1.prepare(`
+          SELECT c.*, u.name as user_name, u.email as user_email, u.avatar_url as user_avatar
+          FROM task_comments c
+          JOIN users u ON c.user_id = u.id
+          WHERE c.task_id = ?
+          ORDER BY c.created_at ASC
+        `).bind(taskId).all();
+        comments = comRes.results || [];
+      } catch (e) {}
+    }
+    if (comments.length === 0) {
+      try {
+        comments = db.prepare(`
+          SELECT c.*, u.name as user_name, u.email as user_email, u.avatar_url as user_avatar
+          FROM task_comments c
+          JOIN users u ON c.user_id = u.id
+          WHERE c.task_id = ?
+          ORDER BY c.created_at ASC
+        `).all(taskId);
+      } catch (e) {}
+    }
     task.comments = comments.map(formatDoc);
 
     await attachAssigneesToTask(task, d1);
@@ -775,7 +803,17 @@ const app = new Hono()
 
     // Restriction: Only Admins / Workspace Owners can move tasks to DONE
     if (status !== undefined && status === 'DONE' && existingTask.status !== 'DONE') {
-      const workspace = db.prepare('SELECT user_id FROM workspaces WHERE id = ?').get(existingTask.workspace_id);
+      let workspace = null;
+      if (d1) {
+        try {
+          workspace = await d1.prepare('SELECT user_id FROM workspaces WHERE id = ?').bind(existingTask.workspace_id).first();
+        } catch (e) {}
+      }
+      if (!workspace) {
+        try {
+          workspace = db.prepare('SELECT user_id FROM workspaces WHERE id = ?').get(existingTask.workspace_id);
+        } catch (e) {}
+      }
       const isOwner = workspace && workspace.user_id === user.$id;
       const isAdmin = isOwner || (member && (member.role === 'ADMIN' || member.organization_role === 'COMPANY_OWNER' || member.organization_role === 'COMPANY_ADMIN'));
 
@@ -940,7 +978,17 @@ const app = new Hono()
       VALUES (?, ?, ?, ?)
     `).run(id, taskId, user.$id, content);
 
-    const task = db.prepare('SELECT key, workspace_id, reporter_id, assignee_id FROM tasks WHERE id = ?').get(taskId);
+    let task = null;
+    if (d1) {
+      try {
+        task = await d1.prepare('SELECT key, workspace_id, reporter_id, assignee_id FROM tasks WHERE id = ?').bind(taskId).first();
+      } catch (e) {}
+    }
+    if (!task) {
+      try {
+        task = db.prepare('SELECT key, workspace_id, reporter_id, assignee_id FROM tasks WHERE id = ?').get(taskId);
+      } catch (e) {}
+    }
     if (task && task.reporter_id && task.reporter_id !== user.$id) {
       createNotification({
         workspaceId: task.workspace_id,
@@ -953,6 +1001,153 @@ const app = new Hono()
     }
 
     return ctx.json({ success: true, id, content });
+  })
+  .patch('/:taskId/comments/:commentId', sessionMiddleware, async (ctx) => {
+    const user = ctx.get('user');
+    const { taskId, commentId } = ctx.req.param();
+    const { content } = await ctx.req.json();
+    const d1 = ctx.env?.DB || getD1Database();
+
+    if (!content || !content.trim()) {
+      return ctx.json({ error: 'Comment content cannot be empty.' }, 400);
+    }
+
+    let comment = null;
+    if (d1) {
+      try {
+        comment = await d1.prepare('SELECT * FROM task_comments WHERE id = ? AND task_id = ?').bind(commentId, taskId).first();
+      } catch (e) {}
+    }
+    if (!comment) {
+      try {
+        comment = db.prepare('SELECT * FROM task_comments WHERE id = ? AND task_id = ?').get(commentId, taskId);
+      } catch (e) {}
+    }
+
+    if (!comment) {
+      return ctx.json({ error: 'Comment not found.' }, 404);
+    }
+
+    // Check permissions: author OR workspace admin/owner
+    const isAuthor = comment.user_id === user.$id;
+    let isAdmin = false;
+
+    if (!isAuthor) {
+      let task = null;
+      if (d1) {
+        try {
+          task = await d1.prepare('SELECT workspace_id FROM tasks WHERE id = ?').bind(taskId).first();
+        } catch (e) {}
+      }
+      if (!task) {
+        try {
+          task = db.prepare('SELECT workspace_id FROM tasks WHERE id = ?').get(taskId);
+        } catch (e) {}
+      }
+
+      if (task) {
+        const member = await getMember({ workspaceId: task.workspace_id, userId: user.$id });
+        let workspace = null;
+        if (d1) {
+          try {
+            workspace = await d1.prepare('SELECT user_id FROM workspaces WHERE id = ?').bind(task.workspace_id).first();
+          } catch (e) {}
+        }
+        if (!workspace) {
+          try {
+            workspace = db.prepare('SELECT user_id FROM workspaces WHERE id = ?').get(task.workspace_id);
+          } catch (e) {}
+        }
+        const isOwner = workspace && workspace.user_id === user.$id;
+        isAdmin = isOwner || (member && (member.role === 'ADMIN' || member.organization_role === 'COMPANY_OWNER' || member.organization_role === 'COMPANY_ADMIN'));
+      }
+    }
+
+    if (!isAuthor && !isAdmin) {
+      return ctx.json({ error: 'Permission denied: Only the comment author or an administrator can edit this comment.' }, 403);
+    }
+
+    if (d1) {
+      try {
+        await d1.prepare('UPDATE task_comments SET content = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(content.trim(), commentId).run();
+      } catch (e) {}
+    }
+    try {
+      db.prepare('UPDATE task_comments SET content = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(content.trim(), commentId);
+    } catch (e) {}
+
+    return ctx.json({ success: true, id: commentId, content: content.trim() });
+  })
+  .delete('/:taskId/comments/:commentId', sessionMiddleware, async (ctx) => {
+    const user = ctx.get('user');
+    const { taskId, commentId } = ctx.req.param();
+    const d1 = ctx.env?.DB || getD1Database();
+
+    let comment = null;
+    if (d1) {
+      try {
+        comment = await d1.prepare('SELECT * FROM task_comments WHERE id = ? AND task_id = ?').bind(commentId, taskId).first();
+      } catch (e) {}
+    }
+    if (!comment) {
+      try {
+        comment = db.prepare('SELECT * FROM task_comments WHERE id = ? AND task_id = ?').get(commentId, taskId);
+      } catch (e) {}
+    }
+
+    if (!comment) {
+      return ctx.json({ error: 'Comment not found.' }, 404);
+    }
+
+    // Check permissions: author OR workspace admin/owner
+    const isAuthor = comment.user_id === user.$id;
+    let isAdmin = false;
+
+    if (!isAuthor) {
+      let task = null;
+      if (d1) {
+        try {
+          task = await d1.prepare('SELECT workspace_id FROM tasks WHERE id = ?').bind(taskId).first();
+        } catch (e) {}
+      }
+      if (!task) {
+        try {
+          task = db.prepare('SELECT workspace_id FROM tasks WHERE id = ?').get(taskId);
+        } catch (e) {}
+      }
+
+      if (task) {
+        const member = await getMember({ workspaceId: task.workspace_id, userId: user.$id });
+        let workspace = null;
+        if (d1) {
+          try {
+            workspace = await d1.prepare('SELECT user_id FROM workspaces WHERE id = ?').bind(task.workspace_id).first();
+          } catch (e) {}
+        }
+        if (!workspace) {
+          try {
+            workspace = db.prepare('SELECT user_id FROM workspaces WHERE id = ?').get(task.workspace_id);
+          } catch (e) {}
+        }
+        const isOwner = workspace && workspace.user_id === user.$id;
+        isAdmin = isOwner || (member && (member.role === 'ADMIN' || member.organization_role === 'COMPANY_OWNER' || member.organization_role === 'COMPANY_ADMIN'));
+      }
+    }
+
+    if (!isAuthor && !isAdmin) {
+      return ctx.json({ error: 'Permission denied: Only the comment author or an administrator can delete this comment.' }, 403);
+    }
+
+    if (d1) {
+      try {
+        await d1.prepare('DELETE FROM task_comments WHERE id = ?').bind(commentId).run();
+      } catch (e) {}
+    }
+    try {
+      db.prepare('DELETE FROM task_comments WHERE id = ?').run(commentId);
+    } catch (e) {}
+
+    return ctx.json({ success: true, id: commentId });
   })
   .delete('/:taskId', sessionMiddleware, async (ctx) => {
     const user = ctx.get('user');
