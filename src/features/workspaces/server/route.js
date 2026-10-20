@@ -538,21 +538,21 @@ const app = new Hono()
     const assignedTaskDifference = thisMonthAssigned - lastMonthAssigned;
 
     // 3. Completed tasks & trend
-    const completedTaskCount = await countTasks("AND status = ?", [TaskStatus.DONE]);
-    const thisMonthCompleted = await countTasks("AND status = ? AND strftime('%Y-%m', updated_at) = strftime('%Y-%m', 'now')", [TaskStatus.DONE]);
-    const lastMonthCompleted = await countTasks("AND status = ? AND strftime('%Y-%m', updated_at) = strftime('%Y-%m', 'now', '-1 month')", [TaskStatus.DONE]);
+    const completedTaskCount = await countTasks("AND UPPER(status) IN ('DONE', 'COMPLETED', 'RESOLVED')");
+    const thisMonthCompleted = await countTasks("AND UPPER(status) IN ('DONE', 'COMPLETED', 'RESOLVED') AND strftime('%Y-%m', updated_at) = strftime('%Y-%m', 'now')");
+    const lastMonthCompleted = await countTasks("AND UPPER(status) IN ('DONE', 'COMPLETED', 'RESOLVED') AND strftime('%Y-%m', updated_at) = strftime('%Y-%m', 'now', '-1 month')");
     const completedTaskDifference = thisMonthCompleted - lastMonthCompleted;
 
     // 4. Incomplete tasks & trend
     const incompleteTaskCount = Math.max(0, taskCount - completedTaskCount);
-    const thisMonthIncomplete = await countTasks("AND status != ? AND strftime('%Y-%m', created_at) = strftime('%Y-%m', 'now')", [TaskStatus.DONE]);
-    const lastMonthIncomplete = await countTasks("AND status != ? AND strftime('%Y-%m', created_at) = strftime('%Y-%m', 'now', '-1 month')", [TaskStatus.DONE]);
+    const thisMonthIncomplete = await countTasks("AND UPPER(status) NOT IN ('DONE', 'COMPLETED', 'RESOLVED') AND strftime('%Y-%m', created_at) = strftime('%Y-%m', 'now')");
+    const lastMonthIncomplete = await countTasks("AND UPPER(status) NOT IN ('DONE', 'COMPLETED', 'RESOLVED') AND strftime('%Y-%m', created_at) = strftime('%Y-%m', 'now', '-1 month')");
     const incompleteTaskDifference = thisMonthIncomplete - lastMonthIncomplete;
 
     // 5. Overdue tasks & trend
-    const overdueTaskCount = await countTasks("AND status != ? AND due_date IS NOT NULL AND datetime(due_date) < datetime('now')", [TaskStatus.DONE]);
-    const thisMonthOverdue = await countTasks("AND status != ? AND due_date IS NOT NULL AND datetime(due_date) < datetime('now') AND strftime('%Y-%m', created_at) = strftime('%Y-%m', 'now')", [TaskStatus.DONE]);
-    const lastMonthOverdue = await countTasks("AND status != ? AND due_date IS NOT NULL AND datetime(due_date) < datetime('now') AND strftime('%Y-%m', created_at) = strftime('%Y-%m', 'now', '-1 month')", [TaskStatus.DONE]);
+    const overdueTaskCount = await countTasks("AND UPPER(status) NOT IN ('DONE', 'COMPLETED', 'RESOLVED') AND due_date IS NOT NULL AND trim(due_date) != '' AND datetime(due_date) < datetime('now')");
+    const thisMonthOverdue = await countTasks("AND UPPER(status) NOT IN ('DONE', 'COMPLETED', 'RESOLVED') AND due_date IS NOT NULL AND trim(due_date) != '' AND datetime(due_date) < datetime('now') AND strftime('%Y-%m', created_at) = strftime('%Y-%m', 'now')");
+    const lastMonthOverdue = await countTasks("AND UPPER(status) NOT IN ('DONE', 'COMPLETED', 'RESOLVED') AND due_date IS NOT NULL AND trim(due_date) != '' AND datetime(due_date) < datetime('now') AND strftime('%Y-%m', created_at) = strftime('%Y-%m', 'now', '-1 month')");
     const overdueTaskDifference = overdueTaskCount - lastMonthOverdue;
 
     return ctx.json({
