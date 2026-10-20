@@ -46,36 +46,6 @@ async function ensureKsmTables(d1, workspaceId = null) {
       )
     `, [], d1);
 
-    // Auto-purge any stale dummy demo tickets if workspaceId provided
-    if (workspaceId) {
-      await d1Run(`
-        DELETE FROM service_requests 
-        WHERE workspace_id = ? 
-          AND (
-            customer_email LIKE '%acme.com%'
-            OR summary IN (
-              'Production API Gateway 504 Gateway Timeout Spikes',
-              'Provision AWS IAM Admin & Production SSH Access for New Tech Lead',
-              'Database Failover & Multi-Region Replication Upgrade',
-              'Recurring SSO Okta SAML Login Token Expiration Problem',
-              'Request for New Ergonomic Monitor & Engineering Peripherals'
-            )
-          )
-      `, [workspaceId], d1);
-
-      await d1Run(`
-        DELETE FROM tasks 
-        WHERE workspace_id = ? 
-          AND name IN (
-            'Production API Gateway 504 Gateway Timeout Spikes',
-            'Provision AWS IAM Admin & Production SSH Access for New Tech Lead',
-            'Database Failover & Multi-Region Replication Upgrade',
-            'Recurring SSO Okta SAML Login Token Expiration Problem',
-            'Request for New Ergonomic Monitor & Engineering Peripherals'
-          )
-      `, [workspaceId], d1);
-    }
-
     tablesEnsured = true;
   } catch (e) {
     console.error('[KSM_ENSURE_TABLES_ERROR]:', e);

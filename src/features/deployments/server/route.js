@@ -112,18 +112,74 @@ const app = new Hono()
       deployFreqText = '0 deploys / month';
     }
 
-    const leadTimeText = totalDeployments > 0 ? '3.8 hours' : 'N/A';
-    const leadTimeRating = 'ELITE'; // < 1 day is ELITE
+    // 1. Dynamic Lead Time for Changes
+    const leadTimeRow = await d1First(`
+      SELECT AVG((julianday(COALESCE(finished_at, CURRENT_TIMESTAMP)) - julianday(started_at)) * 24 * 60) as avg_min
+      FROM deployments 
+      WHERE workspace_id = ? AND started_at IS NOT NULL
+    `, [workspaceId], d1);
 
-    const cfrRating = changeFailureRate <= 15 ? 'ELITE' : (changeFailureRate <= 20 ? 'HIGH' : (changeFailureRate <= 30 ? 'MEDIUM' : 'LOW'));
+    const avgLeadMinutes = Number(leadTimeRow?.avg_min || 0);
+    let leadTimeText = 'N/A';
+    let leadTimeRating = 'LOW';
 
-    const mttrText = failedDeployments > 0 ? '24 minutes' : '15 minutes (Benchmark)';
-    const mttrRating = 'ELITE'; // < 1 hour is ELITE
+    if (totalDeployments > 0) {
+      if (avgLeadMinutes <= 0 || avgLeadMinutes < 1) {
+        leadTimeText = '< 1 min (Instant CI/CD)';
+        leadTimeRating = 'ELITE';
+      } else if (avgLeadMinutes < 60) {
+        leadTimeText = `${Math.round(avgLeadMinutes)} mins`;
+        leadTimeRating = 'ELITE';
+      } else if (avgLeadMinutes < 1440) {
+        leadTimeText = `${(avgLeadMinutes / 60).toFixed(1)} hours`;
+        leadTimeRating = avgLeadMinutes <= 240 ? 'ELITE' : 'HIGH';
+      } else {
+        leadTimeText = `${(avgLeadMinutes / 1440).toFixed(1)} days`;
+        leadTimeRating = avgLeadMinutes <= 10080 ? 'MEDIUM' : 'LOW';
+      }
+    }
+
+    const cfrRating = totalDeployments === 0 ? 'ELITE' : (changeFailureRate <= 15 ? 'ELITE' : (changeFailureRate <= 20 ? 'HIGH' : (changeFailureRate <= 30 ? 'MEDIUM' : 'LOW')));
+
+    // 2. Dynamic MTTR (Mean Time to Recovery)
+    let mttrText = 'Zero Incidents (100% Reliable)';
+    let mttrRating = 'ELITE';
+
+    if (failedDeployments > 0) {
+      const mttrRow = await d1First(`
+        SELECT AVG((julianday(rec.started_at) - julianday(f.started_at)) * 24 * 60) as avg_rec_min
+        FROM deployments f
+        JOIN deployments rec ON rec.workspace_id = f.workspace_id 
+          AND rec.service_name = f.service_name
+          AND rec.status = 'SUCCESS'
+          AND rec.started_at > f.started_at
+        WHERE f.workspace_id = ? AND f.status IN ('FAILED', 'ROLLED_BACK')
+      `, [workspaceId], d1);
+
+      const avgRecMinutes = Number(mttrRow?.avg_rec_min || 0);
+      if (avgRecMinutes > 0) {
+        if (avgRecMinutes < 60) {
+          mttrText = `${Math.max(1, Math.round(avgRecMinutes))} mins`;
+          mttrRating = 'ELITE';
+        } else if (avgRecMinutes < 1440) {
+          mttrText = `${(avgRecMinutes / 60).toFixed(1)} hours`;
+          mttrRating = 'HIGH';
+        } else {
+          mttrText = `${(avgRecMinutes / 1440).toFixed(1)} days`;
+          mttrRating = 'MEDIUM';
+        }
+      } else {
+        mttrText = 'Incident Pending Recovery';
+        mttrRating = 'LOW';
+      }
+    }
 
     let compositeRating = 'ELITE';
-    if (cfrRating === 'LOW' || deployFreqRating === 'LOW') {
+    if (totalDeployments === 0) {
+      compositeRating = 'MEDIUM';
+    } else if (cfrRating === 'LOW' || deployFreqRating === 'LOW' || mttrRating === 'LOW') {
       compositeRating = 'LOW';
-    } else if (cfrRating === 'MEDIUM' || deployFreqRating === 'MEDIUM') {
+    } else if (cfrRating === 'MEDIUM' || deployFreqRating === 'MEDIUM' || mttrRating === 'MEDIUM') {
       compositeRating = 'MEDIUM';
     } else if (cfrRating === 'HIGH' || deployFreqRating === 'HIGH') {
       compositeRating = 'HIGH';

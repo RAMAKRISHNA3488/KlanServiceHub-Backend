@@ -16,11 +16,11 @@ async function ensureAssetsTables(d1) {
         status TEXT NOT NULL DEFAULT 'ACTIVE',
         owner_id TEXT,
         environment TEXT DEFAULT 'PRODUCTION',
-        location TEXT DEFAULT 'AWS us-east-1',
-        ip_address TEXT DEFAULT '10.0.1.10',
-        uptime_percent REAL DEFAULT 99.98,
-        provider TEXT DEFAULT 'AWS',
-        version TEXT DEFAULT 'v1.0.0',
+        location TEXT DEFAULT '',
+        ip_address TEXT DEFAULT '',
+        uptime_percent REAL DEFAULT 100.0,
+        provider TEXT DEFAULT '',
+        version TEXT DEFAULT '',
         metadata TEXT DEFAULT '{}',
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -40,10 +40,10 @@ async function ensureAssetsTables(d1) {
 
     // Ensure columns exist on older schemas
     const alterColumns = [
-      'ALTER TABLE assets ADD COLUMN ip_address TEXT DEFAULT "10.0.1.10"',
-      'ALTER TABLE assets ADD COLUMN uptime_percent REAL DEFAULT 99.98',
-      'ALTER TABLE assets ADD COLUMN provider TEXT DEFAULT "AWS"',
-      'ALTER TABLE assets ADD COLUMN version TEXT DEFAULT "v1.0.0"',
+      'ALTER TABLE assets ADD COLUMN ip_address TEXT DEFAULT ""',
+      'ALTER TABLE assets ADD COLUMN uptime_percent REAL DEFAULT 100.0',
+      'ALTER TABLE assets ADD COLUMN provider TEXT DEFAULT ""',
+      'ALTER TABLE assets ADD COLUMN version TEXT DEFAULT ""',
       'ALTER TABLE assets ADD COLUMN updated_at DATETIME DEFAULT CURRENT_TIMESTAMP'
     ];
     for (const sql of alterColumns) {
@@ -146,17 +146,17 @@ const app = new Hono()
   .post('/:workspaceId', sessionMiddleware, async (ctx) => {
     const user = ctx.get('user');
     const { workspaceId } = ctx.req.param();
-    const { 
-      name, 
-      type = 'SERVER', 
+    const {
+      name,
+      type = 'SERVER',
       status = 'ACTIVE',
-      environment = 'PRODUCTION', 
-      location = 'AWS us-east-1', 
-      ip_address = '10.0.1.10',
-      provider = 'AWS',
-      version = 'v1.0.0',
-      uptime_percent = 99.98,
-      metadata = {} 
+      environment = 'PRODUCTION',
+      location = '',
+      ip_address = '',
+      provider = '',
+      version = '',
+      uptime_percent = null,
+      metadata = {}
     } = await ctx.req.json();
     const d1 = ctx.env?.DB || getD1Database();
     await ensureAssetsTables(d1);
@@ -169,6 +169,10 @@ const app = new Hono()
     const cleanName = name.trim();
     const metaStr = typeof metadata === 'string' ? metadata : JSON.stringify(metadata);
 
+    const finalUptime = uptime_percent !== null && uptime_percent !== undefined
+      ? Number(uptime_percent)
+      : (status.toUpperCase() === 'ACTIVE' ? 100.0 : (status.toUpperCase() === 'DEGRADED' ? 98.0 : (status.toUpperCase() === 'MAINTENANCE' ? 95.0 : 0.0)));
+
     await d1Run(`
       INSERT INTO assets (
         id, workspace_id, name, type, status, owner_id, 
@@ -178,7 +182,7 @@ const app = new Hono()
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
     `, [
       id, workspaceId, cleanName, type.toUpperCase(), status.toUpperCase(), user.$id,
-      environment.toUpperCase(), location, ip_address, Number(uptime_percent) || 99.98,
+      environment.toUpperCase(), location, ip_address, finalUptime,
       provider, version, metaStr
     ], d1);
 

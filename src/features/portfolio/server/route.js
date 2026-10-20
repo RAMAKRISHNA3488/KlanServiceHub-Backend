@@ -59,18 +59,18 @@ async function ensurePortfolioTables(d1) {
 
     const alterCols = [
       'ALTER TABLE portfolios ADD COLUMN description TEXT DEFAULT ""',
-      'ALTER TABLE portfolios ADD COLUMN category TEXT DEFAULT "Cloud Infrastructure"',
+      'ALTER TABLE portfolios ADD COLUMN category TEXT DEFAULT "General"',
       'ALTER TABLE portfolios ADD COLUMN status TEXT DEFAULT "ON_TRACK"',
-      'ALTER TABLE portfolios ADD COLUMN progress_percent INTEGER DEFAULT 50',
-      'ALTER TABLE portfolios ADD COLUMN budget_allocated INTEGER DEFAULT 250000',
-      'ALTER TABLE portfolios ADD COLUMN budget_spent INTEGER DEFAULT 120000',
+      'ALTER TABLE portfolios ADD COLUMN progress_percent INTEGER DEFAULT 0',
+      'ALTER TABLE portfolios ADD COLUMN budget_allocated INTEGER DEFAULT 0',
+      'ALTER TABLE portfolios ADD COLUMN budget_spent INTEGER DEFAULT 0',
       'ALTER TABLE portfolios ADD COLUMN updated_at DATETIME DEFAULT CURRENT_TIMESTAMP',
       'ALTER TABLE initiatives ADD COLUMN health_status TEXT DEFAULT "ON_TRACK"',
-      'ALTER TABLE initiatives ADD COLUMN progress_percent INTEGER DEFAULT 45',
+      'ALTER TABLE initiatives ADD COLUMN progress_percent INTEGER DEFAULT 0',
       'ALTER TABLE initiatives ADD COLUMN priority TEXT DEFAULT "P1"',
       'ALTER TABLE initiatives ADD COLUMN updated_at DATETIME DEFAULT CURRENT_TIMESTAMP',
       'ALTER TABLE strategic_goals ADD COLUMN key_result TEXT DEFAULT ""',
-      'ALTER TABLE strategic_goals ADD COLUMN progress_percent INTEGER DEFAULT 60'
+      'ALTER TABLE strategic_goals ADD COLUMN progress_percent INTEGER DEFAULT 0'
     ];
     for (const sql of alterCols) {
       try {
@@ -133,6 +133,26 @@ const app = new Hono()
     const totalBudgetAllocated = portfolios.reduce((sum, p) => sum + (Number(p.budget_allocated) || 0), 0);
     const totalBudgetSpent = portfolios.reduce((sum, p) => sum + (Number(p.budget_spent) || 0), 0);
 
+    // Dynamic Target Horizon calculation from active initiatives and goals
+    let latestTargetDate = null;
+    for (const item of [...initiatives, ...goals]) {
+      if (item.target_date) {
+        const d = new Date(item.target_date);
+        if (!isNaN(d.getTime()) && (!latestTargetDate || d > latestTargetDate)) {
+          latestTargetDate = d;
+        }
+      }
+    }
+    let targetHorizon = '';
+    if (latestTargetDate) {
+      const q = Math.floor(latestTargetDate.getMonth() / 3) + 1;
+      targetHorizon = `Q${q} ${latestTargetDate.getFullYear()}`;
+    } else {
+      const now = new Date();
+      const q = Math.floor(now.getMonth() / 3) + 1;
+      targetHorizon = `Q${q} ${now.getFullYear()}`;
+    }
+
     return ctx.json({
       data: {
         totalPortfolios,
@@ -146,7 +166,7 @@ const app = new Hono()
         atRiskInitiatives,
         offTrackInitiatives,
         completedInitiatives,
-        targetHorizon: 'Q4 2026'
+        targetHorizon
       }
     });
   })

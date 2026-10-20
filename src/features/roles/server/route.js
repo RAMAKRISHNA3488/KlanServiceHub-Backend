@@ -214,6 +214,13 @@ const app = new Hono()
     const ownersCount = rolesWithPerms.find(r => r.name === 'Company Owner')?.userCount || 1;
     const adminsCount = rolesWithPerms.find(r => r.name === 'Company Admin')?.userCount || 0;
 
+    // Dynamic Least-Privilege Compliance Score
+    const nonOwnerRoles = rolesWithPerms.filter(r => r.name !== 'Company Owner');
+    const totalGrantedNonOwner = nonOwnerRoles.reduce((sum, r) => sum + (r.permissions ? r.permissions.length : 0), 0);
+    const maxPotentialPerms = nonOwnerRoles.length * EXTENDED_PERMISSIONS.length;
+    const grantRatio = maxPotentialPerms > 0 ? (totalGrantedNonOwner / maxPotentialPerms) : 0.2;
+    const securityPostureScore = Math.max(50, Math.min(100, Math.round(100 - (grantRatio * 40))));
+
     return ctx.json({
       data: {
         roles: rolesWithPerms,
@@ -225,7 +232,7 @@ const app = new Hono()
           totalAssignedUsers,
           ownersCount,
           adminsCount,
-          securityPostureScore: 96 // Least-privilege compliance score
+          securityPostureScore
         }
       }
     });
