@@ -550,9 +550,9 @@ const app = new Hono()
     const incompleteTaskDifference = thisMonthIncomplete - lastMonthIncomplete;
 
     // 5. Overdue tasks & trend
-    const overdueTaskCount = await countTasks("AND UPPER(status) NOT IN ('DONE', 'COMPLETED', 'RESOLVED') AND due_date IS NOT NULL AND trim(due_date) != '' AND datetime(due_date) < datetime('now')");
-    const thisMonthOverdue = await countTasks("AND UPPER(status) NOT IN ('DONE', 'COMPLETED', 'RESOLVED') AND due_date IS NOT NULL AND trim(due_date) != '' AND datetime(due_date) < datetime('now') AND strftime('%Y-%m', created_at) = strftime('%Y-%m', 'now')");
-    const lastMonthOverdue = await countTasks("AND UPPER(status) NOT IN ('DONE', 'COMPLETED', 'RESOLVED') AND due_date IS NOT NULL AND trim(due_date) != '' AND datetime(due_date) < datetime('now') AND strftime('%Y-%m', created_at) = strftime('%Y-%m', 'now', '-1 month')");
+    const overdueTaskCount = await countTasks("AND UPPER(status) NOT IN ('DONE', 'COMPLETED', 'RESOLVED', 'BACKLOG') AND due_date IS NOT NULL AND trim(due_date) != '' AND datetime(due_date) < datetime('now')");
+    const thisMonthOverdue = await countTasks("AND UPPER(status) NOT IN ('DONE', 'COMPLETED', 'RESOLVED', 'BACKLOG') AND due_date IS NOT NULL AND trim(due_date) != '' AND datetime(due_date) < datetime('now') AND strftime('%Y-%m', created_at) = strftime('%Y-%m', 'now')");
+    const lastMonthOverdue = await countTasks("AND UPPER(status) NOT IN ('DONE', 'COMPLETED', 'RESOLVED', 'BACKLOG') AND due_date IS NOT NULL AND trim(due_date) != '' AND datetime(due_date) < datetime('now') AND strftime('%Y-%m', created_at) = strftime('%Y-%m', 'now', '-1 month')");
     const overdueTaskDifference = overdueTaskCount - lastMonthOverdue;
 
     return ctx.json({
