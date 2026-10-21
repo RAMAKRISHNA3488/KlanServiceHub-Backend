@@ -58,12 +58,13 @@ const app = new Hono()
     const workloads = [];
     for (const m of members) {
       const taskStats = await d1First(`
-        SELECT COUNT(*) as task_count,
-               COALESCE(SUM(story_points), 0) as total_story_points,
-               COALESCE(SUM(time_spent_seconds), 0) as total_spent_seconds
-        FROM tasks
-        WHERE assignee_id = ? AND workspace_id = ? AND status != 'DONE'
-      `, [m.member_id, workspaceId], d1);
+        SELECT COUNT(DISTINCT t.id) as task_count,
+               COALESCE(SUM(t.story_points), 0) as total_story_points
+        FROM tasks t
+        WHERE t.workspace_id = ?
+          AND UPPER(t.status) NOT IN ('DONE', 'COMPLETED', 'RESOLVED', 'CLOSED', 'CANCELLED')
+          AND (t.assignee_id = ? OR t.id IN (SELECT task_id FROM task_assignees WHERE member_id = ?))
+      `, [workspaceId, m.member_id, m.member_id], d1);
 
       const capacity = await d1First(`
         SELECT capacity_hours FROM team_capacities WHERE user_id = ? AND workspace_id = ?
