@@ -71,11 +71,17 @@ function buildTaskFilter(query, workspaceId, tableAlias = 't') {
         JOIN team_members tm ON m.user_id = tm.user_id 
         WHERE tm.team_id = ?
       )
+      OR ${tableAlias}.id IN (
+        SELECT ta.task_id FROM task_assignees ta
+        JOIN members m ON ta.member_id = m.id
+        JOIN team_members tm ON m.user_id = tm.user_id
+        WHERE tm.team_id = ?
+      )
       OR ${tableAlias}.project_id IN (
         SELECT project_id FROM team_projects WHERE team_id = ?
       )
     )`);
-    params.push(teamId, teamId);
+    params.push(teamId, teamId, teamId);
   }
 
   if (assigneeId && assigneeId !== 'ALL') {
@@ -119,8 +125,8 @@ function buildTaskFilter(query, workspaceId, tableAlias = 't') {
     params.push(epicId);
   }
 
-  // Date Range Filtering
-  if (dateRange) {
+  // Date Range Filtering (Only applied when not 'all')
+  if (dateRange && dateRange !== 'all' && dateRange !== 'ALL') {
     if (dateRange === 'today') {
       whereClauses.push(`datetime(${tableAlias}.created_at) >= datetime('now', 'start of day')`);
     } else if (dateRange === '7d' || dateRange === 'last7days') {
@@ -515,11 +521,17 @@ app.get('/:workspaceId/teams', sessionMiddleware, async (ctx) => {
             JOIN team_members tm ON m.user_id = tm.user_id 
             WHERE tm.team_id = ?
           )
+          OR t.id IN (
+            SELECT ta.task_id FROM task_assignees ta
+            JOIN members m ON ta.member_id = m.id
+            JOIN team_members tm ON m.user_id = tm.user_id
+            WHERE tm.team_id = ?
+          )
           OR t.project_id IN (
             SELECT project_id FROM team_projects WHERE team_id = ?
           )
         )
-      `, [workspaceId, team.id, team.id]);
+      `, [workspaceId, team.id, team.id, team.id]);
     }
 
     const total = stats?.total_tasks || 0;
@@ -795,7 +807,7 @@ app.get('/:workspaceId/epics', sessionMiddleware, async (ctx) => {
         COALESCE(SUM(CASE WHEN status IN ${COMPLETED_STATUSES} THEN story_points ELSE 0 END), 0) as completed_story_points,
         MAX(updated_at) as last_child_activity
       FROM tasks
-      WHERE workspace_id = ? AND (epic_id = ? OR parent_id = ?) AND id != ?
+      WHERE workspace_id = ? AND (epic_id = ? OR parent_task_id = ?) AND id != ?
     `, [workspaceId, epic.id, epic.id, epic.id]);
 
     const totalChildItems = childStats?.total_child_items || 0;
@@ -844,7 +856,7 @@ app.get('/:workspaceId/epics', sessionMiddleware, async (ctx) => {
         FROM tasks t
         LEFT JOIN members m ON t.assignee_id = m.id
         LEFT JOIN users u ON m.user_id = u.id
-        WHERE t.workspace_id = ? AND (t.epic_id = ? OR t.parent_id = ?) AND t.id != ?
+        WHERE t.workspace_id = ? AND (t.epic_id = ? OR t.parent_task_id = ?) AND t.id != ?
         ORDER BY CASE WHEN t.status IN ${COMPLETED_STATUSES} THEN 1 ELSE 0 END ASC, t.updated_at DESC
         LIMIT 8
       `, [workspaceId, epic.id, epic.id, epic.id]);
@@ -870,7 +882,7 @@ app.get('/:workspaceId/epics', sessionMiddleware, async (ctx) => {
         FROM tasks t
         JOIN members m ON t.assignee_id = m.id
         JOIN users u ON m.user_id = u.id
-        WHERE t.workspace_id = ? AND (t.epic_id = ? OR t.parent_id = ? OR t.id = ?)
+        WHERE t.workspace_id = ? AND (t.epic_id = ? OR t.parent_task_id = ? OR t.id = ?)
         LIMIT 6
       `, [workspaceId, epic.id, epic.id, epic.id]);
     } catch (e) {}
