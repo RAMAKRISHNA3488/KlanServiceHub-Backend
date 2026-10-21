@@ -120,7 +120,7 @@ const app = new Hono()
       SELECT 
         COUNT(*) as totalTasks,
         SUM(CASE WHEN status = 'DONE' THEN 1 ELSE 0 END) as completedTasks,
-        SUM(CASE WHEN status IN ('IN_PROGRESS', 'IN_REVIEW', 'TESTING') THEN 1 ELSE 0 END) as inProgressTasks,
+        SUM(CASE WHEN status IN ('IN_PROGRESS', 'IN_REVIEW', 'CODE_REVIEW', 'TESTING') THEN 1 ELSE 0 END) as inProgressTasks,
         SUM(CASE WHEN status IN ('TODO', 'BACKLOG') THEN 1 ELSE 0 END) as todoTasks,
         SUM(CASE WHEN priority = 'CRITICAL' AND status != 'DONE' THEN 1 ELSE 0 END) as criticalTasks,
         SUM(CASE WHEN status != 'DONE' AND datetime(due_date) < datetime('now') THEN 1 ELSE 0 END) as overdueTasks
@@ -180,7 +180,7 @@ const app = new Hono()
       SELECT u.id, u.name, u.email, u.avatar_url, m.role,
              COUNT(t.id) as task_count,
              SUM(CASE WHEN t.status = 'DONE' THEN 1 ELSE 0 END) as done_count,
-             SUM(CASE WHEN t.status IN ('IN_PROGRESS', 'IN_REVIEW', 'TESTING') THEN 1 ELSE 0 END) as in_progress_count,
+             SUM(CASE WHEN t.status IN ('IN_PROGRESS', 'IN_REVIEW', 'CODE_REVIEW', 'TESTING') THEN 1 ELSE 0 END) as in_progress_count,
              SUM(CASE WHEN t.status != 'DONE' AND datetime(t.due_date) < datetime('now') THEN 1 ELSE 0 END) as overdue_count,
              SUM(CASE WHEN t.story_points IS NOT NULL THEN t.story_points ELSE 1 END) as total_story_points
       FROM members m
@@ -197,7 +197,7 @@ const app = new Hono()
       SELECT p.id, p.name, p.key, p.image_url, p.category,
              COUNT(t.id) as total_tasks,
              SUM(CASE WHEN t.status = 'DONE' THEN 1 ELSE 0 END) as completed_tasks,
-             SUM(CASE WHEN t.status IN ('IN_PROGRESS', 'IN_REVIEW', 'TESTING') THEN 1 ELSE 0 END) as in_progress_tasks,
+             SUM(CASE WHEN t.status IN ('IN_PROGRESS', 'IN_REVIEW', 'CODE_REVIEW', 'TESTING') THEN 1 ELSE 0 END) as in_progress_tasks,
              SUM(CASE WHEN t.status != 'DONE' AND t.issue_type = 'Bug' THEN 1 ELSE 0 END) as open_bugs
       FROM projects p
       LEFT JOIN tasks t ON t.project_id = p.id
@@ -310,7 +310,8 @@ const app = new Hono()
       if (!statusMatrix[row.assignee_name]) {
         statusMatrix[row.assignee_name] = { TODO: 0, IN_PROGRESS: 0, IN_REVIEW: 0, DONE: 0, total: 0 };
       }
-      statusMatrix[row.assignee_name][row.status] = (statusMatrix[row.assignee_name][row.status] || 0) + Number(row.count);
+      const stKey = (row.status === 'CODE_REVIEW' || row.status === 'REVIEW') ? 'IN_REVIEW' : row.status;
+      statusMatrix[row.assignee_name][stKey] = (statusMatrix[row.assignee_name][stKey] || 0) + Number(row.count);
       statusMatrix[row.assignee_name].total += Number(row.count);
     }
     const twoDimensionalStats = Array.from(assigneesSet).map((name) => ({

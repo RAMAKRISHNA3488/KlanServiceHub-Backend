@@ -33,7 +33,7 @@ async function checkAccess(ctx, workspaceId) {
 const STATUS_CATEGORIES = {
   TODO: ['TODO', 'BACKLOG', 'To Do', 'Backlog'],
   IN_PROGRESS: ['IN_PROGRESS', 'In Progress'],
-  IN_REVIEW: ['IN_REVIEW', 'In Review'],
+  IN_REVIEW: ['IN_REVIEW', 'In Review', 'CODE_REVIEW', 'Code Review', 'REVIEW', 'Review'],
   DONE: ['DONE', 'Done', 'RESOLVED', 'Resolved', 'CLOSED', 'Closed'],
   BLOCKED: ['BLOCKED', 'Blocked'],
   CANCELLED: ['CANCELLED', 'Cancelled', 'Canceled'],
@@ -182,7 +182,7 @@ app.get('/:workspaceId/overview', sessionMiddleware, async (ctx) => {
     SELECT 
       COUNT(*) as total_work_items,
       SUM(CASE WHEN t.status IN ('TODO', 'BACKLOG', 'To Do', 'Backlog') THEN 1 ELSE 0 END) as open_items,
-      SUM(CASE WHEN t.status IN ('IN_PROGRESS', 'In Progress', 'IN_REVIEW', 'In Review') THEN 1 ELSE 0 END) as in_progress_items,
+      SUM(CASE WHEN t.status IN ('IN_PROGRESS', 'In Progress', 'IN_REVIEW', 'In Review', 'CODE_REVIEW', 'Code Review') THEN 1 ELSE 0 END) as in_progress_items,
       SUM(CASE WHEN t.status IN ${COMPLETED_STATUSES} THEN 1 ELSE 0 END) as completed_items,
       SUM(CASE WHEN t.status IN ('BLOCKED', 'Blocked') THEN 1 ELSE 0 END) as blocked_items,
       SUM(CASE WHEN datetime(t.due_date) < datetime('now') AND t.status NOT IN ${TERMINAL_STATUSES} THEN 1 ELSE 0 END) as overdue_items,
@@ -515,7 +515,7 @@ app.get('/:workspaceId/teams', sessionMiddleware, async (ctx) => {
         SELECT 
           COUNT(t.id) as total_tasks,
           SUM(CASE WHEN t.status IN ${COMPLETED_STATUSES} THEN 1 ELSE 0 END) as completed_tasks,
-          SUM(CASE WHEN t.status IN ('IN_PROGRESS', 'In Progress', 'IN_REVIEW', 'In Review') THEN 1 ELSE 0 END) as in_progress_tasks,
+          SUM(CASE WHEN t.status IN ('IN_PROGRESS', 'In Progress', 'IN_REVIEW', 'In Review', 'CODE_REVIEW', 'Code Review') THEN 1 ELSE 0 END) as in_progress_tasks,
           SUM(CASE WHEN datetime(t.due_date) < datetime('now') AND t.status NOT IN ${TERMINAL_STATUSES} THEN 1 ELSE 0 END) as overdue_tasks,
           SUM(CASE WHEN t.status IN ('BLOCKED', 'Blocked') THEN 1 ELSE 0 END) as blocked_tasks,
           COALESCE(SUM(t.story_points), 0) as total_story_points
@@ -527,7 +527,7 @@ app.get('/:workspaceId/teams', sessionMiddleware, async (ctx) => {
         SELECT 
           COUNT(t.id) as total_tasks,
           SUM(CASE WHEN t.status IN ${COMPLETED_STATUSES} THEN 1 ELSE 0 END) as completed_tasks,
-          SUM(CASE WHEN t.status IN ('IN_PROGRESS', 'In Progress', 'IN_REVIEW', 'In Review') THEN 1 ELSE 0 END) as in_progress_tasks,
+          SUM(CASE WHEN t.status IN ('IN_PROGRESS', 'In Progress', 'IN_REVIEW', 'In Review', 'CODE_REVIEW', 'Code Review') THEN 1 ELSE 0 END) as in_progress_tasks,
           SUM(CASE WHEN datetime(t.due_date) < datetime('now') AND t.status NOT IN ${TERMINAL_STATUSES} THEN 1 ELSE 0 END) as overdue_tasks,
           SUM(CASE WHEN t.status IN ('BLOCKED', 'Blocked') THEN 1 ELSE 0 END) as blocked_tasks,
           COALESCE(SUM(t.story_points), 0) as total_story_points
@@ -637,7 +637,7 @@ app.get('/:workspaceId/members', sessionMiddleware, async (ctx) => {
       SELECT 
         COUNT(t.id) as total_assigned,
         SUM(CASE WHEN t.status IN ('TODO', 'BACKLOG', 'To Do', 'Backlog') THEN 1 ELSE 0 END) as open_items,
-        SUM(CASE WHEN t.status IN ('IN_PROGRESS', 'In Progress', 'IN_REVIEW', 'In Review') THEN 1 ELSE 0 END) as in_progress_items,
+        SUM(CASE WHEN t.status IN ('IN_PROGRESS', 'In Progress', 'IN_REVIEW', 'In Review', 'CODE_REVIEW', 'Code Review') THEN 1 ELSE 0 END) as in_progress_items,
         SUM(CASE WHEN t.status IN ${COMPLETED_STATUSES} THEN 1 ELSE 0 END) as completed_items,
         SUM(CASE WHEN t.status IN ('BLOCKED', 'Blocked') THEN 1 ELSE 0 END) as blocked_items,
         SUM(CASE WHEN datetime(t.due_date) < datetime('now') AND t.status NOT IN ${TERMINAL_STATUSES} THEN 1 ELSE 0 END) as overdue_items,
@@ -741,7 +741,7 @@ app.get('/:workspaceId/projects', sessionMiddleware, async (ctx) => {
       SELECT 
         COUNT(t.id) as total_tasks,
         SUM(CASE WHEN t.status IN ('TODO', 'BACKLOG', 'To Do', 'Backlog') THEN 1 ELSE 0 END) as open_tasks,
-        SUM(CASE WHEN t.status IN ('IN_PROGRESS', 'In Progress', 'IN_REVIEW', 'In Review') THEN 1 ELSE 0 END) as in_progress_tasks,
+        SUM(CASE WHEN t.status IN ('IN_PROGRESS', 'In Progress', 'IN_REVIEW', 'In Review', 'CODE_REVIEW', 'Code Review') THEN 1 ELSE 0 END) as in_progress_tasks,
         SUM(CASE WHEN t.status IN ${COMPLETED_STATUSES} THEN 1 ELSE 0 END) as completed_tasks,
         SUM(CASE WHEN LOWER(t.issue_type) = 'bug' THEN 1 ELSE 0 END) as bug_count,
         SUM(CASE WHEN datetime(t.due_date) < datetime('now') AND t.status NOT IN ${TERMINAL_STATUSES} THEN 1 ELSE 0 END) as overdue_count,
@@ -816,7 +816,7 @@ app.get('/:workspaceId/epics', sessionMiddleware, async (ctx) => {
       SELECT 
         COUNT(id) as total_child_items,
         SUM(CASE WHEN status IN ${COMPLETED_STATUSES} THEN 1 ELSE 0 END) as completed_items,
-        SUM(CASE WHEN status IN ('IN_PROGRESS', 'In Progress', 'IN_REVIEW', 'In Review') THEN 1 ELSE 0 END) as in_progress_items,
+        SUM(CASE WHEN status IN ('IN_PROGRESS', 'In Progress', 'IN_REVIEW', 'In Review', 'CODE_REVIEW', 'Code Review') THEN 1 ELSE 0 END) as in_progress_items,
         SUM(CASE WHEN status IN ('TODO', 'BACKLOG', 'To Do', 'Backlog') THEN 1 ELSE 0 END) as open_items,
         SUM(CASE WHEN status IN ('BLOCKED', 'Blocked') THEN 1 ELSE 0 END) as blocked_items,
         SUM(CASE WHEN datetime(due_date) < datetime('now') AND status NOT IN ${TERMINAL_STATUSES} THEN 1 ELSE 0 END) as overdue_items,
@@ -1078,7 +1078,7 @@ app.get('/:workspaceId/bugs', sessionMiddleware, async (ctx) => {
     SELECT 
       COUNT(*) as total_bugs,
       SUM(CASE WHEN t.status IN ('TODO', 'BACKLOG', 'To Do', 'Backlog') THEN 1 ELSE 0 END) as open_bugs,
-      SUM(CASE WHEN t.status IN ('IN_PROGRESS', 'In Progress', 'IN_REVIEW', 'In Review') THEN 1 ELSE 0 END) as in_progress_bugs,
+      SUM(CASE WHEN t.status IN ('IN_PROGRESS', 'In Progress', 'IN_REVIEW', 'In Review', 'CODE_REVIEW', 'Code Review') THEN 1 ELSE 0 END) as in_progress_bugs,
       SUM(CASE WHEN t.status IN ('RESOLVED', 'Resolved', 'DONE', 'Done') THEN 1 ELSE 0 END) as resolved_bugs,
       SUM(CASE WHEN t.status IN ('CLOSED', 'Closed') THEN 1 ELSE 0 END) as closed_bugs,
       SUM(CASE WHEN t.priority IN ('HIGHEST', 'CRITICAL', 'HIGH') AND t.status NOT IN ${TERMINAL_STATUSES} THEN 1 ELSE 0 END) as critical_bugs,
@@ -1548,7 +1548,7 @@ app.get('/:workspaceId/export', sessionMiddleware, async (ctx) => {
 
   const totalTasks = tasks.length;
   const completedTasks = tasks.filter(t => ['DONE', 'Done', 'RESOLVED', 'CLOSED'].includes(t.status)).length;
-  const inProgressTasks = tasks.filter(t => ['IN_PROGRESS', 'In Progress', 'IN_REVIEW', 'In Review'].includes(t.status)).length;
+  const inProgressTasks = tasks.filter(t => ['IN_PROGRESS', 'In Progress', 'IN_REVIEW', 'In Review', 'CODE_REVIEW', 'Code Review'].includes(t.status)).length;
   const totalStoryPoints = tasks.reduce((sum, t) => sum + (t.story_points || 0), 0);
 
   if (format === 'comprehensive' || format === 'comprehensive_csv' || format === 'excel') {

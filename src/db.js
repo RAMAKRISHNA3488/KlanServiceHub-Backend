@@ -1519,7 +1519,7 @@ export function ensureWorkspaceDefaults(workspaceId, ownerUserId) {
       { name: 'BACKLOG', category: 'TODO', color: '#94A3B8', position: 0 },
       { name: 'TODO', category: 'TODO', color: '#3B82F6', position: 1 },
       { name: 'IN_PROGRESS', category: 'IN_PROGRESS', color: '#F59E0B', position: 2 },
-      { name: 'CODE_REVIEW', category: 'IN_PROGRESS', color: '#8B5CF6', position: 3 },
+      { name: 'IN_REVIEW', category: 'IN_PROGRESS', color: '#8B5CF6', position: 3 },
       { name: 'TESTING', category: 'IN_PROGRESS', color: '#06B6D4', position: 4 },
       { name: 'DONE', category: 'DONE', color: '#10B981', position: 5 },
     ];
