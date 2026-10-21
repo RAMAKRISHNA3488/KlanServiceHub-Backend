@@ -301,6 +301,7 @@ app.get('/:workspaceId/work-types', sessionMiddleware, async (ctx) => {
     { type: 'Feature', icon: 'sparkles', color: '#10B981' },
     { type: 'Story', icon: 'bookmark', color: '#10B981' },
     { type: 'Subtask', icon: 'git-commit', color: '#06B6D4' },
+    { type: 'Improvement', icon: 'trending-up', color: '#FFAB00' },
   ];
 
   const total = rows.reduce((acc, r) => acc + Number(r.count), 0);
@@ -341,6 +342,22 @@ app.get('/:workspaceId/work-types', sessionMiddleware, async (ctx) => {
       color: st.color,
     };
   });
+
+  // Guarantee any custom or dynamic issue types are never dropped
+  const knownKeys = new Set(standardTypes.map((st) => st.type.toLowerCase().replace(/[^a-z]/g, '')));
+  for (const [key, count] of typeMap.entries()) {
+    if (!knownKeys.has(key) && count > 0) {
+      const formattedName = key.charAt(0).toUpperCase() + key.slice(1);
+      breakdown.push({
+        type: formattedName,
+        count,
+        percentage: total > 0 ? Math.round((count / total) * 100) : 0,
+        trend: 0,
+        icon: 'check-square',
+        color: '#64748B',
+      });
+    }
+  }
 
   return ctx.json({
     data: {
