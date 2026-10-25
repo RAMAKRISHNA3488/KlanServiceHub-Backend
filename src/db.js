@@ -55,12 +55,40 @@ function createMemoryDb() {
     },
     prepare: (sql) => {
       const cleanSql = sql.replace(/\s+/g, ' ').trim();
+
+      const parseWhere = (s) => {
+        const whereIdx = s.search(/\bWHERE\b/i);
+        if (whereIdx === -1) return null;
+        const afterWhere = s.slice(whereIdx + 5).split(/\b(ORDER\s+BY|GROUP\s+BY|LIMIT)\b/i)[0].trim();
+        const conds = [];
+        const parts = afterWhere.split(/\bAND\b/i);
+        for (const part of parts) {
+          const m = part.trim().match(/(?:[a-zA-Z0-9_]+\.)?([a-zA-Z0-9_]+)\s*=\s*\?/i);
+          if (m) {
+            conds.push(m[1].toLowerCase());
+          }
+        }
+        return { hasWhere: true, conds };
+      };
+
+      const filterRows = (table, whereInfo, params) => {
+        if (!whereInfo || !whereInfo.hasWhere) return [...table];
+        if (whereInfo.conds.length === 0) return [];
+        return table.filter((r) => {
+          return whereInfo.conds.every((col, idx) => {
+            if (params[idx] === undefined) return true;
+            const val = r[col] !== undefined ? r[col] : r[col.replace(/_/g, '')];
+            return String(val ?? '').toLowerCase() === String(params[idx] ?? '').toLowerCase();
+          });
+        });
+      };
+
       return {
         run: (...params) => {
           const insertMatch = cleanSql.match(/INSERT (?:OR IGNORE )?INTO ([a-zA-Z0-9_]+)\s*\(([^)]+)\)\s*VALUES\s*\(([^)]+)\)/i);
           if (insertMatch) {
             const tableName = insertMatch[1];
-            const cols = insertMatch[2].split(',').map((c) => c.trim());
+            const cols = insertMatch[2].split(',').map((c) => c.trim().toLowerCase());
             const valTokens = insertMatch[3].split(',').map((v) => v.trim());
             const table = getTable(tableName);
             const row = {};
@@ -85,17 +113,64 @@ function createMemoryDb() {
             return { changes: 1, lastInsertRowid: table.length };
           }
 
-          const deleteMatch = cleanSql.match(/DELETE FROM ([a-zA-Z0-9_]+)(?:\s+WHERE\s+([a-zA-Z0-9_]+)\s*=\s*\?)?/i);
+          const updateMatch = cleanSql.match(/UPDATE\s+([a-zA-Z0-9_]+)\s+SET\s+(.+?)(?:\s+WHERE\s+(.+))?$/i);
+          if (updateMatch) {
+            const tableName = updateMatch[1];
+            const setClause = updateMatch[2];
+            const table = getTable(tableName);
+            const whereInfo = parseWhere(cleanSql);
+            const setParts = setClause.split(',').map((p) => p.trim());
+            let paramIdx = 0;
+            const setAssignments = [];
+            for (const sp of setParts) {
+              const sm = sp.match(/([a-zA-Z0-9_]+)\s*=\s*(.+)/i);
+              if (sm) {
+                const col = sm[1].toLowerCase();
+                const rawVal = sm[2].trim();
+                if (rawVal === '?') {
+                  setAssignments.push({ col, val: params[paramIdx] });
+                  paramIdx++;
+                } else if (rawVal.toUpperCase() === 'CURRENT_TIMESTAMP') {
+                  setAssignments.push({ col, val: new Date().toISOString() });
+                } else if (rawVal.startsWith("'") || rawVal.startsWith('"')) {
+                  setAssignments.push({ col, val: rawVal.slice(1, -1) });
+                } else {
+                  setAssignments.push({ col, val: rawVal });
+                }
+              }
+            }
+            const whereParams = params.slice(paramIdx);
+            const matchingRows = filterRows(table, whereInfo, whereParams);
+            for (const r of matchingRows) {
+              for (const { col, val } of setAssignments) {
+                r[col] = val;
+              }
+              r.updated_at = new Date().toISOString();
+            }
+            return { changes: matchingRows.length, lastInsertRowid: 0 };
+          }
+
+          const deleteMatch = cleanSql.match(/DELETE FROM ([a-zA-Z0-9_]+)/i);
           if (deleteMatch) {
             const tableName = deleteMatch[1];
-            const col = deleteMatch[2];
-            if (col && params.length > 0) {
-              const table = getTable(tableName);
+            const table = getTable(tableName);
+            const whereInfo = parseWhere(cleanSql);
+            if (!whereInfo || !whereInfo.hasWhere) {
               const initialLen = table.length;
-              const filtered = table.filter((r) => String(r[col]) !== String(params[0]));
-              tables.set(tableName.toLowerCase().trim(), filtered);
-              return { changes: initialLen - filtered.length, lastInsertRowid: 0 };
+              table.length = 0;
+              return { changes: initialLen, lastInsertRowid: 0 };
             }
+            const toKeep = table.filter((r) => {
+              const matches = whereInfo.conds.every((col, idx) => {
+                if (params[idx] === undefined) return true;
+                const val = r[col] !== undefined ? r[col] : r[col.replace(/_/g, '')];
+                return String(val ?? '').toLowerCase() === String(params[idx] ?? '').toLowerCase();
+              });
+              return !matches;
+            });
+            const deleted = table.length - toKeep.length;
+            tables.set(tableName.toLowerCase().trim(), toKeep);
+            return { changes: deleted, lastInsertRowid: 0 };
           }
 
           return { changes: 1, lastInsertRowid: 1 };
@@ -106,39 +181,57 @@ function createMemoryDb() {
             const alias = countMatch[1] || 'c';
             const tableName = countMatch[2];
             const table = getTable(tableName);
-            const whereMatch = cleanSql.match(/WHERE\s+([a-zA-Z0-9_]+)\s*=\s*\?/i);
-            let count = table.length;
-            if (whereMatch && params.length > 0) {
-              const col = whereMatch[1];
-              count = table.filter((r) => String(r[col]) === String(params[0])).length;
-            }
+            const whereInfo = parseWhere(cleanSql);
+            const rows = filterRows(table, whereInfo, params);
+            const count = rows.length;
             return { [alias]: count, c: count, count };
           }
 
-          const selectMatch = cleanSql.match(/SELECT\s+(.+?)\s+FROM\s+([a-zA-Z0-9_]+)(?:\s+WHERE\s+([a-zA-Z0-9_]+)\s*=\s*\?)?/i);
+          const selectMatch = cleanSql.match(/FROM\s+([a-zA-Z0-9_]+)/i);
           if (selectMatch) {
-            const tableName = selectMatch[2];
-            const col = selectMatch[3];
+            const tableName = selectMatch[1];
             const table = getTable(tableName);
-            if (col && params.length > 0) {
-              return table.find((r) => String(r[col]).toLowerCase() === String(params[0]).toLowerCase()) || null;
+            const whereInfo = parseWhere(cleanSql);
+            const rows = filterRows(table, whereInfo, params);
+            if (rows.length === 0) return null;
+            const r = { ...rows[0] };
+            if (cleanSql.toLowerCase().includes('task_comments') && r.user_id) {
+              const userTable = getTable('users');
+              const u = userTable.find((usr) => usr.id === r.user_id);
+              if (u) {
+                r.user_name = u.name;
+                r.user_email = u.email;
+                r.user_avatar = u.avatar_url;
+              }
             }
-            return table[0] || null;
+            return r;
           }
 
-          return { c: 0, count: 0 };
+          return null;
         },
         all: (...params) => {
-          const selectMatch = cleanSql.match(/SELECT\s+(.+?)\s+FROM\s+([a-zA-Z0-9_]+)/i);
+          const selectMatch = cleanSql.match(/FROM\s+([a-zA-Z0-9_]+)/i);
           if (selectMatch) {
-            const tableName = selectMatch[2];
+            const tableName = selectMatch[1];
             const table = getTable(tableName);
-            const whereMatch = cleanSql.match(/WHERE\s+([a-zA-Z0-9_]+)\s*=\s*\?/i);
-            if (whereMatch && params.length > 0) {
-              const col = whereMatch[1];
-              return table.filter((r) => String(r[col]).toLowerCase() === String(params[0]).toLowerCase());
+            const whereInfo = parseWhere(cleanSql);
+            const rows = filterRows(table, whereInfo, params);
+            if (cleanSql.toLowerCase().includes('task_comments')) {
+              const userTable = getTable('users');
+              return rows.map((row) => {
+                const r = { ...row };
+                if (r.user_id) {
+                  const u = userTable.find((usr) => usr.id === r.user_id);
+                  if (u) {
+                    r.user_name = u.name;
+                    r.user_email = u.email;
+                    r.user_avatar = u.avatar_url;
+                  }
+                }
+                return r;
+              });
             }
-            return [...table];
+            return rows.map((r) => ({ ...r }));
           }
           return [];
         },

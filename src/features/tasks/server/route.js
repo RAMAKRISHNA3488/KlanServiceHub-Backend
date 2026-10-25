@@ -514,22 +514,26 @@ const app = new Hono()
     task.priority = row.priority || 'MEDIUM';
 
     // Subtasks
-    let subtasks = [];
+    let subtasks = null;
     if (d1) {
       try {
         const subRes = await d1.prepare('SELECT * FROM tasks WHERE parent_task_id = ?').bind(taskId).all();
-        subtasks = subRes.results || [];
-      } catch (e) {}
+        subtasks = subRes?.results || [];
+      } catch (e) {
+        console.error('[D1_SUBTASKS_ERROR]:', e);
+      }
     }
-    if (subtasks.length === 0) {
+    if (subtasks === null) {
       try {
         subtasks = db.prepare('SELECT * FROM tasks WHERE parent_task_id = ?').all(taskId);
-      } catch (e) {}
+      } catch (e) {
+        subtasks = [];
+      }
     }
-    task.subtasks = subtasks.map(formatDoc);
+    task.subtasks = (subtasks || []).map(formatDoc);
 
-    // Comments
-    let comments = [];
+    // Comments (scoped strictly to this taskId)
+    let comments = null;
     if (d1) {
       try {
         const comRes = await d1.prepare(`
@@ -539,10 +543,12 @@ const app = new Hono()
           WHERE c.task_id = ?
           ORDER BY c.created_at ASC
         `).bind(taskId).all();
-        comments = comRes.results || [];
-      } catch (e) {}
+        comments = comRes?.results || [];
+      } catch (e) {
+        console.error('[D1_COMMENTS_ERROR]:', e);
+      }
     }
-    if (comments.length === 0) {
+    if (comments === null) {
       try {
         comments = db.prepare(`
           SELECT c.*, u.name as user_name, u.email as user_email, u.avatar_url as user_avatar
@@ -551,9 +557,11 @@ const app = new Hono()
           WHERE c.task_id = ?
           ORDER BY c.created_at ASC
         `).all(taskId);
-      } catch (e) {}
+      } catch (e) {
+        comments = [];
+      }
     }
-    task.comments = comments.map(formatDoc);
+    task.comments = (comments || []).map(formatDoc);
 
     await attachAssigneesToTask(task, d1);
 
@@ -936,7 +944,7 @@ const app = new Hono()
     const { taskId } = ctx.req.param();
     const d1 = ctx.env?.DB || getD1Database();
 
-    let comments = [];
+    let comments = null;
     if (d1) {
       try {
         const res = await d1.prepare(`
@@ -946,19 +954,25 @@ const app = new Hono()
           WHERE c.task_id = ?
           ORDER BY c.created_at ASC
         `).bind(taskId).all();
-        comments = res.results || [];
-      } catch (e) {}
+        comments = res?.results || [];
+      } catch (e) {
+        console.error('[D1_COMMENTS_GET_ERROR]:', e);
+      }
     }
-    if (comments.length === 0) {
-      comments = db.prepare(`
-        SELECT c.*, u.name as user_name, u.email as user_email, u.avatar_url as user_avatar
-        FROM task_comments c
-        JOIN users u ON c.user_id = u.id
-        WHERE c.task_id = ?
-        ORDER BY c.created_at ASC
-      `).all(taskId);
+    if (comments === null) {
+      try {
+        comments = db.prepare(`
+          SELECT c.*, u.name as user_name, u.email as user_email, u.avatar_url as user_avatar
+          FROM task_comments c
+          JOIN users u ON c.user_id = u.id
+          WHERE c.task_id = ?
+          ORDER BY c.created_at ASC
+        `).all(taskId);
+      } catch (e) {
+        comments = [];
+      }
     }
-    return ctx.json({ data: comments.map(formatDoc) });
+    return ctx.json({ data: (comments || []).map(formatDoc) });
   })
   .post('/:taskId/comments', sessionMiddleware, async (ctx) => {
     const user = ctx.get('user');
@@ -1074,11 +1088,11 @@ const app = new Hono()
 
     if (d1) {
       try {
-        await d1.prepare('UPDATE task_comments SET content = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(content.trim(), commentId).run();
+        await d1.prepare('UPDATE task_comments SET content = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND task_id = ?').bind(content.trim(), commentId, taskId).run();
       } catch (e) {}
     }
     try {
-      db.prepare('UPDATE task_comments SET content = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(content.trim(), commentId);
+      db.prepare('UPDATE task_comments SET content = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND task_id = ?').run(content.trim(), commentId, taskId);
     } catch (e) {}
 
     return ctx.json({ success: true, id: commentId, content: content.trim() });
@@ -1145,11 +1159,11 @@ const app = new Hono()
 
     if (d1) {
       try {
-        await d1.prepare('DELETE FROM task_comments WHERE id = ?').bind(commentId).run();
+        await d1.prepare('DELETE FROM task_comments WHERE id = ? AND task_id = ?').bind(commentId, taskId).run();
       } catch (e) {}
     }
     try {
-      db.prepare('DELETE FROM task_comments WHERE id = ?').run(commentId);
+      db.prepare('DELETE FROM task_comments WHERE id = ? AND task_id = ?').run(commentId, taskId);
     } catch (e) {}
 
     return ctx.json({ success: true, id: commentId });
