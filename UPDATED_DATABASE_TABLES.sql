@@ -1,26 +1,15 @@
 -- =======================================================================
--- KLANSERVICEHUB V1 — UPDATED DATABASE TABLES & MIGRATION SCRIPT
--- Execute on Cloudflare D1: npx wrangler d1 execute klanservicehub_db --file=./UPDATED_DATABASE_TABLES.sql --remote
+-- KLANSERVICEHUB V1 — CLOUDFLARE D1 DATABASE TABLES & MIGRATION SCRIPT
+-- =======================================================================
+-- Execution Command (from the backend/ directory):
+-- npx wrangler d1 execute klanservicehub_db --file=./UPDATED_DATABASE_TABLES.sql --remote
 -- =======================================================================
 
 PRAGMA foreign_keys = ON;
 
--- 1. ACTIVITIES TABLE (Used for Organization Activity Feed - 50-Event Rolling Limit)
-CREATE TABLE IF NOT EXISTS activities (
-  id TEXT PRIMARY KEY,
-  workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
-  project_id TEXT REFERENCES projects(id) ON DELETE CASCADE,
-  task_id TEXT REFERENCES tasks(id) ON DELETE SET NULL,
-  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  action TEXT NOT NULL,
-  details TEXT,
-  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-);
-
--- Performance Index for Activity Stream & 50-Event FIFO Expiration
-CREATE INDEX IF NOT EXISTS idx_activities_ws_created ON activities(workspace_id, created_at DESC);
-
--- 2. TASK COMMENTS TABLE (Supports Inline Editing & Admin Deletion)
+-- =======================================================================
+-- 1. TASK COMMENTS TABLE (With Full Date & Time Timestamps)
+-- =======================================================================
 CREATE TABLE IF NOT EXISTS task_comments (
   id TEXT PRIMARY KEY,
   task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
@@ -32,8 +21,9 @@ CREATE TABLE IF NOT EXISTS task_comments (
 
 CREATE INDEX IF NOT EXISTS idx_task_comments_task ON task_comments(task_id, created_at ASC);
 
--- 3. TASKS TABLE SCHEMA VERIFICATION
--- Ensure tasks table has all fields required for Issue Details, Boards, and Story Points
+-- =======================================================================
+-- 2. TASKS / TICKETS TABLE (Full Fields, Story Points & Timestamps)
+-- =======================================================================
 CREATE TABLE IF NOT EXISTS tasks (
   id TEXT PRIMARY KEY,
   workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
