@@ -532,6 +532,31 @@ const app = new Hono()
     }
     task.subtasks = (subtasks || []).map(formatDoc);
 
+    // Parent task details if this is a subtask
+    task.parentTaskId = row.parent_task_id || null;
+    task.parentTask = null;
+    if (row.parent_task_id) {
+      let parentRow = null;
+      if (d1) {
+        try {
+          const pRes = await d1.prepare('SELECT id, name, key, status, issue_type FROM tasks WHERE id = ?').bind(row.parent_task_id).first();
+          parentRow = pRes || null;
+        } catch (e) {
+          console.error('[D1_PARENT_TASK_ERROR]:', e);
+        }
+      }
+      if (!parentRow) {
+        try {
+          parentRow = db.prepare('SELECT id, name, key, status, issue_type FROM tasks WHERE id = ?').get(row.parent_task_id);
+        } catch (e) {
+          parentRow = null;
+        }
+      }
+      if (parentRow) {
+        task.parentTask = formatDoc(parentRow);
+      }
+    }
+
     // Comments (scoped strictly to this taskId)
     let comments = null;
     if (d1) {
