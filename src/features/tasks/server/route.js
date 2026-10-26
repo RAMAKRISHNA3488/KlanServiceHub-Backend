@@ -983,19 +983,36 @@ const app = new Hono()
     if (!content) return ctx.json({ error: 'Comment content is required.' }, 400);
 
     const id = randomUUID();
+    const now = new Date().toISOString();
     if (d1) {
       try {
         await d1.prepare(`
-          INSERT INTO task_comments (id, task_id, user_id, content)
-          VALUES (?, ?, ?, ?)
-        `).bind(id, taskId, user.$id, content).run();
-      } catch (e) {}
+          INSERT INTO task_comments (id, task_id, user_id, content, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?)
+        `).bind(id, taskId, user.$id, content, now, now).run();
+      } catch (e) {
+        try {
+          await d1.prepare(`
+            INSERT INTO task_comments (id, task_id, user_id, content)
+            VALUES (?, ?, ?, ?)
+          `).bind(id, taskId, user.$id, content).run();
+        } catch (e2) {}
+      }
     }
 
-    db.prepare(`
-      INSERT INTO task_comments (id, task_id, user_id, content)
-      VALUES (?, ?, ?, ?)
-    `).run(id, taskId, user.$id, content);
+    try {
+      db.prepare(`
+        INSERT INTO task_comments (id, task_id, user_id, content, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+      `).run(id, taskId, user.$id, content, now, now);
+    } catch (e) {
+      try {
+        db.prepare(`
+          INSERT INTO task_comments (id, task_id, user_id, content)
+          VALUES (?, ?, ?, ?)
+        `).run(id, taskId, user.$id, content);
+      } catch (e2) {}
+    }
 
     let task = null;
     if (d1) {
@@ -1019,7 +1036,22 @@ const app = new Hono()
       });
     }
 
-    return ctx.json({ success: true, id, content });
+    return ctx.json({
+      success: true,
+      id,
+      content,
+      data: {
+        id,
+        task_id: taskId,
+        user_id: user.$id,
+        user_name: user.name,
+        user_email: user.email,
+        user_avatar: user.avatar_url,
+        content,
+        created_at: now,
+        updated_at: now,
+      },
+    });
   })
   .patch('/:taskId/comments/:commentId', sessionMiddleware, async (ctx) => {
     const user = ctx.get('user');
@@ -1086,16 +1118,25 @@ const app = new Hono()
       return ctx.json({ error: 'Permission denied: Only the comment author or an administrator can edit this comment.' }, 403);
     }
 
+    const now = new Date().toISOString();
     if (d1) {
       try {
-        await d1.prepare('UPDATE task_comments SET content = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND task_id = ?').bind(content.trim(), commentId, taskId).run();
-      } catch (e) {}
+        await d1.prepare('UPDATE task_comments SET content = ?, updated_at = ? WHERE id = ? AND task_id = ?').bind(content.trim(), now, commentId, taskId).run();
+      } catch (e) {
+        try {
+          await d1.prepare('UPDATE task_comments SET content = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND task_id = ?').bind(content.trim(), commentId, taskId).run();
+        } catch (e2) {}
+      }
     }
     try {
-      db.prepare('UPDATE task_comments SET content = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND task_id = ?').run(content.trim(), commentId, taskId);
-    } catch (e) {}
+      db.prepare('UPDATE task_comments SET content = ?, updated_at = ? WHERE id = ? AND task_id = ?').run(content.trim(), now, commentId, taskId);
+    } catch (e) {
+      try {
+        db.prepare('UPDATE task_comments SET content = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND task_id = ?').run(content.trim(), commentId, taskId);
+      } catch (e2) {}
+    }
 
-    return ctx.json({ success: true, id: commentId, content: content.trim() });
+    return ctx.json({ success: true, id: commentId, content: content.trim(), updated_at: now });
   })
   .delete('/:taskId/comments/:commentId', sessionMiddleware, async (ctx) => {
     const user = ctx.get('user');
