@@ -1926,6 +1926,23 @@ export function formatDoc(row) {
   doc.$id = row.id;
   doc.$createdAt = row.created_at;
   doc.$updatedAt = row.updated_at;
+  doc.createdAt = row.created_at;
+  doc.updatedAt = row.updated_at;
+  doc.created_at = row.created_at;
+  doc.updated_at = row.updated_at;
+
+  if (row.created_at && typeof row.created_at === 'string' && /^\d{4}-\d{2}-\d{2}\s\d{2}:\d{2}:\d{2}/.test(row.created_at)) {
+    const isoCreated = row.created_at.replace(' ', 'T') + (row.created_at.endsWith('Z') ? '' : 'Z');
+    doc.created_at = isoCreated;
+    doc.$createdAt = isoCreated;
+    doc.createdAt = isoCreated;
+  }
+  if (row.updated_at && typeof row.updated_at === 'string' && /^\d{4}-\d{2}-\d{2}\s\d{2}:\d{2}:\d{2}/.test(row.updated_at)) {
+    const isoUpdated = row.updated_at.replace(' ', 'T') + (row.updated_at.endsWith('Z') ? '' : 'Z');
+    doc.updated_at = isoUpdated;
+    doc.$updatedAt = isoUpdated;
+    doc.updatedAt = isoUpdated;
+  }
   if (row.user_id !== undefined) doc.userId = row.user_id;
   if (row.workspace_id !== undefined) doc.workspaceId = row.workspace_id;
   if (row.project_id !== undefined) doc.projectId = row.project_id;

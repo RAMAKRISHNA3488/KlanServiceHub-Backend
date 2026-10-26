@@ -539,7 +539,7 @@ const app = new Hono()
         const comRes = await d1.prepare(`
           SELECT c.*, u.name as user_name, u.email as user_email, u.avatar_url as user_avatar
           FROM task_comments c
-          JOIN users u ON c.user_id = u.id
+          LEFT JOIN users u ON c.user_id = u.id
           WHERE c.task_id = ?
           ORDER BY c.created_at ASC
         `).bind(taskId).all();
@@ -553,7 +553,7 @@ const app = new Hono()
         comments = db.prepare(`
           SELECT c.*, u.name as user_name, u.email as user_email, u.avatar_url as user_avatar
           FROM task_comments c
-          JOIN users u ON c.user_id = u.id
+          LEFT JOIN users u ON c.user_id = u.id
           WHERE c.task_id = ?
           ORDER BY c.created_at ASC
         `).all(taskId);
@@ -950,7 +950,7 @@ const app = new Hono()
         const res = await d1.prepare(`
           SELECT c.*, u.name as user_name, u.email as user_email, u.avatar_url as user_avatar
           FROM task_comments c
-          JOIN users u ON c.user_id = u.id
+          LEFT JOIN users u ON c.user_id = u.id
           WHERE c.task_id = ?
           ORDER BY c.created_at ASC
         `).bind(taskId).all();
@@ -964,7 +964,7 @@ const app = new Hono()
         comments = db.prepare(`
           SELECT c.*, u.name as user_name, u.email as user_email, u.avatar_url as user_avatar
           FROM task_comments c
-          JOIN users u ON c.user_id = u.id
+          LEFT JOIN users u ON c.user_id = u.id
           WHERE c.task_id = ?
           ORDER BY c.created_at ASC
         `).all(taskId);
