@@ -330,6 +330,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   time_spent_seconds INTEGER DEFAULT 0,
   version_number INTEGER DEFAULT 1,
   due_date DATETIME NOT NULL,
+  completed_at DATETIME,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
@@ -348,6 +349,7 @@ CREATE TABLE IF NOT EXISTS task_comments (
   task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
   user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   content TEXT NOT NULL,
+  images TEXT DEFAULT '[]',
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
@@ -377,8 +379,11 @@ CREATE TABLE IF NOT EXISTS task_attachments (
   file_url TEXT NOT NULL,
   file_size INTEGER DEFAULT 0,
   file_type TEXT DEFAULT 'application/octet-stream',
+  expires_at DATETIME,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE INDEX IF NOT EXISTS idx_task_attachments_expires ON task_attachments(expires_at);
 
 CREATE TABLE IF NOT EXISTS task_links (
   id TEXT PRIMARY KEY,

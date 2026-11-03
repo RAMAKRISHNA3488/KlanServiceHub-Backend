@@ -1169,6 +1169,10 @@ const initSchema = () => {
   safeAddColumn('service_requests', "assigned_agent_id TEXT");
   safeAddColumn('service_requests', "customer_org_id TEXT");
 
+  // Task attachment image support with 6-day expiry
+  safeAddColumn('task_attachments', 'image_data TEXT');
+  safeAddColumn('task_attachments', 'expires_at DATETIME');
+
   db.exec(`
     CREATE TABLE IF NOT EXISTS email_verifications (
       id TEXT PRIMARY KEY,
@@ -1956,6 +1960,14 @@ export function formatDoc(row) {
   if (row.sprint_id !== undefined) doc.sprintId = row.sprint_id;
   if (row.story_points !== undefined) doc.storyPoints = row.story_points;
   if (row.issue_type !== undefined) doc.issueType = row.issue_type;
+  if (row.completed_at !== undefined) doc.completedAt = row.completed_at;
+  if (row.images !== undefined) {
+    try {
+      doc.images = typeof row.images === 'string' ? JSON.parse(row.images) : (row.images || []);
+    } catch (e) {
+      doc.images = [];
+    }
+  }
   return doc;
 }
 

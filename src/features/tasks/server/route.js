@@ -139,6 +139,61 @@ async function attachAssigneesToTask(task, d1) {
   return task;
 }
 
+async function processCommentsWithExpiration(comments, taskId, d1) {
+  let task = null;
+  if (d1) {
+    try {
+      task = await d1.prepare('SELECT id, status, completed_at FROM tasks WHERE id = ?').bind(taskId).first();
+    } catch (e) {}
+  }
+  if (!task) {
+    try {
+      task = db.prepare('SELECT id, status, completed_at FROM tasks WHERE id = ?').get(taskId);
+    } catch (e) {}
+  }
+
+  const isDone = task?.status === 'DONE';
+  const completedTime = isDone && task?.completed_at ? new Date(task.completed_at).getTime() : null;
+  const SIX_DAYS_MS = 6 * 24 * 60 * 60 * 1000;
+  const isExpired = isDone && completedTime && (Date.now() - completedTime > SIX_DAYS_MS);
+
+  // If expired, prune image payloads from DB to save storage
+  if (isExpired) {
+    if (d1) {
+      try {
+        await d1.prepare("UPDATE task_comments SET images = '[]' WHERE task_id = ? AND images != '[]' AND images IS NOT NULL").bind(taskId).run();
+      } catch (e) {}
+    }
+    try {
+      db.prepare("UPDATE task_comments SET images = '[]' WHERE task_id = ? AND images != '[]' AND images IS NOT NULL").run(taskId);
+    } catch (e) {}
+  }
+
+  const expiresAt = completedTime ? new Date(completedTime + SIX_DAYS_MS).toISOString() : null;
+  const daysRemaining = completedTime ? Math.max(1, Math.ceil(((completedTime + SIX_DAYS_MS) - Date.now()) / (1000 * 60 * 60 * 24))) : null;
+
+  return (comments || []).map((row) => {
+    const doc = formatDoc(row);
+    let rawImages = [];
+    try {
+      rawImages = typeof doc.images === 'string' ? JSON.parse(doc.images) : (Array.isArray(doc.images) ? doc.images : []);
+    } catch (e) {
+      rawImages = [];
+    }
+
+    doc.images = isExpired ? [] : rawImages;
+    doc.imagesExpired = isExpired;
+    doc.imagesExpiresAt = expiresAt;
+    doc.imagesDaysRemaining = daysRemaining;
+    doc.imagesStatus = isDone
+      ? (isExpired
+          ? 'Expired (6 days post-completion)'
+          : `Expires in ${daysRemaining} day${daysRemaining === 1 ? '' : 's'} (ticket completed)`)
+      : 'Active (expires 6 days after ticket is completed)';
+    return doc;
+  });
+}
+
 const app = new Hono()
   .get('/', sessionMiddleware, async (ctx) => {
     const user = ctx.get('user');
@@ -392,16 +447,20 @@ const app = new Hono()
         }
       }
 
+      const completedClause = newStatus === 'DONE'
+        ? ', completed_at = CURRENT_TIMESTAMP'
+        : (existingTask.status === 'DONE' && newStatus !== 'DONE' ? ', completed_at = NULL' : '');
+
       if (newStatus === 'BACKLOG') {
         await d1Run(`
           UPDATE tasks 
-          SET status = ?, position = ?, sprint_id = NULL, updated_at = CURRENT_TIMESTAMP
+          SET status = ?, position = ?, sprint_id = NULL, updated_at = CURRENT_TIMESTAMP ${completedClause}
           WHERE id = ?
         `, [newStatus, newPosition, taskId], d1);
       } else {
         await d1Run(`
           UPDATE tasks 
-          SET status = ?, position = ?, updated_at = CURRENT_TIMESTAMP
+          SET status = ?, position = ?, updated_at = CURRENT_TIMESTAMP ${completedClause}
           WHERE id = ?
         `, [newStatus, newPosition, taskId], d1);
       }
@@ -586,7 +645,7 @@ const app = new Hono()
         comments = [];
       }
     }
-    task.comments = (comments || []).map(formatDoc);
+    task.comments = await processCommentsWithExpiration(comments || [], taskId, d1);
 
     await attachAssigneesToTask(task, d1);
 
@@ -865,6 +924,11 @@ const app = new Hono()
       if (status === 'BACKLOG' && sprintId === undefined) {
         updates.push('sprint_id = NULL');
       }
+      if (status === 'DONE') {
+        updates.push('completed_at = CURRENT_TIMESTAMP');
+      } else if (existingTask.status === 'DONE' && status !== 'DONE') {
+        updates.push('completed_at = NULL');
+      }
     }
     if (description !== undefined) { updates.push('description = ?'); params.push(description); }
     if (projectId !== undefined) { updates.push('project_id = ?'); params.push(projectId); }
@@ -997,57 +1061,80 @@ const app = new Hono()
         comments = [];
       }
     }
-    return ctx.json({ data: (comments || []).map(formatDoc) });
+    const processed = await processCommentsWithExpiration(comments || [], taskId, d1);
+    return ctx.json({ data: processed });
   })
   .post('/:taskId/comments', sessionMiddleware, async (ctx) => {
     const user = ctx.get('user');
     const { taskId } = ctx.req.param();
-    const { content } = await ctx.req.json();
+    const body = await ctx.req.json();
+    const content = (body.content || '').trim();
+    const images = Array.isArray(body.images) ? body.images : [];
     const d1 = ctx.env?.DB || getD1Database();
 
-    if (!content) return ctx.json({ error: 'Comment content is required.' }, 400);
+    if (!content && images.length === 0) {
+      return ctx.json({ error: 'Comment content or image is required.' }, 400);
+    }
 
     const id = randomUUID();
     const now = new Date().toISOString();
+    const imagesJson = JSON.stringify(images);
+
     if (d1) {
       try {
         await d1.prepare(`
-          INSERT INTO task_comments (id, task_id, user_id, content, created_at, updated_at)
-          VALUES (?, ?, ?, ?, ?, ?)
-        `).bind(id, taskId, user.$id, content, now, now).run();
+          INSERT INTO task_comments (id, task_id, user_id, content, images, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?)
+        `).bind(id, taskId, user.$id, content, imagesJson, now, now).run();
       } catch (e) {
         try {
+          await d1.prepare("ALTER TABLE task_comments ADD COLUMN images TEXT DEFAULT '[]'").run();
           await d1.prepare(`
-            INSERT INTO task_comments (id, task_id, user_id, content)
-            VALUES (?, ?, ?, ?)
-          `).bind(id, taskId, user.$id, content).run();
-        } catch (e2) {}
+            INSERT INTO task_comments (id, task_id, user_id, content, images, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+          `).bind(id, taskId, user.$id, content, imagesJson, now, now).run();
+        } catch (e2) {
+          try {
+            await d1.prepare(`
+              INSERT INTO task_comments (id, task_id, user_id, content, created_at, updated_at)
+              VALUES (?, ?, ?, ?, ?, ?)
+            `).bind(id, taskId, user.$id, content, now, now).run();
+          } catch (e3) {}
+        }
       }
     }
 
     try {
       db.prepare(`
-        INSERT INTO task_comments (id, task_id, user_id, content, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?)
-      `).run(id, taskId, user.$id, content, now, now);
+        INSERT INTO task_comments (id, task_id, user_id, content, images, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `).run(id, taskId, user.$id, content, imagesJson, now, now);
     } catch (e) {
       try {
+        db.prepare("ALTER TABLE task_comments ADD COLUMN images TEXT DEFAULT '[]'").run();
         db.prepare(`
-          INSERT INTO task_comments (id, task_id, user_id, content)
-          VALUES (?, ?, ?, ?)
-        `).run(id, taskId, user.$id, content);
-      } catch (e2) {}
+          INSERT INTO task_comments (id, task_id, user_id, content, images, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?)
+        `).run(id, taskId, user.$id, content, imagesJson, now, now);
+      } catch (e2) {
+        try {
+          db.prepare(`
+            INSERT INTO task_comments (id, task_id, user_id, content, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+          `).run(id, taskId, user.$id, content, now, now);
+        } catch (e3) {}
+      }
     }
 
     let task = null;
     if (d1) {
       try {
-        task = await d1.prepare('SELECT key, workspace_id, reporter_id, assignee_id FROM tasks WHERE id = ?').bind(taskId).first();
+        task = await d1.prepare('SELECT key, workspace_id, reporter_id, assignee_id, status, completed_at FROM tasks WHERE id = ?').bind(taskId).first();
       } catch (e) {}
     }
     if (!task) {
       try {
-        task = db.prepare('SELECT key, workspace_id, reporter_id, assignee_id FROM tasks WHERE id = ?').get(taskId);
+        task = db.prepare('SELECT key, workspace_id, reporter_id, assignee_id, status, completed_at FROM tasks WHERE id = ?').get(taskId);
       } catch (e) {}
     }
     if (task && task.reporter_id && task.reporter_id !== user.$id) {
@@ -1055,11 +1142,17 @@ const app = new Hono()
         workspaceId: task.workspace_id,
         userId: task.reporter_id,
         title: `Comment on ${task.key || 'Issue'}`,
-        message: `${user.name} commented: "${content.substring(0, 60)}..."`,
+        message: `${user.name} commented: "${(content || 'Attached an image').substring(0, 60)}..."`,
         link: `/workspaces/${task.workspace_id}/tasks/${taskId}`,
         type: 'MENTION',
       });
     }
+
+    const isDone = task?.status === 'DONE';
+    const completedTime = isDone && task?.completed_at ? new Date(task.completed_at).getTime() : null;
+    const SIX_DAYS_MS = 6 * 24 * 60 * 60 * 1000;
+    const expiresAt = completedTime ? new Date(completedTime + SIX_DAYS_MS).toISOString() : null;
+    const daysRemaining = completedTime ? Math.max(1, Math.ceil(((completedTime + SIX_DAYS_MS) - Date.now()) / (1000 * 60 * 60 * 24))) : null;
 
     return ctx.json({
       success: true,
@@ -1073,6 +1166,13 @@ const app = new Hono()
         user_email: user.email,
         user_avatar: user.avatar_url,
         content,
+        images,
+        imagesExpired: false,
+        imagesExpiresAt: expiresAt,
+        imagesDaysRemaining: daysRemaining,
+        imagesStatus: isDone
+          ? `Expires in ${daysRemaining} day${daysRemaining === 1 ? '' : 's'} (ticket completed)`
+          : 'Active (expires 6 days after ticket is completed)',
         created_at: now,
         updated_at: now,
       },
@@ -1323,9 +1423,18 @@ const app = new Hono()
     if (!task) return ctx.json({ error: 'Issue not found.' }, 404);
 
     const fromStatus = task.status;
+    const completedClause = toStatus === 'DONE'
+      ? ', completed_at = CURRENT_TIMESTAMP'
+      : (fromStatus === 'DONE' && toStatus !== 'DONE' ? ', completed_at = NULL' : '');
 
     // Record transition in tasks table
-    db.prepare('UPDATE tasks SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(toStatus, taskId);
+    const d1 = ctx.env?.DB || getD1Database();
+    if (d1) {
+      try {
+        await d1.prepare(`UPDATE tasks SET status = ?, updated_at = CURRENT_TIMESTAMP ${completedClause} WHERE id = ?`).bind(toStatus, taskId).run();
+      } catch (e) {}
+    }
+    db.prepare(`UPDATE tasks SET status = ?, updated_at = CURRENT_TIMESTAMP ${completedClause} WHERE id = ?`).run(toStatus, taskId);
 
     // Record in task_history
     db.prepare(`
@@ -1365,40 +1474,110 @@ const app = new Hono()
   })
   .get('/:taskId/attachments', sessionMiddleware, async (ctx) => {
     const { taskId } = ctx.req.param();
-    const attachments = db.prepare(`
-      SELECT a.*, u.name as uploader_name, u.email as uploader_email
-      FROM task_attachments a
-      JOIN users u ON a.user_id = u.id
-      WHERE a.task_id = ?
-      ORDER BY a.created_at DESC
-    `).all(taskId);
-    return ctx.json({ data: attachments.map(formatDoc) });
+    const d1 = ctx.env?.DB || getD1Database();
+
+    // First prune expired attachments
+    const now = new Date().toISOString();
+    if (d1) {
+      try {
+        await d1.prepare('DELETE FROM task_attachments WHERE task_id = ? AND expires_at IS NOT NULL AND expires_at < ?').bind(taskId, now).run();
+      } catch (e) {}
+    }
+    try {
+      db.prepare('DELETE FROM task_attachments WHERE task_id = ? AND expires_at IS NOT NULL AND expires_at < ?').run(taskId, now);
+    } catch (e) {}
+
+    let attachments = null;
+    if (d1) {
+      try {
+        const res = await d1.prepare(`
+          SELECT a.id, a.task_id, a.user_id, a.file_name, a.file_url, a.file_size, a.file_type,
+                 a.image_data, a.expires_at, a.created_at,
+                 u.name as uploader_name, u.email as uploader_email, u.avatar_url as uploader_avatar
+          FROM task_attachments a
+          LEFT JOIN users u ON a.user_id = u.id
+          WHERE a.task_id = ?
+          ORDER BY a.created_at DESC
+        `).bind(taskId).all();
+        attachments = res.results || [];
+      } catch (e) {}
+    }
+    if (!attachments) {
+      try {
+        attachments = db.prepare(`
+          SELECT a.*, u.name as uploader_name, u.email as uploader_email
+          FROM task_attachments a
+          LEFT JOIN users u ON a.user_id = u.id
+          WHERE a.task_id = ?
+          ORDER BY a.created_at DESC
+        `).all(taskId);
+      } catch (e) { attachments = []; }
+    }
+
+    return ctx.json({ data: (attachments || []).map(formatDoc) });
   })
   .post('/:taskId/attachments', sessionMiddleware, async (ctx) => {
     const user = ctx.get('user');
     const { taskId } = ctx.req.param();
-    const { fileName, fileUrl, fileSize = 0, fileType = 'application/octet-stream' } = await ctx.req.json();
+    const d1 = ctx.env?.DB || getD1Database();
+    const {
+      fileName,
+      fileUrl = '',
+      fileSize = 0,
+      fileType = 'image/jpeg',
+      imageData = null, // base64 data URI e.g. "data:image/png;base64,..."
+    } = await ctx.req.json();
 
-    if (!fileName || !fileUrl) return ctx.json({ error: 'fileName and fileUrl are required.' }, 400);
+    if (!fileName) return ctx.json({ error: 'fileName is required.' }, 400);
+    if (!imageData && !fileUrl) return ctx.json({ error: 'imageData or fileUrl is required.' }, 400);
+
+    // 6-day expiry from now
+    const expiresAt = new Date(Date.now() + 6 * 24 * 60 * 60 * 1000).toISOString();
 
     const attachmentId = randomUUID();
-    db.prepare(`
-      INSERT INTO task_attachments (id, task_id, user_id, file_name, file_url, file_size, file_type)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-    `).run(attachmentId, taskId, user.$id, fileName, fileUrl, fileSize, fileType);
 
-    db.prepare(`
-      INSERT INTO task_history (id, task_id, user_id, field_name, old_value, new_value)
-      VALUES (?, ?, ?, 'attachment', null, ?)
-    `).run(randomUUID(), taskId, user.$id, fileName);
+    if (d1) {
+      try {
+        await d1.prepare(`
+          INSERT INTO task_attachments (id, task_id, user_id, file_name, file_url, file_size, file_type, image_data, expires_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).bind(attachmentId, taskId, user.$id, fileName, fileUrl || '', fileSize, fileType, imageData || null, expiresAt).run();
+      } catch (e) {
+        console.error('[D1_ATTACHMENT_INSERT_ERROR]:', e);
+      }
+    }
+    try {
+      db.prepare(`
+        INSERT INTO task_attachments (id, task_id, user_id, file_name, file_url, file_size, file_type, image_data, expires_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(attachmentId, taskId, user.$id, fileName, fileUrl || '', fileSize, fileType, imageData || null, expiresAt);
+    } catch (e) {}
 
-    return ctx.json({ success: true, id: attachmentId, fileName, fileUrl });
+    try {
+      db.prepare(`
+        INSERT INTO task_history (id, task_id, user_id, field_name, old_value, new_value)
+        VALUES (?, ?, ?, 'attachment', null, ?)
+      `).run(randomUUID(), taskId, user.$id, fileName);
+    } catch (e) {}
+
+    return ctx.json({ success: true, id: attachmentId, fileName, fileUrl, expiresAt });
   })
   .delete('/:taskId/attachments/:attachmentId', sessionMiddleware, async (ctx) => {
-    const { attachmentId } = ctx.req.param();
-    db.prepare('DELETE FROM task_attachments WHERE id = ?').run(attachmentId);
+    const { taskId, attachmentId } = ctx.req.param();
+    const d1 = ctx.env?.DB || getD1Database();
+
+    if (d1) {
+      try {
+        await d1.prepare('DELETE FROM task_attachments WHERE id = ? AND task_id = ?').bind(attachmentId, taskId).run();
+      } catch (e) {}
+    }
+    try {
+      db.prepare('DELETE FROM task_attachments WHERE id = ? AND task_id = ?').run(attachmentId, taskId);
+    } catch (e) {}
+
     return ctx.json({ success: true });
   })
+
   .get('/:taskId/links', sessionMiddleware, async (ctx) => {
     const { taskId } = ctx.req.param();
     const links = db.prepare(`
