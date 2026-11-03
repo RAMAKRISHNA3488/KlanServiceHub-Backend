@@ -1,6 +1,7 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "klanservicehub-backend",
+  "account_id": "811c2809c4e8408beb800eb2ef2d6bbe",
   "main": "src/index.js",
   "compatibility_date": "2024-10-01",
   "compatibility_flags": [
