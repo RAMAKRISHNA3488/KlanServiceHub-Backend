@@ -194,6 +194,154 @@ async function processCommentsWithExpiration(comments, taskId, d1) {
   });
 }
 
+async function attachLikesAndFavoritesToTasks(tasks, userId, d1) {
+  if (!tasks || tasks.length === 0) return tasks;
+  const taskIds = tasks.map((t) => t.$id || t.id).filter(Boolean);
+  if (taskIds.length === 0) return tasks;
+
+  const placeholders = taskIds.map(() => '?').join(',');
+  const dbInstance = d1 || getD1Database();
+
+  const likeCountMap = {};
+  const userLikesSet = new Set();
+  const userFavoritesSet = new Set();
+
+  if (dbInstance) {
+    try {
+      const counts = await dbInstance.prepare(`
+        SELECT task_id, COUNT(*) as count FROM task_likes WHERE task_id IN (${placeholders}) GROUP BY task_id
+      `).bind(...taskIds).all();
+      for (const row of (counts?.results || [])) {
+        likeCountMap[row.task_id] = row.count || 0;
+      }
+
+      if (userId) {
+        const uLikes = await dbInstance.prepare(`
+          SELECT task_id FROM task_likes WHERE task_id IN (${placeholders}) AND user_id = ?
+        `).bind(...taskIds, userId).all();
+        for (const row of (uLikes?.results || [])) {
+          userLikesSet.add(row.task_id);
+        }
+
+        const uFavs = await dbInstance.prepare(`
+          SELECT entity_id FROM user_favorites WHERE entity_type = 'TASK' AND entity_id IN (${placeholders}) AND user_id = ?
+        `).bind(...taskIds, userId).all();
+        for (const row of (uFavs?.results || [])) {
+          userFavoritesSet.add(row.entity_id);
+        }
+      }
+    } catch (e) {}
+  }
+
+  if (Object.keys(likeCountMap).length === 0 && (!dbInstance || !dbInstance.prepare)) {
+    try {
+      const counts = db.prepare(`
+        SELECT task_id, COUNT(*) as count FROM task_likes WHERE task_id IN (${placeholders}) GROUP BY task_id
+      `).all(...taskIds);
+      for (const row of (counts || [])) {
+        likeCountMap[row.task_id] = row.count || 0;
+      }
+      if (userId) {
+        const uLikes = db.prepare(`
+          SELECT task_id FROM task_likes WHERE task_id IN (${placeholders}) AND user_id = ?
+        `).all(...taskIds, userId);
+        for (const row of (uLikes || [])) {
+          userLikesSet.add(row.task_id);
+        }
+        const uFavs = db.prepare(`
+          SELECT entity_id FROM user_favorites WHERE entity_type = 'TASK' AND entity_id IN (${placeholders}) AND user_id = ?
+        `).all(...taskIds, userId);
+        for (const row of (uFavs || [])) {
+          userFavoritesSet.add(row.entity_id);
+        }
+      }
+    } catch (e) {}
+  }
+
+  for (const task of tasks) {
+    const tid = task.$id || task.id;
+    task.likesCount = likeCountMap[tid] || 0;
+    task.hasLiked = userLikesSet.has(tid);
+    task.isFavorite = userFavoritesSet.has(tid);
+  }
+
+  return tasks;
+}
+
+async function attachLikesAndFavoritesToTask(task, userId, d1) {
+  if (!task) return task;
+  const taskId = task.$id || task.id;
+  const dbInstance = d1 || getD1Database();
+
+  let likesCount = 0;
+  let hasLiked = false;
+  let isFavorite = false;
+  let likers = [];
+
+  if (dbInstance) {
+    try {
+      const countRes = await dbInstance.prepare('SELECT COUNT(*) as count FROM task_likes WHERE task_id = ?').bind(taskId).first();
+      likesCount = countRes?.count || 0;
+
+      if (userId) {
+        const userLikeRes = await dbInstance.prepare('SELECT id FROM task_likes WHERE task_id = ? AND user_id = ?').bind(taskId, userId).first();
+        hasLiked = !!userLikeRes;
+
+        const favRes = await dbInstance.prepare('SELECT id FROM user_favorites WHERE entity_type = "TASK" AND entity_id = ? AND user_id = ?').bind(taskId, userId).first();
+        isFavorite = !!favRes;
+      }
+
+      const likersRes = await dbInstance.prepare(`
+        SELECT u.id, u.name, u.avatar_url
+        FROM task_likes tl
+        JOIN users u ON tl.user_id = u.id
+        WHERE tl.task_id = ?
+        LIMIT 5
+      `).bind(taskId).all();
+      likers = (likersRes?.results || []).map((u) => ({
+        id: u.id,
+        name: u.name,
+        avatarUrl: u.avatar_url,
+      }));
+    } catch (e) {}
+  }
+
+  if (likesCount === 0 && (!dbInstance || !dbInstance.prepare)) {
+    try {
+      const countRes = db.prepare('SELECT COUNT(*) as count FROM task_likes WHERE task_id = ?').get(taskId);
+      likesCount = countRes?.count || 0;
+
+      if (userId) {
+        const userLikeRes = db.prepare('SELECT id FROM task_likes WHERE task_id = ? AND user_id = ?').get(taskId, userId);
+        hasLiked = !!userLikeRes;
+
+        const favRes = db.prepare('SELECT id FROM user_favorites WHERE entity_type = "TASK" AND entity_id = ? AND user_id = ?').get(taskId, userId);
+        isFavorite = !!favRes;
+      }
+
+      const likersRows = db.prepare(`
+        SELECT u.id, u.name, u.avatar_url
+        FROM task_likes tl
+        JOIN users u ON tl.user_id = u.id
+        WHERE tl.task_id = ?
+        LIMIT 5
+      `).all(taskId);
+      likers = (likersRows || []).map((u) => ({
+        id: u.id,
+        name: u.name,
+        avatarUrl: u.avatar_url,
+      }));
+    } catch (e) {}
+  }
+
+  task.likesCount = likesCount;
+  task.hasLiked = hasLiked;
+  task.isFavorite = isFavorite;
+  task.likers = likers;
+
+  return task;
+}
+
 const app = new Hono()
   .get('/', sessionMiddleware, async (ctx) => {
     const user = ctx.get('user');
@@ -319,6 +467,7 @@ const app = new Hono()
     });
 
     await attachAssigneesToTasks(documents, d1);
+    await attachLikesAndFavoritesToTasks(documents, user?.$id, d1);
 
     return ctx.json({
       data: {
@@ -383,6 +532,10 @@ const app = new Hono()
     const assignedDocs = await attachAssigneesToTasks(assigned.map(formatDoc), d1);
     const reportedDocs = await attachAssigneesToTasks(reported.map(formatDoc), d1);
     const watchedDocs = await attachAssigneesToTasks(watched.map(formatDoc), d1);
+
+    await attachLikesAndFavoritesToTasks(assignedDocs, user?.$id, d1);
+    await attachLikesAndFavoritesToTasks(reportedDocs, user?.$id, d1);
+    await attachLikesAndFavoritesToTasks(watchedDocs, user?.$id, d1);
 
     return ctx.json({
       data: {
@@ -648,6 +801,7 @@ const app = new Hono()
     task.comments = await processCommentsWithExpiration(comments || [], taskId, d1);
 
     await attachAssigneesToTask(task, d1);
+    await attachLikesAndFavoritesToTask(task, currentUser?.$id, d1);
 
     return ctx.json({ data: task });
   })
@@ -1619,8 +1773,128 @@ const app = new Hono()
   .delete('/:taskId/watch', sessionMiddleware, async (ctx) => {
     const user = ctx.get('user');
     const { taskId } = ctx.req.param();
-    db.prepare('DELETE FROM task_watchers WHERE task_id = ? AND user_id = ?').run(taskId, user.$id);
+    const d1 = ctx.env?.DB || getD1Database();
+    if (d1) {
+      try {
+        await d1.prepare('DELETE FROM task_watchers WHERE task_id = ? AND user_id = ?').bind(taskId, user.$id).run();
+      } catch (e) {}
+    }
+    try {
+      db.prepare('DELETE FROM task_watchers WHERE task_id = ? AND user_id = ?').run(taskId, user.$id);
+    } catch (e) {}
     return ctx.json({ success: true, watching: false });
+  })
+  .post('/:taskId/toggle-like', sessionMiddleware, async (ctx) => {
+    const user = ctx.get('user');
+    const { taskId } = ctx.req.param();
+    const d1 = ctx.env?.DB || getD1Database();
+
+    let existing = null;
+    if (d1) {
+      try {
+        existing = await d1.prepare('SELECT id FROM task_likes WHERE task_id = ? AND user_id = ?').bind(taskId, user.$id).first();
+      } catch (e) {}
+    }
+    if (!existing) {
+      try {
+        existing = db.prepare('SELECT id FROM task_likes WHERE task_id = ? AND user_id = ?').get(taskId, user.$id);
+      } catch (e) {}
+    }
+
+    let liked = false;
+    if (existing) {
+      if (d1) {
+        try {
+          await d1.prepare('DELETE FROM task_likes WHERE task_id = ? AND user_id = ?').bind(taskId, user.$id).run();
+        } catch (e) {}
+      }
+      try {
+        db.prepare('DELETE FROM task_likes WHERE task_id = ? AND user_id = ?').run(taskId, user.$id);
+      } catch (e) {}
+      liked = false;
+    } else {
+      const id = randomUUID();
+      if (d1) {
+        try {
+          await d1.prepare('INSERT INTO task_likes (id, task_id, user_id) VALUES (?, ?, ?)').bind(id, taskId, user.$id).run();
+        } catch (e) {}
+      }
+      try {
+        db.prepare('INSERT INTO task_likes (id, task_id, user_id) VALUES (?, ?, ?)').run(id, taskId, user.$id);
+      } catch (e) {}
+      liked = true;
+    }
+
+    let countRow = null;
+    if (d1) {
+      try {
+        countRow = await d1.prepare('SELECT COUNT(*) as count FROM task_likes WHERE task_id = ?').bind(taskId).first();
+      } catch (e) {}
+    }
+    if (!countRow) {
+      try {
+        countRow = db.prepare('SELECT COUNT(*) as count FROM task_likes WHERE task_id = ?').get(taskId);
+      } catch (e) {}
+    }
+    const likesCount = countRow?.count || 0;
+
+    return ctx.json({ success: true, liked, likesCount });
+  })
+  .post('/:taskId/toggle-favorite', sessionMiddleware, async (ctx) => {
+    const user = ctx.get('user');
+    const { taskId } = ctx.req.param();
+    const d1 = ctx.env?.DB || getD1Database();
+
+    let taskRow = null;
+    if (d1) {
+      try {
+        taskRow = await d1.prepare('SELECT workspace_id FROM tasks WHERE id = ?').bind(taskId).first();
+      } catch (e) {}
+    }
+    if (!taskRow) {
+      try {
+        taskRow = db.prepare('SELECT workspace_id FROM tasks WHERE id = ?').get(taskId);
+      } catch (e) {}
+    }
+    const workspaceId = taskRow?.workspace_id || '';
+
+    let existing = null;
+    if (d1) {
+      try {
+        existing = await d1.prepare('SELECT id FROM user_favorites WHERE user_id = ? AND entity_type = "TASK" AND entity_id = ?').bind(user.$id, taskId).first();
+      } catch (e) {}
+    }
+    if (!existing) {
+      try {
+        existing = db.prepare('SELECT id FROM user_favorites WHERE user_id = ? AND entity_type = "TASK" AND entity_id = ?').get(user.$id, taskId);
+      } catch (e) {}
+    }
+
+    let isFavorite = false;
+    if (existing) {
+      if (d1) {
+        try {
+          await d1.prepare('DELETE FROM user_favorites WHERE user_id = ? AND entity_type = "TASK" AND entity_id = ?').bind(user.$id, taskId).run();
+        } catch (e) {}
+      }
+      try {
+        db.prepare('DELETE FROM user_favorites WHERE user_id = ? AND entity_type = "TASK" AND entity_id = ?').run(user.$id, taskId);
+      } catch (e) {}
+      isFavorite = false;
+    } else {
+      const id = randomUUID();
+      if (d1) {
+        try {
+          await d1.prepare('INSERT INTO user_favorites (id, user_id, workspace_id, entity_type, entity_id) VALUES (?, ?, ?, "TASK", ?)').bind(id, user.$id, workspaceId, taskId).run();
+        } catch (e) {}
+      }
+      try {
+        db.prepare('INSERT INTO user_favorites (id, user_id, workspace_id, entity_type, entity_id) VALUES (?, ?, ?, "TASK", ?)').run(id, user.$id, workspaceId, taskId);
+      } catch (e) {}
+      isFavorite = true;
+    }
+
+    return ctx.json({ success: true, isFavorite });
   });
 
 export default app;

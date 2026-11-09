@@ -514,6 +514,17 @@ const initSchema = () => {
       PRIMARY KEY (task_id, user_id)
     );
 
+    CREATE TABLE IF NOT EXISTS task_likes (
+      id TEXT PRIMARY KEY,
+      task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(task_id, user_id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_task_likes_task ON task_likes(task_id);
+    CREATE INDEX IF NOT EXISTS idx_task_likes_user ON task_likes(user_id);
+
     CREATE TABLE IF NOT EXISTS task_history (
       id TEXT PRIMARY KEY,
       task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
