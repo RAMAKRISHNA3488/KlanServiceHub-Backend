@@ -410,7 +410,9 @@ const initSchema = () => {
       name TEXT NOT NULL,
       category TEXT NOT NULL DEFAULT 'IN_PROGRESS', -- TODO, IN_PROGRESS, DONE
       color TEXT DEFAULT '#3B82F6',
-      position INTEGER NOT NULL DEFAULT 0
+      position INTEGER NOT NULL DEFAULT 0,
+      max_tasks INTEGER DEFAULT 5,
+      overload_color TEXT DEFAULT '#EF4444'
     );
 
     CREATE TABLE IF NOT EXISTS workflow_transitions (
@@ -1972,6 +1974,8 @@ export function formatDoc(row) {
   if (row.story_points !== undefined) doc.storyPoints = row.story_points;
   if (row.issue_type !== undefined) doc.issueType = row.issue_type;
   if (row.completed_at !== undefined) doc.completedAt = row.completed_at;
+  if (row.max_tasks !== undefined) doc.maxTasks = row.max_tasks;
+  if (row.overload_color !== undefined) doc.overloadColor = row.overload_color;
   if (row.images !== undefined) {
     try {
       doc.images = typeof row.images === 'string' ? JSON.parse(row.images) : (row.images || []);

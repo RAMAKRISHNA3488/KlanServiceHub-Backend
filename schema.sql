@@ -254,7 +254,9 @@ CREATE TABLE IF NOT EXISTS workflow_statuses (
   name TEXT NOT NULL,
   category TEXT NOT NULL DEFAULT 'IN_PROGRESS', -- TODO, IN_PROGRESS, DONE
   color TEXT DEFAULT '#3B82F6',
-  position INTEGER NOT NULL DEFAULT 0
+  position INTEGER NOT NULL DEFAULT 0,
+  max_tasks INTEGER DEFAULT 5,
+  overload_color TEXT DEFAULT '#EF4444'
 );
 
 CREATE TABLE IF NOT EXISTS workflow_transitions (

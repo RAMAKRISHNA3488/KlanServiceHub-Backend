@@ -12,19 +12,19 @@ const seedDefaultWorkflow = async (workspaceId, d1) => {
   `, [workflowId, workspaceId, 'Standard Software Development Workflow', 'Default enterprise workflow for software development lifecycle'], d1);
 
   const statuses = [
-    { name: 'BACKLOG', category: 'TODO', color: '#94A3B8', position: 0 },
-    { name: 'TODO', category: 'TODO', color: '#3B82F6', position: 1 },
-    { name: 'IN_PROGRESS', category: 'IN_PROGRESS', color: '#F59E0B', position: 2 },
-    { name: 'IN_REVIEW', category: 'IN_PROGRESS', color: '#8B5CF6', position: 3 },
-    { name: 'TESTING', category: 'IN_PROGRESS', color: '#06B6D4', position: 4 },
-    { name: 'DONE', category: 'DONE', color: '#10B981', position: 5 },
+    { name: 'BACKLOG', category: 'TODO', color: '#94A3B8', position: 0, maxTasks: 5, overloadColor: '#EF4444' },
+    { name: 'TODO', category: 'TODO', color: '#3B82F6', position: 1, maxTasks: 5, overloadColor: '#EF4444' },
+    { name: 'IN_PROGRESS', category: 'IN_PROGRESS', color: '#F59E0B', position: 2, maxTasks: 5, overloadColor: '#EF4444' },
+    { name: 'IN_REVIEW', category: 'IN_PROGRESS', color: '#8B5CF6', position: 3, maxTasks: 5, overloadColor: '#EF4444' },
+    { name: 'TESTING', category: 'IN_PROGRESS', color: '#06B6D4', position: 4, maxTasks: 5, overloadColor: '#EF4444' },
+    { name: 'DONE', category: 'DONE', color: '#10B981', position: 5, maxTasks: 0, overloadColor: '#EF4444' },
   ];
 
   for (const s of statuses) {
     await d1Run(`
-      INSERT INTO workflow_statuses (id, workflow_id, name, category, color, position)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `, [randomUUID(), workflowId, s.name, s.category, s.color, s.position], d1);
+      INSERT INTO workflow_statuses (id, workflow_id, name, category, color, position, max_tasks, overload_color)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `, [randomUUID(), workflowId, s.name, s.category, s.color, s.position, s.maxTasks ?? 5, s.overloadColor || '#EF4444'], d1);
   }
 
   return workflowId;
@@ -81,9 +81,9 @@ const app = new Hono()
     let pos = 0;
     for (const s of statuses) {
       await d1Run(`
-        INSERT INTO workflow_statuses (id, workflow_id, name, category, color, position)
-        VALUES (?, ?, ?, ?, ?, ?)
-      `, [randomUUID(), workflowId, s.name, s.category || 'IN_PROGRESS', s.color || '#3B82F6', pos++], d1);
+        INSERT INTO workflow_statuses (id, workflow_id, name, category, color, position, max_tasks, overload_color)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `, [randomUUID(), workflowId, s.name, s.category || 'IN_PROGRESS', s.color || '#3B82F6', pos++, s.maxTasks ?? s.max_tasks ?? 5, s.overloadColor || s.overload_color || '#EF4444'], d1);
     }
 
     try {
@@ -144,7 +144,7 @@ const app = new Hono()
   .post('/:workspaceId/:workflowId/statuses', sessionMiddleware, async (ctx) => {
     const actor = ctx.get('user');
     const { workspaceId, workflowId } = ctx.req.param();
-    const { name, category = 'IN_PROGRESS', color = '#3B82F6' } = await ctx.req.json();
+    const { name, category = 'IN_PROGRESS', color = '#3B82F6', maxTasks = 5, max_tasks = 5, overloadColor = '#EF4444', overload_color = '#EF4444' } = await ctx.req.json();
     const d1 = ctx.env?.DB || getD1Database();
 
     const allowed = await hasPermission({ workspaceId, userId: actor.$id, permissionCode: 'WORKFLOW_MANAGE' }, d1);
@@ -155,18 +155,20 @@ const app = new Hono()
     const maxRow = await d1First('SELECT MAX(position) as m FROM workflow_statuses WHERE workflow_id = ?', [workflowId], d1);
     const maxPos = maxRow?.m || 0;
     const statusId = randomUUID();
+    const resolvedLimit = category === 'DONE' ? 0 : Number(maxTasks !== undefined ? maxTasks : max_tasks);
+    const resolvedOverloadColor = overloadColor || overload_color || '#EF4444';
 
     await d1Run(`
-      INSERT INTO workflow_statuses (id, workflow_id, name, category, color, position)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `, [statusId, workflowId, name.toUpperCase().replace(/\s+/g, '_'), category, color, maxPos + 1], d1);
+      INSERT INTO workflow_statuses (id, workflow_id, name, category, color, position, max_tasks, overload_color)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `, [statusId, workflowId, name.toUpperCase().replace(/\s+/g, '_'), category, color, maxPos + 1, resolvedLimit, resolvedOverloadColor], d1);
 
     return ctx.json({ success: true, statusId });
   })
   .patch('/:workspaceId/:workflowId/statuses/:statusId', sessionMiddleware, async (ctx) => {
     const actor = ctx.get('user');
     const { workspaceId, workflowId, statusId } = ctx.req.param();
-    const { name, category, color, position } = await ctx.req.json();
+    const { name, category, color, position, maxTasks, max_tasks, overloadColor, overload_color } = await ctx.req.json();
     const d1 = ctx.env?.DB || getD1Database();
 
     const allowed = await hasPermission({ workspaceId, userId: actor.$id, permissionCode: 'WORKFLOW_MANAGE' }, d1);
@@ -191,6 +193,15 @@ const app = new Hono()
     if (position !== undefined) {
       updates.push('position = ?');
       params.push(position);
+    }
+    if (maxTasks !== undefined || max_tasks !== undefined) {
+      const val = maxTasks !== undefined ? maxTasks : max_tasks;
+      updates.push('max_tasks = ?');
+      params.push(Number(val));
+    }
+    if (overloadColor !== undefined || overload_color !== undefined) {
+      updates.push('overload_color = ?');
+      params.push(overloadColor || overload_color);
     }
 
     if (updates.length > 0) {
