@@ -37,7 +37,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   name TEXT NOT NULL,
   description TEXT,
   priority TEXT NOT NULL DEFAULT 'MEDIUM', -- LOWEST, LOW, MEDIUM, HIGH, HIGHEST, CRITICAL
-  status TEXT NOT NULL DEFAULT 'TODO', -- BACKLOG, TODO, IN_PROGRESS, IN_REVIEW, DONE
+  status TEXT NOT NULL DEFAULT 'TODO',     -- BACKLOG, TODO, IN_PROGRESS, IN_REVIEW, DONE
   position INTEGER NOT NULL DEFAULT 1000,
   labels TEXT DEFAULT '[]',
   story_points REAL DEFAULT 1,
@@ -45,7 +45,8 @@ CREATE TABLE IF NOT EXISTS tasks (
   parent_task_id TEXT,
   original_estimate_hours REAL DEFAULT 0,
   logged_hours REAL DEFAULT 0,
-  due_date DATETIME NOT NULL,
+  due_date DATETIME,
+  completed_at DATETIME,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
@@ -54,8 +55,26 @@ CREATE INDEX IF NOT EXISTS idx_tasks_ws_proj ON tasks(workspace_id, project_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(workspace_id, status);
 CREATE INDEX IF NOT EXISTS idx_tasks_assignee ON tasks(assignee_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_sprint ON tasks(sprint_id);
+CREATE INDEX IF NOT EXISTS idx_tasks_created ON tasks(workspace_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_tasks_completed_at ON tasks(completed_at);
 
--- 4. MULTI-ASSIGNEES JUNCTION TABLE
+-- =======================================================================
+-- 2.1 TASK LIKES / REACTIONS TABLE
+-- =======================================================================
+CREATE TABLE IF NOT EXISTS task_likes (
+  id TEXT PRIMARY KEY,
+  task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(task_id, user_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_task_likes_task ON task_likes(task_id);
+CREATE INDEX IF NOT EXISTS idx_task_likes_user ON task_likes(user_id);
+
+-- =======================================================================
+-- 3. MULTI-ASSIGNEES JUNCTION TABLE
+-- =======================================================================
 CREATE TABLE IF NOT EXISTS task_assignees (
   id TEXT PRIMARY KEY,
   task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
@@ -66,7 +85,25 @@ CREATE TABLE IF NOT EXISTS task_assignees (
 
 CREATE INDEX IF NOT EXISTS idx_task_assignees ON task_assignees(task_id, member_id);
 
--- 5. TEAMS & SQUADS (Used for Reports & Organization Analytics)
+-- =======================================================================
+-- 4. ACTIVITIES TABLE (With 50-Event FIFO Rolling Index)
+-- =======================================================================
+CREATE TABLE IF NOT EXISTS activities (
+  id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  project_id TEXT REFERENCES projects(id) ON DELETE CASCADE,
+  task_id TEXT REFERENCES tasks(id) ON DELETE SET NULL,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  action TEXT NOT NULL,
+  details TEXT,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_activities_ws_created ON activities(workspace_id, created_at DESC);
+
+-- =======================================================================
+-- 5. TEAMS & SQUADS (Reports & Organization Analytics)
+-- =======================================================================
 CREATE TABLE IF NOT EXISTS teams (
   id TEXT PRIMARY KEY,
   workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
@@ -88,7 +125,9 @@ CREATE TABLE IF NOT EXISTS team_members (
 CREATE INDEX IF NOT EXISTS idx_team_members_user ON team_members(user_id);
 CREATE INDEX IF NOT EXISTS idx_teams_ws ON teams(workspace_id);
 
+-- =======================================================================
 -- 6. AUDIT LOGS TABLE
+-- =======================================================================
 CREATE TABLE IF NOT EXISTS audit_logs (
   id TEXT PRIMARY KEY,
   workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
@@ -105,7 +144,7 @@ CREATE TABLE IF NOT EXISTS audit_logs (
 CREATE INDEX IF NOT EXISTS idx_audit_logs_ws ON audit_logs(workspace_id, created_at DESC);
 
 -- =======================================================================
--- ONE-TIME EXPIRATION / PRUNING CLEANUP FOR ACTIVITIES (50 EVENT LIMIT)
+-- 7. ACTIVITIES 50-EVENT PRUNING (FIFO Clean-up)
 -- =======================================================================
 DELETE FROM activities
 WHERE id IN (
@@ -118,3 +157,14 @@ WHERE id IN (
       AND a2.created_at >= a1.created_at
   ) > 50
 );
+
+-- =======================================================================
+-- 8. SAFE MIGRATIONS FOR PRE-EXISTING TABLES (Run if tables already exist)
+-- =======================================================================
+-- ALTER TABLE tasks ADD COLUMN completed_at DATETIME;
+-- ALTER TABLE task_comments ADD COLUMN images TEXT DEFAULT '[]';
+-- CREATE INDEX IF NOT EXISTS idx_tasks_completed_at ON tasks(completed_at);
+-- CREATE INDEX IF NOT EXISTS idx_task_likes_task ON task_likes(task_id);
+-- CREATE INDEX IF NOT EXISTS idx_task_likes_user ON task_likes(user_id);
+-- ALTER TABLE workflow_statuses ADD COLUMN max_tasks INTEGER DEFAULT 5;
+-- ALTER TABLE workflow_statuses ADD COLUMN overload_color TEXT DEFAULT '#EF4444';
