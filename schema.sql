@@ -199,6 +199,7 @@ CREATE TABLE IF NOT EXISTS projects (
   image_id TEXT,
   image_url TEXT,
   is_archived INTEGER DEFAULT 0,
+  stage_limits TEXT DEFAULT '{}',
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );

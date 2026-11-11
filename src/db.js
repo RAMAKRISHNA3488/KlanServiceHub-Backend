@@ -381,6 +381,7 @@ const initSchema = () => {
       image_id TEXT,
       image_url TEXT,
       is_archived INTEGER DEFAULT 0,
+      stage_limits TEXT DEFAULT '{}',
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
@@ -1157,6 +1158,7 @@ const initSchema = () => {
   safeAddColumn('projects', "category TEXT DEFAULT 'Software'");
   safeAddColumn('projects', "lead_id TEXT");
   safeAddColumn('projects', "is_archived INTEGER DEFAULT 0");
+  safeAddColumn('projects', "stage_limits TEXT DEFAULT '{}'");
 
   safeAddColumn('tasks', "reporter_id TEXT");
   safeAddColumn('tasks', "sprint_id TEXT");
@@ -1311,6 +1313,7 @@ const initSchema = () => {
   safeAddColumn('projects', "category TEXT DEFAULT 'Software'");
   safeAddColumn('projects', "lead_id TEXT");
   safeAddColumn('projects', "is_archived INTEGER DEFAULT 0");
+  safeAddColumn('projects', "stage_limits TEXT DEFAULT '{}'");
 
   safeAddColumn('tasks', "reporter_id TEXT");
   safeAddColumn('tasks', "sprint_id TEXT");
@@ -1976,6 +1979,13 @@ export function formatDoc(row) {
   if (row.completed_at !== undefined) doc.completedAt = row.completed_at;
   if (row.max_tasks !== undefined) doc.maxTasks = row.max_tasks;
   if (row.overload_color !== undefined) doc.overloadColor = row.overload_color;
+  if (row.stage_limits !== undefined) {
+    try {
+      doc.stageLimits = typeof row.stage_limits === 'string' ? JSON.parse(row.stage_limits) : (row.stage_limits || {});
+    } catch (e) {
+      doc.stageLimits = {};
+    }
+  }
   if (row.images !== undefined) {
     try {
       doc.images = typeof row.images === 'string' ? JSON.parse(row.images) : (row.images || []);

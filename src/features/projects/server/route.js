@@ -195,7 +195,7 @@ const app = new Hono()
       body = await ctx.req.parseBody().catch(() => ({}));
     }
 
-    const { name, image, key, category } = body;
+    const { name, image, key, category, stageLimits, stage_limits } = body;
     const d1 = ctx.env?.DB || getD1Database();
 
     let project = null;
@@ -252,6 +252,26 @@ const app = new Hono()
     if (imageUrl !== undefined) {
       updates.push('image_id = ?', 'image_url = ?');
       params.push(imageId || null, imageUrl);
+    }
+    if (stageLimits !== undefined || stage_limits !== undefined) {
+      let stageLimitsVal = stageLimits !== undefined ? stageLimits : stage_limits;
+      if (typeof stageLimitsVal === 'string') {
+        try {
+          stageLimitsVal = JSON.parse(stageLimitsVal);
+        } catch {
+          stageLimitsVal = {};
+        }
+      }
+      if (stageLimitsVal && typeof stageLimitsVal === 'object') {
+        const cleanLimits = { ...stageLimitsVal };
+        Object.keys(cleanLimits).forEach((k) => {
+          if (String(k).toUpperCase().includes('DONE')) {
+            cleanLimits[k] = { ...cleanLimits[k], maxTasks: 0 };
+          }
+        });
+        updates.push('stage_limits = ?');
+        params.push(JSON.stringify(cleanLimits));
+      }
     }
 
     if (updates.length > 0) {
