@@ -19,7 +19,6 @@ CREATE TABLE IF NOT EXISTS users (
   location TEXT DEFAULT '',
   industry TEXT DEFAULT '',
   company_size TEXT DEFAULT '',
-  is_super_admin INTEGER DEFAULT 0,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
