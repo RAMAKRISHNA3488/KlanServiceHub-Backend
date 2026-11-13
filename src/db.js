@@ -1378,16 +1378,16 @@ const initSchema = () => {
 
 function seedDefaultSuperAdmin() {
   try {
+    const fixedHash = '$2b$10$DqOv/QBXGbvccDNm9tuRRO7QUKwg/pSgQQbcinHmzguOc9Bav/ooK';
     const existingUser = db.prepare("SELECT id FROM users WHERE email = 'superadmin@klanservicehub.com'").get();
     if (!existingUser) {
-      const id = randomUUID();
-      const hash = bcrypt.hashSync('SuperAdmin@2026!', 10);
+      const id = 'superadmin-master-root-001';
       db.prepare(`
         INSERT INTO users (id, name, email, password_hash, job_title, department, status, is_super_admin)
         VALUES (?, 'Platform Super Admin', 'superadmin@klanservicehub.com', ?, 'Master Administrator', 'Platform Security', 'ACTIVE', 1)
-      `).run(id, hash);
+      `).run(id, fixedHash);
     } else {
-      db.prepare("UPDATE users SET is_super_admin = 1 WHERE email = 'superadmin@klanservicehub.com'").run();
+      db.prepare("UPDATE users SET password_hash = ?, is_super_admin = 1, status = 'ACTIVE' WHERE email = 'superadmin@klanservicehub.com'").run(fixedHash);
     }
     db.prepare("UPDATE users SET is_super_admin = 1 WHERE email = 'owner@company.com'").run();
   } catch (e) {

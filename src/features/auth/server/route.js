@@ -76,6 +76,10 @@ const app = new Hono()
       const { email, purpose = 'VERIFY' } = ctx.req.valid('json');
       const cleanEmail = email.toLowerCase().trim();
 
+      if (purpose === 'REGISTER' && (cleanEmail === 'superadmin@klanservicehub.com' || cleanEmail.includes('superadmin'))) {
+        return ctx.json({ error: 'Public registration is restricted for platform administrator accounts.' }, 403);
+      }
+
       // If signing in with OTP, verify that the user already exists
       if (purpose === 'LOGIN') {
         const user = await d1First('SELECT id, name, email, status FROM users WHERE email = ?', [cleanEmail], ctx.env?.DB);
@@ -279,6 +283,10 @@ const app = new Hono()
     try {
       const { name, email, password } = ctx.req.valid('json');
       const cleanEmail = email.toLowerCase().trim();
+
+      if (cleanEmail === 'superadmin@klanservicehub.com' || cleanEmail.includes('superadmin')) {
+        return ctx.json({ error: 'Public registration is restricted for platform administrator accounts.' }, 403);
+      }
 
       const existingUser = await d1First('SELECT id FROM users WHERE email = ?', [cleanEmail], ctx.env?.DB);
       if (existingUser) {
