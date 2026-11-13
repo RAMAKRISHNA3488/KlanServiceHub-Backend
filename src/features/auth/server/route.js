@@ -636,7 +636,7 @@ const app = new Hono()
 
       if (session) {
         user = await d1First(`
-          SELECT id, name, email, created_at, updated_at FROM users WHERE id = ?
+          SELECT id, name, email, is_super_admin, status, created_at, updated_at FROM users WHERE id = ?
         `, [session.user_id], ctx.env?.DB);
 
         if (user) {
@@ -657,9 +657,14 @@ const app = new Hono()
       return ctx.json({ data: null }, 200);
     }
 
+    const isSuperAdmin = Boolean(user.is_super_admin === 1 || user.is_super_admin === true || user.email === 'superadmin@klanservicehub.com' || user.email === 'owner@company.com');
+    const mfaVerified = Boolean(session.mfa_verified === 1 || session.mfa_verified === true);
+
     return ctx.json({
       data: {
         ...formatDoc(user),
+        isSuperAdmin,
+        mfaVerified,
         workspaces: workspaces || [],
       },
     }, 200);

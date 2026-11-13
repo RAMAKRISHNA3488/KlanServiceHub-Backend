@@ -925,6 +925,32 @@ CREATE TABLE IF NOT EXISTS backups (
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS platform_audit_logs (
+  id TEXT PRIMARY KEY,
+  actor_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+  actor_name TEXT NOT NULL,
+  actor_email TEXT NOT NULL,
+  action TEXT NOT NULL,
+  target_type TEXT NOT NULL,
+  target_id TEXT,
+  target_name TEXT,
+  details TEXT,
+  ip_address TEXT DEFAULT '127.0.0.1',
+  user_agent TEXT,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS super_admin_mfa (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  email TEXT NOT NULL,
+  otp_hash TEXT NOT NULL,
+  expires_at DATETIME NOT NULL,
+  attempt_count INTEGER DEFAULT 0,
+  verified INTEGER DEFAULT 0,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
 -- ==============================================================================
 -- 15. Performance Indexes
 -- ==============================================================================

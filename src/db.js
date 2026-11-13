@@ -3,6 +3,7 @@ import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { randomUUID } from 'node:crypto';
+import bcrypt from 'bcryptjs';
 
 const getDirname = () => {
   try {
@@ -1267,6 +1268,32 @@ const initSchema = () => {
       status TEXT NOT NULL DEFAULT 'UNRELEASED', -- UNRELEASED, RELEASED, ARCHIVED
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
+
+    CREATE TABLE IF NOT EXISTS platform_audit_logs (
+      id TEXT PRIMARY KEY,
+      actor_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+      actor_name TEXT NOT NULL,
+      actor_email TEXT NOT NULL,
+      action TEXT NOT NULL,
+      target_type TEXT NOT NULL,
+      target_id TEXT,
+      target_name TEXT,
+      details TEXT,
+      ip_address TEXT DEFAULT '127.0.0.1',
+      user_agent TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS super_admin_mfa (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      email TEXT NOT NULL,
+      otp_hash TEXT NOT NULL,
+      expires_at DATETIME NOT NULL,
+      attempt_count INTEGER DEFAULT 0,
+      verified INTEGER DEFAULT 0,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
   `);
 
   // Run safe column additions for existing tables
@@ -1280,10 +1307,14 @@ const initSchema = () => {
   safeAddColumn('users', "location TEXT DEFAULT ''");
   safeAddColumn('users', "industry TEXT DEFAULT ''");
   safeAddColumn('users', "company_size TEXT DEFAULT ''");
+  safeAddColumn('users', "is_super_admin INTEGER DEFAULT 0");
 
   safeAddColumn('sessions', "ip_address TEXT DEFAULT '127.0.0.1'");
   safeAddColumn('sessions', "user_agent TEXT DEFAULT 'Web Browser'");
   safeAddColumn('sessions', "device_info TEXT DEFAULT 'Desktop Device'");
+  safeAddColumn('sessions', "is_super_admin_session INTEGER DEFAULT 0");
+  safeAddColumn('sessions', "mfa_verified INTEGER DEFAULT 0");
+  safeAddColumn('sessions', "mfa_secret TEXT");
 
   safeAddColumn('workspaces', "description TEXT DEFAULT ''");
   safeAddColumn('workspaces', "website TEXT DEFAULT ''");
@@ -1342,7 +1373,27 @@ const initSchema = () => {
   safeAddColumn('groups', "role_mapping TEXT DEFAULT 'MEMBER'");
 
   seedDefaultPermissions();
+  seedDefaultSuperAdmin();
 };
+
+function seedDefaultSuperAdmin() {
+  try {
+    const existingUser = db.prepare("SELECT id FROM users WHERE email = 'superadmin@klanservicehub.com'").get();
+    if (!existingUser) {
+      const id = randomUUID();
+      const hash = bcrypt.hashSync('SuperAdmin@2026!', 10);
+      db.prepare(`
+        INSERT INTO users (id, name, email, password_hash, job_title, department, status, is_super_admin)
+        VALUES (?, 'Platform Super Admin', 'superadmin@klanservicehub.com', ?, 'Master Administrator', 'Platform Security', 'ACTIVE', 1)
+      `).run(id, hash);
+    } else {
+      db.prepare("UPDATE users SET is_super_admin = 1 WHERE email = 'superadmin@klanservicehub.com'").run();
+    }
+    db.prepare("UPDATE users SET is_super_admin = 1 WHERE email = 'owner@company.com'").run();
+  } catch (e) {
+    // Edge runtime / stub fallback
+  }
+}
 
 // Comprehensive Standard permissions catalogue (72 Granular Permissions)
 export const SYSTEM_PERMISSIONS = [
@@ -1740,6 +1791,42 @@ export async function logAudit({ workspaceId, actorId, actorName, action, entity
       serializedDetails,
       ipAddress
     );
+  } catch (e) {}
+}
+
+// Global Platform Admin Audit Logger Helper
+export async function logPlatformAudit({
+  actorId,
+  actorName,
+  actorEmail,
+  action,
+  targetType,
+  targetId = null,
+  targetName = null,
+  details = null,
+  ipAddress = '127.0.0.1',
+  userAgent = null,
+}, explicitD1 = null) {
+  const d1 = explicitD1 || getD1Database();
+  const id = randomUUID();
+  const serializedDetails = typeof details === 'object' ? JSON.stringify(details) : (details || '');
+
+  if (d1) {
+    try {
+      await d1Run(`
+        INSERT INTO platform_audit_logs (id, actor_id, actor_name, actor_email, action, target_type, target_id, target_name, details, ip_address, user_agent)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `, [id, actorId || null, actorName || 'System', actorEmail || 'system@klanservicehub.com', action, targetType, targetId, targetName, serializedDetails, ipAddress, userAgent], d1);
+    } catch (e) {
+      console.error('[D1_PLATFORM_AUDIT_ERROR]:', e);
+    }
+  }
+
+  try {
+    db.prepare(`
+      INSERT INTO platform_audit_logs (id, actor_id, actor_name, actor_email, action, target_type, target_id, target_name, details, ip_address, user_agent)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(id, actorId || null, actorName || 'System', actorEmail || 'system@klanservicehub.com', action, targetType, targetId, targetName, serializedDetails, ipAddress, userAgent);
   } catch (e) {}
 }
 

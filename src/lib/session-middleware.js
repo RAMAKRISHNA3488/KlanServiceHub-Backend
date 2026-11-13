@@ -34,8 +34,8 @@ export const sessionMiddleware = createMiddleware(async (ctx, next) => {
     try {
       const combined = await activeD1.prepare(`
         SELECT 
-          s.id as session_id, s.user_id, s.secret, s.expires_at,
-          u.id as user_id_val, u.name, u.email, u.created_at, u.updated_at
+          s.id as session_id, s.user_id, s.secret, s.expires_at, s.is_super_admin_session, s.mfa_verified,
+          u.id as user_id_val, u.name, u.email, u.status, u.is_super_admin, u.created_at, u.updated_at
         FROM sessions s
         JOIN users u ON s.user_id = u.id
         WHERE s.secret = ? AND datetime(s.expires_at) > datetime('now')
@@ -47,11 +47,15 @@ export const sessionMiddleware = createMiddleware(async (ctx, next) => {
           user_id: combined.user_id,
           secret: combined.secret,
           expires_at: combined.expires_at,
+          is_super_admin_session: Number(combined.is_super_admin_session || 0),
+          mfa_verified: Number(combined.mfa_verified || 0),
         };
         user = {
           id: combined.user_id_val || combined.user_id,
           name: combined.name,
           email: combined.email,
+          status: combined.status || 'ACTIVE',
+          is_super_admin: Number(combined.is_super_admin || (combined.email === 'owner@company.com' || combined.email === 'superadmin@klanservicehub.com' ? 1 : 0)),
           created_at: combined.created_at,
           updated_at: combined.updated_at,
         };
@@ -70,12 +74,19 @@ export const sessionMiddleware = createMiddleware(async (ctx, next) => {
 
     if (fallbackSession) {
       const queryUser = db.prepare(`
-        SELECT id, name, email, created_at, updated_at FROM users WHERE id = ?
+        SELECT id, name, email, status, is_super_admin, created_at, updated_at FROM users WHERE id = ?
       `);
       const fallbackUser = queryUser.get(fallbackSession.user_id);
       if (fallbackUser) {
-        session = fallbackSession;
-        user = fallbackUser;
+        session = {
+          ...fallbackSession,
+          is_super_admin_session: Number(fallbackSession.is_super_admin_session || 0),
+          mfa_verified: Number(fallbackSession.mfa_verified || 0),
+        };
+        user = {
+          ...fallbackUser,
+          is_super_admin: Number(fallbackUser.is_super_admin || (fallbackUser.email === 'owner@company.com' || fallbackUser.email === 'superadmin@klanservicehub.com' ? 1 : 0)),
+        };
       }
     }
   }
