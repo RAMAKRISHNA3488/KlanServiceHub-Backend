@@ -466,8 +466,10 @@ const app = new Hono()
       return task;
     });
 
-    await attachAssigneesToTasks(documents, d1);
-    await attachLikesAndFavoritesToTasks(documents, user?.$id, d1);
+    await Promise.all([
+      attachAssigneesToTasks(documents, d1),
+      attachLikesAndFavoritesToTasks(documents, user?.$id, d1),
+    ]);
 
     return ctx.json({
       data: {
@@ -529,13 +531,17 @@ const app = new Hono()
       LIMIT 20
     `, (workspaceId ? [user.$id, workspaceId] : [user.$id]), d1);
 
-    const assignedDocs = await attachAssigneesToTasks(assigned.map(formatDoc), d1);
-    const reportedDocs = await attachAssigneesToTasks(reported.map(formatDoc), d1);
-    const watchedDocs = await attachAssigneesToTasks(watched.map(formatDoc), d1);
+    const [assignedDocs, reportedDocs, watchedDocs] = await Promise.all([
+      attachAssigneesToTasks(assigned.map(formatDoc), d1),
+      attachAssigneesToTasks(reported.map(formatDoc), d1),
+      attachAssigneesToTasks(watched.map(formatDoc), d1),
+    ]);
 
-    await attachLikesAndFavoritesToTasks(assignedDocs, user?.$id, d1);
-    await attachLikesAndFavoritesToTasks(reportedDocs, user?.$id, d1);
-    await attachLikesAndFavoritesToTasks(watchedDocs, user?.$id, d1);
+    await Promise.all([
+      attachLikesAndFavoritesToTasks(assignedDocs, user?.$id, d1),
+      attachLikesAndFavoritesToTasks(reportedDocs, user?.$id, d1),
+      attachLikesAndFavoritesToTasks(watchedDocs, user?.$id, d1),
+    ]);
 
     return ctx.json({
       data: {

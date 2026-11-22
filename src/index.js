@@ -72,6 +72,7 @@ app.use(
       return allowedOrigin;
     },
     credentials: true,
+    maxAge: 86400,
     allowMethods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowHeaders: ['Content-Type', 'Authorization', 'Cookie'],
     exposeHeaders: ['Set-Cookie'],
@@ -96,6 +97,10 @@ app.get('/health', (ctx) => {
 });
 
 const api = new Hono().basePath('/api');
+
+api.get('/health', (ctx) => {
+  return ctx.json({ status: 'ok', timestamp: new Date().toISOString() });
+});
 
 api
   .route('/auth', auth)
@@ -185,13 +190,14 @@ app.route('/', apiV1);
 
 import { backfillProjectAndTaskKeys } from './lib/issue-key.js';
 
-// Ensure all projects and tasks have unique, project-wise keys
-backfillProjectAndTaskKeys();
-
 const port = Number(process.env.PORT) || 5000;
 const isDirectRun = process.argv[1] && (process.argv[1].endsWith('index.js') || process.argv[1].endsWith('src/index.js') || process.argv[1].endsWith('src\\index.js'));
 
 if (isDirectRun && process.env.TEST_MODE !== 'true') {
+  // Ensure all projects and tasks have unique keys only during direct local server startup
+  try {
+    backfillProjectAndTaskKeys();
+  } catch (e) {}
   console.log(`🚀 Backend server is running on http://localhost:${port}`);
   serve({
     fetch: app.fetch,

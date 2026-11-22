@@ -3,9 +3,9 @@ import { createMiddleware } from 'hono/factory';
 import { db, formatDoc, getD1Database } from '../db.js';
 import { AUTH_COOKIE } from '../features/auth/constants.js';
 
-// Lightweight short-lived in-memory session cache (30 seconds) for edge latency reduction
+// Lightweight short-lived in-memory session cache (60 seconds) for edge latency reduction
 const sessionCache = new Map();
-const SESSION_CACHE_TTL_MS = 30 * 1000;
+const SESSION_CACHE_TTL_MS = 60 * 1000;
 
 export const sessionMiddleware = createMiddleware(async (ctx, next) => {
   const authHeader = ctx.req.header('authorization') || ctx.req.header('Authorization');

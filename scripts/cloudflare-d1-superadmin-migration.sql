@@ -59,3 +59,4 @@ ON CONFLICT(email) DO UPDATE SET
   is_super_admin = 1,
   status = 'ACTIVE',
   name = 'Platform Super Admin';
+
