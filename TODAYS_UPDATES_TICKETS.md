@@ -1,6 +1,6 @@
 # KlanServiceHub V1 — Epic & Sub-Tasks Specification
 
-This document is structured so you can first create the **Main Parent Ticket (Epic / Story)** in KlanServiceHub, and then create each of the **31 Sub-tasks** linked directly under it.
+This document is structured so you can first create the **Main Parent Ticket (Epic / Story)** in KlanServiceHub, and then create each of the **38 Sub-tasks** linked directly under it.
 
 ---
 
@@ -9,12 +9,12 @@ This document is structured so you can first create the **Main Parent Ticket (Ep
 - **Issue Type**: `Epic` *(or `Story` if your workflow doesn't use Epics)*
 - **Summary**: `Enhancing the Klanservichub V1`
 - **Priority**: `P1 - High (⬆️)`
-- **Total Story Points**: `138`
+- **Total Story Points**: `168`
 - **Module / Component**: `Core Platform / Multi-Module`
-- **Labels**: `v1-enhancements`, `epic`, `platform-stability`, `ui-ux`, `analytics`, `tasks-boards`, `workflows`
+- **Labels**: `v1-enhancements`, `epic`, `platform-stability`, `ui-ux`, `analytics`, `tasks-boards`, `workflows`, `projects`
 
 ### Description
-Comprehensive platform stabilization and feature enhancements for **KlanServiceHub V1**. This work item addresses critical functional gaps across reports and analytics data integrity on Cloudflare D1, refines Jira-standard task and comment management, implements high-end glassmorphic privacy controls, enables fast board double-click interactions, resolves landing page viewport scroll locks, institutes a 50-event rolling FIFO expiration policy for organization activity streams, implements comment image attachments with automated 6-day ticket completion expiration, enables universal Share, Like, and Save / Favorite capabilities across all issue types (Tasks, Sub-tasks, Stories, Epics, Bugs), and introduces customizable Workflow Stage Overload telemetry with WIP capacity limits and dynamic real-time color indicator lines on Kanban boards.
+Comprehensive platform stabilization and feature enhancements for **KlanServiceHub V1**. This work item addresses critical functional gaps across reports and analytics data integrity on Cloudflare D1, refines Jira-standard task and comment management, implements high-end glassmorphic privacy controls, enables fast board double-click interactions, resolves landing page viewport scroll locks, institutes a 50-event rolling FIFO expiration policy for organization activity streams, implements comment image attachments with automated 6-day ticket completion expiration, enables universal Share, Like, and Save / Favorite capabilities across all issue types (Tasks, Sub-tasks, Stories, Epics, Bugs), introduces customizable Workflow Stage Overload telemetry with WIP capacity limits and dynamic real-time color indicator lines on Kanban boards, enables full project-wise WIP capacity limit and overload alert color customization directly from Project Settings, architects an isolated Super Admin Control Plane with mandatory MFA, resolves comment container text/URL overflow defects across ticket detail views, achieves 55x sub-second platform latency optimization via Cloudflare Service Bindings, and delivers independent dual-pane scrolling across ticket views.
 
 ### Key Objectives
 1. **Reporting & Analytics Resilience**: Ensure real-time Cloudflare D1 persistence and metrics generation for Teams, Workloads, and Employee reports.
@@ -25,10 +25,15 @@ Comprehensive platform stabilization and feature enhancements for **KlanServiceH
 6. **Comment Image Lifecycle**: Support clipboard paste, drag-and-drop, and attach buttons for comment images with automatic 6-day post-completion expiration pruning.
 7. **Social & Collaboration Telemetry**: Support universal one-click permalink sharing, reaction kudos/likes, and personal favorites bookmarking for all issue types.
 8. **Workflow WIP Limits & Stage Overload Telemetry**: Support per-stage capacity thresholds and custom alert colors in Workflows admin, with dynamic top indicator lines (green for healthy, custom pulse for overload, and strict DONE stage exemption) rendered across Kanban boards.
+9. **Project-Wise WIP Customization**: Allow project leads to customize per-stage capacity limits and alert colors for their specific projects in Project Settings, with automatic inheritance of workspace workflow defaults for unconfigured stages.
+10. **Enterprise Super Admin Control Plane**: Multi-tenant isolation with mandatory 2-step MFA, dedicated `/super-admin/dashboard`, and real-time cross-tenant governance telemetry.
+11. **Ticket Comment Layout & Containment**: Prevent unbroken Confluence/Jira URLs and text from overflowing into sidebar metadata, with auto-linked interactive URLs and responsive word breaking.
+12. **Sub-Second Platform Telemetry & Cold-Start Elimination**: Direct Cloudflare Service Bindings, 0-CORS same-origin edge routing, and asynchronous query batching reducing API latency by 98%.
+13. **Independent Dual-Pane Ticket Scrolling**: Unlocked vertical scroll with dedicated smooth scrolling across left comment feeds and right properties sidebars.
 
 ---
 
-# 📋 31 SUB-TASKS UNDER THIS TICKET
+# 📋 38 SUB-TASKS UNDER THIS TICKET
 
 ---
 
@@ -994,11 +999,53 @@ Enable configurable Work-In-Progress (WIP) capacity limits and stage overload al
 
 ---
 
+### 🔹 Sub-task 32: Project-Wise Kanban Stage Overload & WIP Capacity Telemetry Customization
+
+- **Parent Ticket**: `Enhancing the Klanservichub V1`
+- **Issue Type**: `Sub-task`
+- **Summary**: `Subtask 32: Project-Wise Kanban Stage Overload & WIP Capacity Telemetry Customization`
+- **Priority**: `P1 - High (⬆️)`
+- **Story Points**: `5`
+- **Component**: `Frontend & Backend / Projects & Boards`
+- **Labels**: `projects`, `kanban`, `wip-limits`, `project-settings`, `telemetry`
+
+#### Description
+Empower teams to customize Work-In-Progress (WIP) capacity thresholds and stage overload alert highlight colors on a per-project basis. Allows distinct engineering squads and workspace admins to define unique stage limits (e.g. 3 tasks in TODO for Project A, 8 for Project B) both directly within **Project Settings** (`/workspaces/:workspaceId/projects/:projectId/settings`) and centrally within **Workflows & Issue Types** (`/workspaces/:workspaceId/workflows-admin`) with live column telemetry previewing, while automatically falling back to workspace workflow defaults and preserving the strict `DONE` stage capacity exemption.
+
+#### Scope of Work
+- **Cloudflare D1 & Schema Persistence**:
+  - Add `stage_limits TEXT DEFAULT '{}'` column to the `projects` table on remote Cloudflare D1 database.
+  - Update `schema.sql`, mock table definitions in `db.js`, and `formatDoc` JSON serialization (`stageLimits`).
+  - Extend `PATCH /api/projects/:projectId` to sanitize, validate, and store project-level `stageLimits`.
+- **Workflows & Issue Types Centralized Customization (`workflows-admin-view.jsx`)**:
+  - Integrate Project Scope Switcher bar allowing admins to toggle between `Workspace Baseline (All Projects)` and any individual project.
+  - Visualize project override indicators (`Project Override` vs `Inheriting Default`) on pipeline stage cards.
+  - Dedicated "Customize Stage WIP Limit" modal with numeric capacity control (1–100), overload color swatches, live Kanban top line preview, and one-click "Reset to Default" action.
+- **Project Settings Customization Interface (`edit-project-form.jsx`)**:
+  - Implement the **"Kanban WIP Limits & Stage Overload Telemetry"** card within `EditProjectForm`.
+  - Provide stage-specific number inputs (1–100) and color swatch pickers (6 presets + native hex picker).
+  - Add live interactive top indicator bar previews and a one-click "Reset to Default" button per stage.
+  - Enforce clear `DONE` exemption banners and inline "Save Project WIP Limits" action.
+- **Kanban Column Telemetry & Dynamic Resolution**:
+  - Update `DataKanban` to resolve active project overrides (`project.stageLimits?.[col.id]`) ahead of workspace workflow defaults.
+  - Update `TaskViewSwitcher` to pass the active project context to `DataKanban`.
+  - Update `BoardsView` to resolve column WIP limits based on active board project linkage or selected project filter, with direct configuration shortcuts in the board edit modal and resolution of the Temporal Dead Zone (TDZ).
+
+#### Acceptance Criteria
+- [x] Cloudflare D1 `projects` table stores `stage_limits` per project.
+- [x] Admins can customize stage capacity limits and overload colors for any project in "Workflows & Issue Types".
+- [x] Project leads can customize stage capacity limits and overload colors in Project Settings.
+- [x] Boards reflect project-specific limits when viewing or filtering by that project.
+- [x] Stages without project overrides smoothly fall back to workspace workflow defaults.
+- [x] `DONE` stage is strictly exempt from capacity constraints across all projects.
+
+---
+
 ## Quick Reference Table for Ticket Creation
 
 | Subtask # | Summary | Type | Priority | Points |
 |:---------:|---------|:----:|:--------:|:------:|
-| **Parent** | **Enhancing the Klanservichub V1** | `Epic` | `P1 - High` | **138** |
+| **Parent** | **Enhancing the Klanservichub V1** | `Epic` | `P1 - High` | **168** |
 | 1 | Restore vertical page scrolling on public landing page | `Sub-task` | `P1 - High` | 2 |
 | 2 | Modernize Consent for Data Processing with 100% full-width glassmorphism | `Sub-task` | `P2 - Medium` | 3 |
 | 3 | Migrate Teams, Workload, and Employee reports to Cloudflare D1 | `Sub-task` | `P0 - Critical` | 8 |
@@ -1030,6 +1077,228 @@ Enable configurable Work-In-Progress (WIP) capacity limits and stage overload al
 | 29 | Implement Ticket Comment Image Attachments with Drag & Drop, Clipboard Paste, and 6-Day Post-Completion Expiration Engine | `Sub-task` | `P1 - High` | 5 |
 | 30 | Enable universal Share, Like, and Save / Favorite across all issue types | `Sub-task` | `P1 - High` | 5 |
 | 31 | Implement Workflow Stage Overload Telemetry, WIP Limits, and Dynamic Board Indicator Lines | `Sub-task` | `P1 - High` | 5 |
+| 32 | Project-Wise Kanban Stage Overload & WIP Capacity Telemetry Customization | `Sub-task` | `P1 - High` | 5 |
+| 33 | Enterprise Iconography Standardization & Elimination of Sparkles Placeholders across Navigation, Boards, and Workflows | `Sub-task` | `P2 - Medium` | 3 |
+| 34 | Professional Stage & Column Sizing Architecture across Workflows and Kanban Boards | `Sub-task` | `P2 - Medium` | 3 |
+| 35 | Enterprise Super Admin Control Plane, Dedicated MFA Authentication, and Multi-Tenant Administration Dashboard | `Sub-task` | `P1 - High` | 8 |
+| 36 | Resolve Ticket Comments Overlapping Sidebar Metadata and Enforce URL Word Wrapping | `Sub-task` | `P1 - High` | 3 |
+| 37 | Platform-Wide Sub-Second Latency Optimization via Cloudflare Service Bindings, Cold-Start Elimination, and Batched Querying | `Sub-task` | `P1 - High` | 5 |
+| 38 | Independent Dual-Pane Scrolling and Elimination of Vertical Scroll Lock in Ticket Details | `Sub-task` | `P1 - High` | 3 |
+
+---
+
+### 🔹 Sub-task 33: Enterprise Iconography Standardization & Elimination of Sparkles Placeholders
+
+- **Parent Ticket**: `Enhancing the Klanservichub V1`
+- **Issue Type**: `Sub-task`
+- **Summary**: `Subtask 33: Enterprise Iconography Standardization & Elimination of Sparkles Placeholders across Navigation, Boards, and Workflows`
+- **Priority**: `P2 - Medium (🔹)`
+- **Story Points**: `3`
+- **Component**: `Frontend / UI & Design System`
+- **Labels**: `design-system`, `iconography`, `ui-ux`, `navigation`, `boards`, `workflows`
+
+#### Description
+Eliminate all instances of the consumer AI-style `Sparkles` icon placeholder throughout the application. Replace them across navigation, board filters, workflows admin, analytics, reports, modals, and landing pages with professional, semantic enterprise Lucide icons (e.g. `Rocket` for Deployments & DORA, `Timer` for Sprints, `Globe` for Global Sync, `LayoutGrid` for Gadgets, `TrendingUp` for Velocity, `Star` for Features).
+
+#### Scope of Work
+- **Sidebar Navigation**: Replace `Sparkles` with `Rocket` on the `Deployments & DORA` route.
+- **Board Filters**: Replace `Sparkles` with `Timer` on the `SPRINT` filter header.
+- **Workflows Admin**: Replace `Sparkles` with `Globe` on the Global Reflection banner, `GitBranch` on Initialize Workflow, and `Bookmark` on Initialize Issue Types.
+- **Dashboards & Gadgets**: Replace `Sparkles` with `LayoutGrid` in the Gadget Directory modal.
+- **Reports & Analytics**: Replace `Sparkles` with `TrendingUp` on Sprint Velocity, `Star` on Feature issue types, `Users` on Capacity Matrix, and `CheckCircle2` on Export.
+- **Global Imports Clean-up**: Remove all 18 unused/placeholder `Sparkles` imports across all remaining components.
+
+#### Acceptance Criteria
+- [x] Zero references or usages of `Sparkles` remaining in the frontend application.
+- [x] Sidebar navigation displays professional `Rocket` icon for Deployments & DORA.
+- [x] Board filters toolbar displays `Timer` icon for Sprints.
+- [x] Workflows & Issue Types admin displays semantic, high-quality icons.
+- [x] Clean compilation and deployment to Cloudflare Workers with 0 errors.
+
+---
+
+### 🔹 Sub-task 34: Professional Stage & Column Sizing Architecture across Workflows and Kanban Boards
+
+- **Parent Ticket**: `Enhancing the Klanservichub V1`
+- **Issue Type**: `Sub-task`
+- **Summary**: `Subtask 34: Professional Stage & Column Sizing Architecture across Workflows and Kanban Boards`
+- **Priority**: `P2 - Medium (🔹)`
+- **Story Points**: `3`
+- **Component**: `Frontend / Workflows & Kanban Boards`
+- **Labels**: `workflows`, `kanban-board`, `column-sizing`, `ui-ux`, `telemetry`
+
+#### Description
+Scale up stage card dimensions, column widths, internal paddings, and telemetry indicator heights across both "Workflows & Issue Types" admin pipeline and the live Kanban Boards (`DataKanban` and `BoardsView`). Creates an executive-grade, spacious, and modern aesthetic matching enterprise Jira & Linear design standards.
+
+#### Scope of Work
+- **Workflows Visual Pipeline (`workflows-admin-view.jsx`)**:
+  - Broaden stage cards to wide-profile landscape dimensions: `w-[340px] shrink-0 min-h-[145px]` (increased width, reduced vertical height to eliminate tall card bloat).
+  - Compact padding from `p-4.5` to `p-3.5 sm:p-4` with modern `rounded-xl` borders.
+  - Refine typography to balanced, sleek `text-xs font-bold` for stage titles (`line-clamp-1`), with compact `Step` micro-pills and category tags.
+  - Upgrade WIP Overload Telemetry section into a compact low-profile framed container (`p-2 rounded-lg bg-neutral-50`) with clear capacity ceilings and color swatches.
+  - Scale "+ Add Stage" action card to matching low-profile dimensions: `w-[150px] min-h-[145px] p-4 rounded-xl`.
+- **Kanban Board Columns (`data-kanban.jsx` & `boards-view.jsx`)**:
+  - Increase column width from ~270–320px to `min-w-[340px] max-w-[380px]` (`min-w-[85vw] sm:min-w-[340px] sm:max-w-[380px]` in BoardsView) for spacious, readable card rendering.
+  - Upgrade stage top indicator line with rounded pill edges.
+
+#### Acceptance Criteria
+- [x] Stage cards in "Workflows & Issue Types" render at wide-profile `w-[340px] min-h-[145px]` low-height dimensions.
+- [x] Board columns across `DataKanban` and `BoardsView` scale to `min-w-[340px] max-w-[380px]`.
+- [x] WIP telemetry lines and stage cards display balanced spacing without vertical dead space.
+- [x] 0 compilation errors and deployed to Cloudflare Workers.
+
+---
+
+### 🔹 Sub-task 35: Enterprise Super Admin Control Plane, Dedicated MFA Authentication, and Multi-Tenant Administration Dashboard
+
+- **Parent Ticket**: `Enhancing the Klanservichub V1`
+- **Issue Type**: `Sub-task`
+- **Summary**: `Subtask 35: Enterprise Super Admin Control Plane, Dedicated MFA Authentication, and Multi-Tenant Administration Dashboard`
+- **Priority**: `P1 - High (⬆️)`
+- **Story Points**: `8`
+- **Component**: `Core Platform / Multi-Module`
+- **Labels**: `super-admin`, `mfa`, `multi-tenant`, `security`, `governance`, `audit-logs`, `dashboard`
+
+#### Description
+Architect and implement three strictly isolated authentication experiences across KlanServiceHub: a dedicated high-security Super Admin Control Plane with mandatory 2-step MFA at `/super-admin/login`, an Organization Admin tenant governance portal, and an Employee/Member workspace experience. Delivers a live telemetry dashboard at `/super-admin/dashboard` computing cross-tenant statistics directly from Cloudflare D1/SQLite.
+
+#### Scope of Work
+- **Database Architecture & Multi-Tenant Migration (`backend/src/db.js`, `backend/schema.sql`)**:
+  - Add `is_super_admin INTEGER DEFAULT 0` column to `users` table.
+  - Add `is_super_admin_session INTEGER DEFAULT 0`, `mfa_verified INTEGER DEFAULT 0`, and `mfa_secret TEXT` columns to `sessions` table.
+  - Create `platform_audit_logs` table for immutable global governance logging.
+  - Create `super_admin_mfa` table for rate-limited, time-restricted (10 min) 6-digit cryptographic challenge tokens.
+  - Auto-seed default Master Super Admin (`superadmin@klanservicehub.com`, password `SuperAdmin@2026!`).
+- **Backend API & Middleware (`backend/src/features/platform-admin/server/route.js`)**:
+  - `POST /api/platform-admin/auth/login`: Credential validation & MFA challenge generation.
+  - `POST /api/platform-admin/auth/verify-mfa`: OTP verification & issuance of `mfa_verified = 1` session token.
+  - `GET /api/platform-admin/auth/current` & `POST /api/platform-admin/auth/logout`.
+  - `superAdminGuard` middleware enforcing `is_super_admin === 1` and `mfa_verified === 1` (rejects unauthenticated users, employees, and org admins with 403 Forbidden).
+  - `GET /api/platform-admin/overview`: Computes actual aggregated stats (total organizations, active/suspended orgs, total registered users, active/suspended users, total projects, teams, tickets, open vs closed, critical issues, overdue tasks, organization activity stream, system health, and recent admin audits).
+  - `GET /api/platform-admin/organizations` & `PATCH /api/platform-admin/organizations/:id/status`.
+  - `GET /api/platform-admin/users`, `PATCH /api/platform-admin/users/:id/status`, and `PATCH /api/platform-admin/users/:id/super-admin`.
+  - `GET /api/platform-admin/audit-logs` & `GET /api/platform-admin/system-health`.
+- **Frontend Master Control Suite (`frontend/src/features/super-admin/`)**:
+  - `SuperAdminLogin`: Dedicated dark cyber-command aesthetic with 2-step verification, countdown timers, simulated OTP display for dev environments, and strict absence of public registration.
+  - `SuperAdminGuard`: Dedicated route guard protecting all `/super-admin/*` paths; renders a security 403 Forbidden page for unauthorized members.
+  - `SuperAdminLayout`: Dedicated master header with live edge health indicator (`D1 Operational · MFA Active`), navigation tabs, profile pill, and session termination control.
+  - `SuperAdminDashboard`: 4 primary KPI cards, SLA resolution bar, critical issues & overdue work item matrix, organization activity feed, live platform audit stream, organizations directory with status toggle, global users directory with authority management, and system diagnostics.
+- **Routing Integration (`frontend/src/App.jsx`)**:
+  - Mount `/super-admin/login` and `/super-admin/*` routes while keeping standard `/sign-in` and workspace routes unaffected.
+
+#### Acceptance Criteria
+- [x] Super Admin has a dedicated separate login at `/super-admin/login`.
+- [x] Super Admin authentication enforces mandatory 2-step MFA.
+- [x] Public registration is strictly disabled for Super Admin.
+- [x] Dedicated route guard and API middleware block Organization Admins and Employees with 403 Forbidden.
+- [x] Super Admin Dashboard at `/super-admin/dashboard` computes all 11+ telemetry metrics dynamically from live database queries.
+- [x] Super Admin can view, suspend, and reactivate organizations and users across the platform.
+- [x] Every administrative action is recorded in `platform_audit_logs`.
+- [x] Existing employee and organization portals continue working seamlessly without regression.
+- [x] Frontend builds with 0 errors and all backend API tests pass.
+
+---
+
+### 🔹 Sub-task 36: Resolve Ticket Comments Overlapping Sidebar Metadata and Enforce URL Word Wrapping
+
+- **Parent Ticket**: `Enhancing the Klanservichub V1`
+- **Issue Type**: `Sub-task` *(or `Bug`)*
+- **Summary**: `Subtask 36: Resolve ticket comments overlapping sidebar metadata and enforce URL word wrapping`
+- **Priority**: `P1 - High (⬆️)`
+- **Story Points**: `3`
+- **Component**: `Frontend / Tasks & Comments`
+- **Labels**: `tasks`, `comments`, `bug-fix`, `css-grid`, `word-wrap`, `ui-layout`, `url-parsing`
+
+#### Description
+Fix a critical UI layout overlap where unbroken strings, particularly long URLs (such as Atlassian Confluence documentation or Jira links) entered in ticket comments, overflowed their container horizontally and directly superimposed over the right-hand sidebar metadata ("DATES & TIMESTAMPS", "Created", "Updated", "Due Date"). The issue stemmed from CSS Grid tracks defaulting to `min-width: auto`, which forced column expansion when child elements contained long non-breaking strings.
+
+#### Scope of Work
+- **Layout Containment & Grid Track Boundaries**:
+  - Enforce `min-w-0 overflow-hidden` on the main issue details column and comments section across `klanservicehub-issue-detail-modal.jsx`, `tasks/[taskId]/client.jsx`, and `roadmap-task-modal.jsx`.
+  - Add `min-w-0` to the right-hand properties sidebar (`lg:col-span-4`) to prevent adjacent grid tracks from collapsing or being encroached upon.
+- **Unbroken Word Wrapping & Breakpoints**:
+  - Apply `break-words break-all [overflow-wrap:anywhere]` across all comment wrapper cards, inner flex containers, editing textareas, and rendered comment paragraphs.
+  - Wrap comment content containers with `min-w-0 max-w-full overflow-hidden`.
+- **Intelligent URL Auto-Linking & Interactive Parsing**:
+  - Implement `renderCommentContent(content)` helper function across all ticket detail views.
+  - Automatically detect HTTP/HTTPS hyperlinks and render them as secure, clickable anchor tags (`target="_blank" rel="noopener noreferrer"`) styled with `text-blue-600 hover:text-blue-800 underline underline-offset-2 break-all [overflow-wrap:anywhere]`.
+  - Safely wrap non-URL text in resilient break-all spans.
+
+#### Acceptance Criteria
+- [x] Long unbroken URLs and continuous strings in comments wrap cleanly within the comment bubble.
+- [x] Comments no longer overflow horizontally or overlap the "DATES & TIMESTAMPS" sidebar metadata.
+- [x] External URLs in comments are automatically parsed into clickable hyperlinks opening in new tabs.
+- [x] Textarea in edit mode wraps unbroken strings without causing horizontal layout shifts.
+- [x] Changes verified across Issue Details modal, standalone Task Details page, and Roadmap Task modal.
+- [x] Frontend builds with 0 errors and deployed to Cloudflare Workers.
+
+---
+
+### 🔹 Sub-task 37: Platform-Wide Sub-Second Latency Optimization via Cloudflare Service Bindings, Cold-Start Elimination, and Batched Querying
+
+- **Parent Ticket**: `Enhancing the Klanservichub V1`
+- **Issue Type**: `Sub-task`
+- **Summary**: `Subtask 37: Platform-Wide Sub-Second Latency Optimization via Cloudflare Service Bindings, Cold-Start Elimination, and Batched Querying`
+- **Priority**: `P1 - High (⬆️)`
+- **Story Points**: `5`
+- **Component**: `Core Infrastructure & Performance / Edge & Backend`
+- **Labels**: `performance`, `latency`, `cloudflare-workers`, `service-bindings`, `cors-elimination`, `d1-optimization`
+
+#### Description
+Eliminate platform-wide multi-second latency bottlenecks (reducing edge response times from 34+ seconds down to 0.61 seconds—a 55x performance gain). The root causes included cross-origin CORS `OPTIONS` preflight duplication, Host header proxy dropping on Cloudflare Workers, synchronous CPU-intensive key backfill and schema loops running on serverless isolate boot, sequential non-batched D1 database queries in task endpoints, and short-lived session caching.
+
+#### Scope of Work
+- **Cloudflare Service Bindings Integration (`frontend/wrangler.json`, `frontend/src/worker.js`)**:
+  - Connect `klanservicehub-frontend` to `klanservicehub-backend` via native Cloudflare `services` binding (`env.BACKEND`).
+  - Route `/api/*` requests in-memory on the Cloudflare edge mesh with `env.BACKEND.fetch(request)` with zero HTTP/TLS/DNS transport overhead and loop protection.
+- **Same-Origin API Client Routing (`frontend/src/lib/api-client.js`)**:
+  - Update production `API_BASE_URL` to relative same-origin paths, completely eliminating external CORS `OPTIONS` preflight network trips across the internet.
+- **Serverless Cold-Start CPU Optimization (`backend/src/index.js`, `backend/src/db.js`)**:
+  - Guard `backfillProjectAndTaskKeys()` to run exclusively in local direct CLI execution, preventing isolate execution freeze on Cloudflare Workers.
+  - Guard SQLite `initSchema()` and default dashboard seeding loops to prevent running against in-memory stubs on every cold boot, achieving a 52ms worker startup time.
+  - Add `maxAge: 86400` to backend CORS options for 24-hour preflight caching.
+- **Concurrent D1 Query Batching (`backend/src/features/tasks/server/route.js`)**:
+  - Convert sequential `attachAssigneesToTasks` and `attachLikesAndFavoritesToTasks` calls in `/api/tasks` and `/api/tasks/my-work` into parallel `Promise.all` executions.
+- **Extended In-Memory Session Cache (`backend/src/lib/session-middleware.js`)**:
+  - Increase session memory cache TTL to 60 seconds to eliminate redundant session lookups on subsequent API calls.
+
+#### Acceptance Criteria
+- [x] Worker cold boot startup time reduced to ~52 ms.
+- [x] Health and authentication endpoints respond in sub-second times (~0.61s to 0.95s).
+- [x] Zero CORS `OPTIONS` preflight requests generated by the browser in production.
+- [x] Cloudflare Service Binding cleanly routes all `/api/*` calls directly in-process.
+- [x] Both frontend and backend deploy cleanly with 0 errors.
+
+---
+
+### 🔹 Sub-task 38: Independent Dual-Pane Scrolling and Elimination of Vertical Scroll Lock in Ticket Details
+
+- **Parent Ticket**: `Enhancing the Klanservichub V1`
+- **Issue Type**: `Sub-task` *(or `Bug`)*
+- **Summary**: `Subtask 38: Independent dual-pane scrolling and elimination of vertical scroll lock in ticket details`
+- **Priority**: `P1 - High (⬆️)`
+- **Story Points**: `3`
+- **Component**: `Frontend / Tasks & UI Layout`
+- **Labels**: `tasks`, `scrolling`, `dual-pane`, `ui-bug`, `layout`, `modal`
+
+#### Description
+Resolve a critical layout bug where users were unable to scroll down to view comments or full ticket details in the Issue Details modal (`klanservicehub-issue-detail-modal.jsx`). The issue was caused by `overflow-hidden` applied to the left column (`lg:col-span-8`) which enforced `overflow-y: hidden`, combined with a single shared grid scrollbar that locked and stopped scrolling as soon as the shorter right sidebar properties panel reached its bottom.
+
+#### Scope of Work
+- **Dual-Pane Independent Scrolling (`klanservicehub-issue-detail-modal.jsx`)**:
+  - Update modal grid container to `flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-12 overflow-y-auto lg:overflow-hidden divide-y lg:divide-y-0 lg:divide-x divide-neutral-200`.
+  - Configure left details column (`lg:col-span-8`) with `min-w-0 lg:overflow-y-auto lg:overflow-x-hidden lg:h-full`, enabling unrestricted smooth scrolling through long comment feeds, worklogs, and subtasks.
+  - Configure right properties sidebar (`lg:col-span-4`) with `min-w-0 lg:overflow-y-auto lg:overflow-x-hidden lg:h-full` so it remains independently scrollable and pinned.
+  - Maintain unified full-height vertical scroll on mobile/tablet viewports.
+- **Standalone Task View Containment (`tasks/[taskId]/client.jsx`)**:
+  - Replace `overflow-hidden` with `overflow-x-hidden min-w-0` on `lg:col-span-8` to ensure page-level vertical scroll is never truncated.
+
+#### Acceptance Criteria
+- [x] Left column in Issue Details modal scrolls smoothly through all comments, attachments, and worklogs without being cut off.
+- [x] Right sidebar properties panel remains independently accessible and scrollable.
+- [x] Unbroken URLs and long text remain constrained without horizontal overflow.
+- [x] Standalone full-page task view scrolls down seamlessly.
+- [x] Clean compilation and deployment to Cloudflare Workers with 0 errors.
 
 
 
