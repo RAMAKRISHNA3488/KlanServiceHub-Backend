@@ -49,6 +49,7 @@ import deployments from './features/deployments/server/route.js';
 import portfolio from './features/portfolio/server/route.js';
 import search from './features/search/server/route.js';
 import platformAdmin from './features/platform-admin/server/route.js';
+import ticketLinks, { ticketSubApp } from './features/ticket-links/server/route.js';
 import { setD1Database } from './db.js';
 
 const app = new Hono();
@@ -149,7 +150,9 @@ api
   .route('/portfolio', portfolio)
   .route('/search', search)
   .route('/enterprise', search)
-  .route('/platform-admin', platformAdmin);
+  .route('/platform-admin', platformAdmin)
+  .route('/ticket-links', ticketLinks)
+  .route('/tickets', ticketSubApp);
 
 const apiV1 = new Hono().basePath('/api/v1');
 apiV1
@@ -183,7 +186,9 @@ apiV1
   .route('/portfolio', portfolio)
   .route('/search', search)
   .route('/enterprise', search)
-  .route('/platform-admin', platformAdmin);
+  .route('/platform-admin', platformAdmin)
+  .route('/ticket-links', ticketLinks)
+  .route('/tickets', ticketSubApp);
 
 app.route('/', api);
 app.route('/', apiV1);

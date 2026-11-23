@@ -404,9 +404,11 @@ CREATE TABLE IF NOT EXISTS task_links (
   id TEXT PRIMARY KEY,
   source_task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
   target_task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
-  relationship_type TEXT NOT NULL DEFAULT 'relates to', -- blocks, is blocked by, relates to, duplicates, is duplicated by
+  relationship_type TEXT NOT NULL DEFAULT 'relates to', -- blocks, is blocked by, relates to, duplicates, is duplicated by, clones, is cloned by
+  description TEXT DEFAULT '',
   created_by TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS work_logs (

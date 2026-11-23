@@ -10,6 +10,7 @@ import { sessionMiddleware } from '../../../lib/session-middleware.js';
 import { db, formatDoc, logAudit, logActivity, createNotification, triggerAutomations, getD1Database, d1All, d1First, d1Run } from '../../../db.js';
 import { broadcastWorkspaceEvent } from '../../../lib/events.js';
 import { getNextTaskKeyForProject } from '../../../lib/issue-key.js';
+import { getTicketLinksData, getTicketDependenciesData } from '../../ticket-links/server/route.js';
 
 async function attachAssigneesToTasks(tasks, d1) {
   if (!tasks || tasks.length === 0) return tasks;
@@ -810,6 +811,20 @@ const app = new Hono()
     await attachLikesAndFavoritesToTask(task, currentUser?.$id, d1);
 
     return ctx.json({ data: task });
+  })
+  .get('/:taskId/links', sessionMiddleware, async (ctx) => {
+    const { taskId } = ctx.req.param();
+    const d1 = ctx.env?.DB || getD1Database();
+    const data = await getTicketLinksData(taskId, d1);
+    if (!data) return ctx.json({ error: 'Task not found.' }, 404);
+    return ctx.json({ data });
+  })
+  .get('/:taskId/dependencies', sessionMiddleware, async (ctx) => {
+    const { taskId } = ctx.req.param();
+    const d1 = ctx.env?.DB || getD1Database();
+    const data = await getTicketDependenciesData(taskId, d1);
+    if (!data) return ctx.json({ error: 'Task not found.' }, 404);
+    return ctx.json({ data });
   })
   .post('/', sessionMiddleware, async (ctx) => {
     const user = ctx.get('user');
