@@ -379,11 +379,11 @@ export async function getTicketLinksData(ticketId, d1) {
   const rawLinks = await d1All(`
     SELECT l.id as link_id, l.source_task_id, l.target_task_id, l.relationship_type, l.description,
            l.created_at, l.updated_at, l.created_by,
-           st.id as s_id, st.key as s_key, st.name as s_name, st.status as s_status, st.priority as s_priority,
+           st.id as s_id, st.key as s_key, COALESCE(st.name, '') as s_name, st.status as s_status, st.priority as s_priority,
            st.issue_type as s_issue_type, st.due_date as s_due_date, st.story_points as s_story_points,
            st.project_id as s_project_id, sp.name as s_project_name,
            su.name as s_assignee_name, su.avatar_url as s_assignee_avatar,
-           tt.id as t_id, tt.key as t_key, tt.name as t_name, tt.status as t_status, tt.priority as t_priority,
+           tt.id as t_id, tt.key as t_key, COALESCE(tt.name, '') as t_name, tt.status as t_status, tt.priority as t_priority,
            tt.issue_type as t_issue_type, tt.due_date as t_due_date, tt.story_points as t_story_points,
            tt.project_id as t_project_id, tp.name as t_project_name,
            tu.name as t_assignee_name, tu.avatar_url as t_assignee_avatar,
@@ -391,8 +391,8 @@ export async function getTicketLinksData(ticketId, d1) {
     FROM task_links l
     JOIN tasks st ON l.source_task_id = st.id
     JOIN tasks tt ON l.target_task_id = tt.id
-    JOIN projects sp ON st.project_id = sp.id
-    JOIN projects tp ON tt.project_id = tp.id
+    LEFT JOIN projects sp ON st.project_id = sp.id
+    LEFT JOIN projects tp ON tt.project_id = tp.id
     LEFT JOIN members sm ON st.assignee_id = sm.id
     LEFT JOIN users su ON sm.user_id = su.id
     LEFT JOIN members tm ON tt.assignee_id = tm.id
@@ -422,8 +422,8 @@ export async function getTicketLinksData(ticketId, d1) {
       ? {
           id: row.t_id,
           key: row.t_key,
-          title: row.t_name,
-          name: row.t_name,
+          title: (row.t_name || '').trim() || 'Untitled Ticket',
+          name: (row.t_name || '').trim() || 'Untitled Ticket',
           status: row.t_status,
           priority: row.t_priority,
           issueType: row.t_issue_type,
@@ -436,8 +436,8 @@ export async function getTicketLinksData(ticketId, d1) {
       : {
           id: row.s_id,
           key: row.s_key,
-          title: row.s_name,
-          name: row.s_name,
+          title: (row.s_name || '').trim() || 'Untitled Ticket',
+          name: (row.s_name || '').trim() || 'Untitled Ticket',
           status: row.s_status,
           priority: row.s_priority,
           issueType: row.s_issue_type,
