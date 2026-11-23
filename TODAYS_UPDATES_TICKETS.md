@@ -1353,7 +1353,51 @@ Implement a complete Ticket Linking and Relationship Management system within Kl
 - [x] Linear dependency paths are visually mapped with directional arrows and status pills.
 - [x] Unlinking removes relationships and logs activity history.
 - [x] Clicking a linked ticket navigates seamlessly to its details page.
-- [x] Fully deployed to Cloudflare Workers with passing unit and integration tests.
+---
+
+### 🔹 Sub-task 40: Attach Images in Ticket Description Across All Surfaces
+
+- **Parent Ticket**: `Enhancing the Klanservichub V1`
+- **Issue Type**: `Sub-task` *(or `Story`)*
+- **Summary**: `Subtask 40: Enable image attachments, clipboard paste (Ctrl+V), drag-and-drop, and Lightbox in ticket descriptions across all views`
+- **Priority**: `P1 - High (⬆️)`
+- **Story Points**: `5`
+- **Component**: `Full Stack / Tasks & Description Composer`
+- **Labels**: `tasks`, `description-images`, `image-upload`, `paste-screenshot`, `lightbox`, `d1-migration`
+
+#### Description
+Allow team members to attach screenshots and images directly to ticket descriptions across all platform surfaces (Issue Details modal, full Task Details page, Issue Creation modal, and Roadmap modal), matching the interactive image attachment workflow previously built for Comments.
+
+#### Scope of Work
+- **Database Schema Migration (`tasks` table in Cloudflare D1 & SQLite)**:
+  - Add `description_images TEXT DEFAULT '[]'` column to the `tasks` table.
+  - Update `UPDATED_DATABASE_TABLES.sql` and `backend/cloudflare-d1-schema.sql`.
+- **Backend Architecture & REST APIs (`backend/src/features/tasks/server/route.js` & `backend/src/db.js`)**:
+  - `GET /api/tasks/:taskId`: Parse and return `description_images` / `descriptionImages` as an array.
+  - `PATCH /api/tasks/:taskId`: Accept `descriptionImages` or `description_images` in update payloads and persist to D1.
+  - `POST /api/tasks`: Support initial `descriptionImages` when creating a new issue/task.
+  - `formatDoc`: Parse `description_images` JSON safely with array fallback.
+- **Frontend Description Composer (`frontend/src/features/tasks/components/`)**:
+  - **Issue Detail Modal (`klanservicehub-issue-detail-modal.jsx`)**:
+    - Upgrade plain textarea into an interactive Description Composer with an explicit `[📷 Attach Image]` button.
+    - Support direct clipboard paste (`Ctrl + V`) for instant screenshot captures.
+    - Support drag-and-drop image uploads directly into the description box.
+    - Render attached image thumbnails strip with hover `[X]` delete buttons.
+    - Full-screen interactive Lightbox view on thumbnail click.
+  - **Full Ticket Page (`src/app/(dashboard)/workspaces/[workspaceId]/tasks/[taskId]/client.jsx`)**:
+    - Replicate the same Description Composer, `[Attach Image]` button, `Ctrl+V` paste, drag-and-drop, and Lightbox.
+  - **Create Issue Modal (`klanservicehub-create-issue-modal.jsx`)**:
+    - Support attaching description images and screenshot pasting upfront during ticket creation.
+  - **Roadmap Task Modal (`roadmap-task-modal.jsx`)**:
+    - Render attached description images in the roadmap work item viewer with one-click view.
+
+#### Acceptance Criteria
+- [x] Users can attach images to ticket descriptions using `[Attach Image]`, clipboard paste (`Ctrl + V`), or drag-and-drop.
+- [x] Images are safely stored as JSON payloads in `tasks.description_images`.
+- [x] Description images persist across saves and reloads.
+- [x] Clicking image thumbnails opens the full-resolution Lightbox preview.
+- [x] Works seamlessly across Issue Detail Modal, Full Task Page, Create Issue Modal, and Roadmap Modal.
+- [x] Successfully deployed to Cloudflare Workers with 0 errors.
 
 
 
