@@ -163,6 +163,7 @@ WHERE id IN (
 -- 8. SAFE MIGRATIONS FOR PRE-EXISTING TABLES (Run if tables already exist)
 -- =======================================================================
 -- ALTER TABLE tasks ADD COLUMN completed_at DATETIME;
+-- ALTER TABLE tasks ADD COLUMN description_images TEXT DEFAULT '[]';
 -- ALTER TABLE task_comments ADD COLUMN images TEXT DEFAULT '[]';
 -- CREATE INDEX IF NOT EXISTS idx_tasks_completed_at ON tasks(completed_at);
 -- CREATE INDEX IF NOT EXISTS idx_task_likes_task ON task_likes(task_id);
