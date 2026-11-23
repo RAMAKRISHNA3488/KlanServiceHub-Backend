@@ -1,6 +1,6 @@
 # KlanServiceHub V1 — Epic & Sub-Tasks Specification
 
-This document is structured so you can first create the **Main Parent Ticket (Epic / Story)** in KlanServiceHub, and then create each of the **38 Sub-tasks** linked directly under it.
+This document is structured so you can first create the **Main Parent Ticket (Epic / Story)** in KlanServiceHub, and then create each of the **39 Sub-tasks** linked directly under it.
 
 ---
 
@@ -9,12 +9,12 @@ This document is structured so you can first create the **Main Parent Ticket (Ep
 - **Issue Type**: `Epic` *(or `Story` if your workflow doesn't use Epics)*
 - **Summary**: `Enhancing the Klanservichub V1`
 - **Priority**: `P1 - High (⬆️)`
-- **Total Story Points**: `168`
+- **Total Story Points**: `176`
 - **Module / Component**: `Core Platform / Multi-Module`
-- **Labels**: `v1-enhancements`, `epic`, `platform-stability`, `ui-ux`, `analytics`, `tasks-boards`, `workflows`, `projects`
+- **Labels**: `v1-enhancements`, `epic`, `platform-stability`, `ui-ux`, `analytics`, `tasks-boards`, `workflows`, `projects`, `ticket-links`
 
 ### Description
-Comprehensive platform stabilization and feature enhancements for **KlanServiceHub V1**. This work item addresses critical functional gaps across reports and analytics data integrity on Cloudflare D1, refines Jira-standard task and comment management, implements high-end glassmorphic privacy controls, enables fast board double-click interactions, resolves landing page viewport scroll locks, institutes a 50-event rolling FIFO expiration policy for organization activity streams, implements comment image attachments with automated 6-day ticket completion expiration, enables universal Share, Like, and Save / Favorite capabilities across all issue types (Tasks, Sub-tasks, Stories, Epics, Bugs), introduces customizable Workflow Stage Overload telemetry with WIP capacity limits and dynamic real-time color indicator lines on Kanban boards, enables full project-wise WIP capacity limit and overload alert color customization directly from Project Settings, architects an isolated Super Admin Control Plane with mandatory MFA, resolves comment container text/URL overflow defects across ticket detail views, achieves 55x sub-second platform latency optimization via Cloudflare Service Bindings, and delivers independent dual-pane scrolling across ticket views.
+Comprehensive platform stabilization and feature enhancements for **KlanServiceHub V1**. This work item addresses critical functional gaps across reports and analytics data integrity on Cloudflare D1, refines Jira-standard task and comment management, implements high-end glassmorphic privacy controls, enables fast board double-click interactions, resolves landing page viewport scroll locks, institutes a 50-event rolling FIFO expiration policy for organization activity streams, implements comment image attachments with automated 6-day ticket completion expiration, enables universal Share, Like, and Save / Favorite capabilities across all issue types (Tasks, Sub-tasks, Stories, Epics, Bugs), introduces customizable Workflow Stage Overload telemetry with WIP capacity limits and dynamic real-time color indicator lines on Kanban boards, enables full project-wise WIP capacity limit and overload alert color customization directly from Project Settings, architects an isolated Super Admin Control Plane with mandatory MFA, resolves comment container text/URL overflow defects across ticket detail views, achieves 55x sub-second platform latency optimization via Cloudflare Service Bindings, delivers independent dual-pane scrolling across ticket views, and delivers enterprise Ticket-to-Ticket Linking and Dependency Management with automated bidirectional inverse mapping, circular blocking cycle detection, blocker alert banners, and linear dependency flow visualization.
 
 ### Key Objectives
 1. **Reporting & Analytics Resilience**: Ensure real-time Cloudflare D1 persistence and metrics generation for Teams, Workloads, and Employee reports.
@@ -30,6 +30,7 @@ Comprehensive platform stabilization and feature enhancements for **KlanServiceH
 11. **Ticket Comment Layout & Containment**: Prevent unbroken Confluence/Jira URLs and text from overflowing into sidebar metadata, with auto-linked interactive URLs and responsive word breaking.
 12. **Sub-Second Platform Telemetry & Cold-Start Elimination**: Direct Cloudflare Service Bindings, 0-CORS same-origin edge routing, and asynchronous query batching reducing API latency by 98%.
 13. **Independent Dual-Pane Ticket Scrolling**: Unlocked vertical scroll with dedicated smooth scrolling across left comment feeds and right properties sidebars.
+14. **Ticket-to-Ticket Linking & Dependency Management**: Enable users to connect tickets in the same project across 7 relationship types with automatic inverse resolution, directed cycle detection on blocking links, blocker alert banners, linear flow visualizer, and full activity history logging.
 
 ---
 
@@ -1299,6 +1300,59 @@ Resolve a critical layout bug where users were unable to scroll down to view com
 - [x] Unbroken URLs and long text remain constrained without horizontal overflow.
 - [x] Standalone full-page task view scrolls down seamlessly.
 - [x] Clean compilation and deployment to Cloudflare Workers with 0 errors.
+
+---
+
+### 🔹 Sub-task 39: Implement Ticket-to-Ticket Linking and Dependency Management
+
+- **Parent Ticket**: `Enhancing the Klanservichub V1`
+- **Issue Type**: `Sub-task` *(or `Story`)*
+- **Summary**: `Subtask 39: Implement ticket-to-ticket linking, dependency tracking, and cycle detection`
+- **Priority**: `P1 - High (⬆️)`
+- **Story Points**: `8`
+- **Component**: `Full Stack / Tasks & Relationships`
+- **Labels**: `tasks`, `ticket-links`, `dependencies`, `relationships`, `cycle-detection`, `graph`, `d1-migration`
+
+#### Description
+Implement a complete Ticket Linking and Relationship Management system within KlanServiceHub. This allows users to connect tickets belonging to the same project, establish dependencies, track blockers, navigate between connected tickets, visualize dependency chains (e.g. `Ticket A → Ticket B → Ticket C`), and log all relationship modifications to activity history.
+
+#### Scope of Work
+- **Database Schema Migration (`task_links` table in Cloudflare D1)**:
+  - Add `description TEXT DEFAULT ''` and `updated_at DATETIME` to `task_links`.
+  - Add indexing on `source_task_id` and `target_task_id` for fast bidirectional relationship queries.
+- **Backend Architecture & REST APIs (`backend/src/features/ticket-links/server/route.js`)**:
+  - `POST /api/ticket-links`: Create relationship with same-project enforcement, self-link prevention, duplicate prevention, and directed graph cycle detection (`hasDirectedBlockingCycle`).
+  - `GET /api/tickets/:ticketId/links` & `GET /api/tasks/:taskId/links`: Fetch all incoming and outgoing links with automated perspective resolution, inverse relationship mapping, and relationship grouping (`blocks`, `isBlockedBy`, `relatesTo`, `duplicates`, `clones`).
+  - `GET /api/tickets/:ticketId/dependencies` & `GET /api/tasks/:taskId/dependencies`: Compute linear blocking flow paths and identify active unresolved blockers (`status !== 'DONE'`).
+  - `PUT /api/ticket-links/:linkId`: Update relationship type or description with dynamic cycle re-checking.
+  - `DELETE /api/ticket-links/:linkId`: Remove link with comprehensive activity history logging.
+- **Cycle Detection & Business Rules Engine**:
+  - Automatically map 7 bidirectional relationship types:
+    - `blocks` ↔ `is blocked by`
+    - `relates to` ↔ `relates to`
+    - `duplicates` ↔ `is duplicated by`
+    - `clones` ↔ `is cloned by`
+  - Transitive cycle check: Prevent `A blocks B`, `B blocks C`, `C blocks A` dependency loops using Breadth-First/Depth-First Search.
+  - Project isolation: Prevent linking tickets across different projects.
+- **Frontend Components & User Experience (`frontend/src/features/tasks/components/`)**:
+  - `LinkTicketModal`: Search tickets by key/title within the same project, select from the 7 relationship types with contextual descriptions, add optional notes, and submit with error handling.
+  - `LinkedTicketsSection`: Dedicated Jira-standard section in ticket details displaying linked tickets grouped by relationship, with key, title, status pill, priority, assignee avatar, date, unlinking, and one-click navigation.
+  - `DependencyBanner`: Prominent top alert banner identifying when a ticket cannot progress because of unresolved blockers.
+  - `DependencyVisualizer`: Directional flow visualization (`Ticket A → Ticket B → Ticket C`) with status badges and interactive click navigation.
+  - Integration into both `klanservicehub-issue-detail-modal.jsx` and standalone `tasks/[taskId]/client.jsx`.
+- **Activity History Logging**:
+  - Automatically log link creation, link removal, and relationship updates for both source and target tickets.
+
+#### Acceptance Criteria
+- [x] Only tickets belonging to the same project can be linked; cross-project links are rejected.
+- [x] Self-linking is prevented.
+- [x] All 7 relationship types and their inverses are automatically resolved based on the viewing ticket's perspective.
+- [x] Directed cycle detection prevents circular blocking relationships (both direct and transitive chains).
+- [x] Unresolved blockers are highlighted with prominent warning banners.
+- [x] Linear dependency paths are visually mapped with directional arrows and status pills.
+- [x] Unlinking removes relationships and logs activity history.
+- [x] Clicking a linked ticket navigates seamlessly to its details page.
+- [x] Fully deployed to Cloudflare Workers with passing unit and integration tests.
 
 
 
