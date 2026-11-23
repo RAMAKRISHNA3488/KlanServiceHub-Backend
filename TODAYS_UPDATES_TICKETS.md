@@ -1337,6 +1337,7 @@ Implement a complete Ticket Linking and Relationship Management system within Kl
 - **Frontend Components & User Experience (`frontend/src/features/tasks/components/`)**:
   - `LinkTicketModal`: Search tickets by key/title within the same project, select from the 7 relationship types with contextual descriptions, add optional notes, and submit with error handling.
   - `LinkedTicketsSection`: Dedicated Jira-standard section in ticket details displaying linked tickets grouped by relationship, with key, title, status pill, priority, assignee avatar, date, unlinking, and one-click navigation.
+  - Placed the `Linked Tickets & Dependencies` tab directly after `Time Tracking` in the activity tabs bar, replacing the `Images` tab across both modal and full-page ticket views.
   - `DependencyBanner`: Prominent top alert banner identifying when a ticket cannot progress because of unresolved blockers.
   - `DependencyVisualizer`: Directional flow visualization (`Ticket A → Ticket B → Ticket C`) with status badges and interactive click navigation.
   - Integration into both `klanservicehub-issue-detail-modal.jsx` and standalone `tasks/[taskId]/client.jsx`.
