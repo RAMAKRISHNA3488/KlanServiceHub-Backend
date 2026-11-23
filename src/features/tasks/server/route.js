@@ -857,12 +857,25 @@ const app = new Hono()
       originalEstimateHours = 0,
     } = body;
 
-    if (!name || !workspaceId || !projectId) {
+    const d1 = ctx.env?.DB || getD1Database();
+
+    let effectiveWorkspaceId = workspaceId;
+    let effectiveProjectId = projectId;
+
+    if ((!effectiveWorkspaceId || !effectiveProjectId) && parentTaskId) {
+      const parentTask = await d1First('SELECT workspace_id, project_id FROM tasks WHERE id = ?', [parentTaskId], d1);
+      if (parentTask) {
+        effectiveWorkspaceId = effectiveWorkspaceId || parentTask.workspace_id;
+        effectiveProjectId = effectiveProjectId || parentTask.project_id;
+      }
+    }
+
+    if (!name || !effectiveWorkspaceId || !effectiveProjectId) {
       return ctx.json({ error: 'Name, workspaceId, and projectId are required.' }, 400);
     }
 
     const member = await getMember({
-      workspaceId,
+      workspaceId: effectiveWorkspaceId,
       userId: user.$id,
     });
 
@@ -870,22 +883,20 @@ const app = new Hono()
       return ctx.json({ error: 'Unauthorized.' }, 401);
     }
 
-    const d1 = ctx.env?.DB || getD1Database();
-
     // Auto-generate project-wise unique KlanserviceHub issue key (e.g. SW-1, IE-2, KLAN-101)
-    const key = await getNextTaskKeyForProject(projectId, d1);
+    const key = await getNextTaskKeyForProject(effectiveProjectId, d1);
 
     let maxPosNum = 0;
     if (d1) {
       try {
-        const hp = await d1.prepare('SELECT MAX(position) as max_pos FROM tasks WHERE status = ? AND workspace_id = ?').bind(status, workspaceId).first();
+        const hp = await d1.prepare('SELECT MAX(position) as max_pos FROM tasks WHERE status = ? AND workspace_id = ?').bind(status, effectiveWorkspaceId).first();
         if (hp && hp.max_pos) maxPosNum = hp.max_pos;
       } catch (e) {}
     }
     if (maxPosNum === 0) {
       const highestPos = db.prepare(`
         SELECT MAX(position) as max_pos FROM tasks WHERE status = ? AND workspace_id = ?
-      `).get(status, workspaceId);
+      `).get(status, effectiveWorkspaceId);
       if (highestPos && highestPos.max_pos) maxPosNum = highestPos.max_pos;
     }
 
@@ -925,8 +936,8 @@ const app = new Hono()
           status,
           priority,
           issueType,
-          workspaceId,
-          projectId,
+          effectiveWorkspaceId,
+          effectiveProjectId,
           primaryAssigneeId,
           user.$id,
           sprintId || null,
@@ -965,8 +976,8 @@ const app = new Hono()
       status,
       priority,
       issueType,
-      workspaceId,
-      projectId,
+      effectiveWorkspaceId,
+      effectiveProjectId,
       primaryAssigneeId,
       user.$id,
       sprintId || null,
@@ -987,11 +998,11 @@ const app = new Hono()
         const assignedMember = db.prepare('SELECT user_id FROM members WHERE id = ?').get(mId);
         if (assignedMember && assignedMember.user_id !== user.$id) {
           createNotification({
-            workspaceId,
+            workspaceId: effectiveWorkspaceId,
             userId: assignedMember.user_id,
             title: `Assigned to ${key}`,
             message: `${user.name} assigned you to ${key}: "${name}"`,
-            link: `/workspaces/${workspaceId}/tasks/${taskId}`,
+            link: `/workspaces/${effectiveWorkspaceId}/tasks/${taskId}`,
             type: 'ASSIGNMENT',
           });
         }
@@ -999,7 +1010,7 @@ const app = new Hono()
     } catch (err) {}
 
     logAudit({
-      workspaceId,
+      workspaceId: effectiveWorkspaceId,
       actorId: user.$id,
       actorName: user.name,
       action: 'CREATE_ISSUE',
@@ -1009,14 +1020,14 @@ const app = new Hono()
     });
 
     triggerAutomations({
-      workspaceId,
+      workspaceId: effectiveWorkspaceId,
       triggerEvent: 'ON_ISSUE_CREATED',
       context: { key, name, priority, status },
     });
 
     if (priority === 'CRITICAL' || priority === 'HIGHEST') {
       triggerAutomations({
-        workspaceId,
+        workspaceId: effectiveWorkspaceId,
         triggerEvent: 'ON_PRIORITY_CRITICAL',
         context: { key, name, priority },
       });
