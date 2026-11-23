@@ -168,3 +168,25 @@ WHERE id IN (
 -- CREATE INDEX IF NOT EXISTS idx_task_likes_user ON task_likes(user_id);
 -- ALTER TABLE workflow_statuses ADD COLUMN max_tasks INTEGER DEFAULT 5;
 -- ALTER TABLE workflow_statuses ADD COLUMN overload_color TEXT DEFAULT '#EF4444';
+-- ALTER TABLE projects ADD COLUMN stage_limits TEXT DEFAULT '{}';
+-- ALTER TABLE task_links ADD COLUMN description TEXT DEFAULT '';
+-- ALTER TABLE task_links ADD COLUMN updated_at DATETIME;
+-- CREATE INDEX IF NOT EXISTS idx_task_links_source ON task_links(source_task_id);
+-- CREATE INDEX IF NOT EXISTS idx_task_links_target ON task_links(target_task_id);
+
+-- =======================================================================
+-- 9. TASK LINKS TABLE (Ticket-to-Ticket Linking & Dependency Management)
+-- =======================================================================
+CREATE TABLE IF NOT EXISTS task_links (
+  id TEXT PRIMARY KEY,
+  source_task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  target_task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  relationship_type TEXT NOT NULL DEFAULT 'relates to', -- blocks, is blocked by, relates to, duplicates, is duplicated by, clones, is cloned by
+  description TEXT DEFAULT '',
+  created_by TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_task_links_source ON task_links(source_task_id);
+CREATE INDEX IF NOT EXISTS idx_task_links_target ON task_links(target_task_id);

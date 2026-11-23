@@ -968,5 +968,7 @@ CREATE INDEX IF NOT EXISTS idx_tasks_assignee_id ON tasks(assignee_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
 CREATE INDEX IF NOT EXISTS idx_task_assignees_task_id ON task_assignees(task_id);
 CREATE INDEX IF NOT EXISTS idx_task_assignees_member_id ON task_assignees(member_id);
+CREATE INDEX IF NOT EXISTS idx_task_links_source ON task_links(source_task_id);
+CREATE INDEX IF NOT EXISTS idx_task_links_target ON task_links(target_task_id);
 CREATE INDEX IF NOT EXISTS idx_audit_logs_workspace ON audit_logs(workspace_id);
 CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_id, workspace_id);
