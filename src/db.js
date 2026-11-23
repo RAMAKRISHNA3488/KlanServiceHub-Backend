@@ -2082,6 +2082,15 @@ export function formatDoc(row) {
       doc.images = [];
     }
   }
+  if (row.description_images !== undefined) {
+    try {
+      doc.descriptionImages = typeof row.description_images === 'string' ? JSON.parse(row.description_images) : (row.description_images || []);
+      doc.description_images = doc.descriptionImages;
+    } catch (e) {
+      doc.descriptionImages = [];
+      doc.description_images = [];
+    }
+  }
   return doc;
 }
 

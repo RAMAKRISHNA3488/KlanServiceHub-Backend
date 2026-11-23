@@ -731,6 +731,14 @@ const app = new Hono()
     task.storyPoints = row.story_points || 1;
     task.issueType = row.issue_type || 'Task';
     task.priority = row.priority || 'MEDIUM';
+    let rawDescImages = [];
+    try {
+      rawDescImages = typeof row.description_images === 'string' ? JSON.parse(row.description_images) : (Array.isArray(row.description_images) ? row.description_images : []);
+    } catch (e) {
+      rawDescImages = [];
+    }
+    task.descriptionImages = rawDescImages;
+    task.description_images = rawDescImages;
 
     // Subtasks
     let subtasks = null;
@@ -896,20 +904,24 @@ const app = new Hono()
       targetAssigneeIds = [primaryAssigneeId];
     }
 
+    const descImages = body.descriptionImages || body.description_images || [];
+    const descImagesJson = typeof descImages === 'string' ? descImages : JSON.stringify(descImages);
+
     if (d1) {
       try {
         await d1.prepare(`
           INSERT INTO tasks (
-            id, key, name, description, status, priority, issue_type, workspace_id, project_id,
+            id, key, name, description, description_images, status, priority, issue_type, workspace_id, project_id,
             assignee_id, reporter_id, sprint_id, story_points, labels, epic_id, parent_task_id,
             original_estimate_hours, due_date, position
           )
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `).bind(
           taskId,
           key,
           name,
           description || null,
+          descImagesJson,
           status,
           priority,
           issueType,
@@ -939,16 +951,17 @@ const app = new Hono()
 
     db.prepare(`
       INSERT INTO tasks (
-        id, key, name, description, status, priority, issue_type, workspace_id, project_id,
+        id, key, name, description, description_images, status, priority, issue_type, workspace_id, project_id,
         assignee_id, reporter_id, sprint_id, story_points, labels, epic_id, parent_task_id,
         original_estimate_hours, due_date, position
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       taskId,
       key,
       name,
       description || null,
+      descImagesJson,
       status,
       priority,
       issueType,
@@ -1106,6 +1119,11 @@ const app = new Hono()
       }
     }
     if (description !== undefined) { updates.push('description = ?'); params.push(description); }
+    const descriptionImages = body.descriptionImages !== undefined ? body.descriptionImages : body.description_images;
+    if (descriptionImages !== undefined) {
+      updates.push('description_images = ?');
+      params.push(typeof descriptionImages === 'string' ? descriptionImages : JSON.stringify(descriptionImages || []));
+    }
     if (projectId !== undefined) { updates.push('project_id = ?'); params.push(projectId); }
     if (priority !== undefined) { updates.push('priority = ?'); params.push(priority); }
     if (issueType !== undefined) { updates.push('issue_type = ?'); params.push(issueType); }
