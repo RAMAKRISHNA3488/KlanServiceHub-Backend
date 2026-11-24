@@ -1,6 +1,6 @@
 # KlanServiceHub V1 — Epic & Sub-Tasks Specification
 
-This document is structured so you can first create the **Main Parent Ticket (Epic / Story)** in KlanServiceHub, and then create each of the **39 Sub-tasks** linked directly under it.
+This document is structured so you can first create the **Main Parent Ticket (Epic / Story)** in KlanServiceHub, and then create each of the **41 Sub-tasks** linked directly under it.
 
 ---
 
@@ -9,7 +9,7 @@ This document is structured so you can first create the **Main Parent Ticket (Ep
 - **Issue Type**: `Epic` *(or `Story` if your workflow doesn't use Epics)*
 - **Summary**: `Enhancing the Klanservichub V1`
 - **Priority**: `P1 - High (⬆️)`
-- **Total Story Points**: `176`
+- **Total Story Points**: `186`
 - **Module / Component**: `Core Platform / Multi-Module`
 - **Labels**: `v1-enhancements`, `epic`, `platform-stability`, `ui-ux`, `analytics`, `tasks-boards`, `workflows`, `projects`, `ticket-links`
 
@@ -1398,6 +1398,56 @@ Allow team members to attach screenshots and images directly to ticket descripti
 - [x] Clicking image thumbnails opens the full-resolution Lightbox preview.
 - [x] Works seamlessly across Issue Detail Modal, Full Task Page, Create Issue Modal, and Roadmap Modal.
 - [x] Successfully deployed to Cloudflare Workers with 0 errors.
+
+---
+
+### 🔹 Sub-task 41: 6-Day Expiration Lifecycle & Auto-Pruning for Description Images
+
+- **Parent Ticket**: `Enhancing the Klanservichub V1`
+- **Issue Type**: `Sub-task` *(or `Story`)*
+- **Summary**: `Subtask 41: Enforce 6-day expiration lifecycle, auto-pruning, and status badges for ticket description images post-completion`
+- **Priority**: `P1 - High (⬆️)`
+- **Story Points**: `5`
+- **Component**: `Full Stack / Task Description & Storage Optimization`
+- **Labels**: `tasks`, `description-images`, `expiration-lifecycle`, `auto-prune`, `d1-storage`, `ui-badges`
+
+#### Description
+Align ticket description images with the 6-day retention rule established for comment images. While a ticket remains active (`TODO`, `IN_PROGRESS`, `IN_REVIEW`), description images stay active indefinitely. Once a ticket is marked `DONE`, an automated 6-day countdown begins based on `completed_at`. If 6 days elapse post-completion, image payloads in `tasks.description_images` are automatically pruned to `[]` from Cloudflare D1 and SQLite to optimize platform storage, and an informative expiration badge/banner is rendered. If a ticket is reopened (moved away from `DONE`), `completed_at` is cleared and expiration is halted.
+
+#### Scope of Work
+- **Backend Lifecycle & Auto-Prune Engine (`backend/src/features/tasks/server/route.js`)**:
+  - Implement `attachDescriptionImagesExpiration(task, d1)` to evaluate `task.status === 'DONE'` and `task.completed_at`.
+  - Calculate `SIX_DAYS_MS` (6 days = 518,400,000 ms) retention window.
+  - Automatically execute `UPDATE tasks SET description_images = '[]' WHERE id = ?` in both Cloudflare D1 and SQLite when the retention period expires.
+  - Compute telemetry metadata:
+    - `descriptionImagesExpired`: boolean
+    - `descriptionImagesExpiresAt`: ISO timestamp
+    - `descriptionImagesDaysRemaining`: integer (1-6)
+    - `descriptionImagesStatus`: dynamic status string ("Active", "Expires in X days", or "Expired (6 days post-completion)")
+  - Integrate helper across `GET /api/tasks/:taskId`, `POST /api/tasks`, and `PATCH /api/tasks/:taskId`.
+- **Frontend Expiration Badges & Banners**:
+  - **Issue Detail Modal (`klanservicehub-issue-detail-modal.jsx`)**:
+    - Render an amber clock badge under description image thumbnails displaying days remaining or active expiration status.
+    - Render a muted notice banner if description image attachments have expired.
+  - **Full Ticket Page (`src/app/(dashboard)/workspaces/[workspaceId]/tasks/[taskId]/client.jsx`)**:
+    - Replicate the identical expiration badge and expired banner.
+  - **Roadmap Task Modal (`roadmap-task-modal.jsx`)**:
+    - Render the expiration status badge and expired banner.
+  - **Create Issue Modal (`klanservicehub-create-issue-modal.jsx`)**:
+    - Display the active expiration policy indicator when users attach description images during ticket creation.
+- **Linked Tickets Layout & Title Optimization (`linked-tickets-section.jsx`)**:
+  - Guarantee minimum readable width (`min-w-[120px]`) for ticket titles in linked ticket rows, preventing titles from being crushed or hidden.
+  - Streamline badges and hide non-essential details on narrow modal viewports.
+
+#### Acceptance Criteria
+- [x] Description images on open tickets remain active with the indicator: `"Active (expires 6 days after ticket is completed)"`.
+- [x] When a ticket is marked `DONE`, `completed_at` is set and the countdown begins: `"Expires in X days (ticket completed)"`.
+- [x] After 6 days post-completion, image payloads in `tasks.description_images` are automatically purged from D1 and SQLite to save storage.
+- [x] Expired tickets display: `"Description image attachments expired 6 days after ticket completion."`.
+- [x] Reopening a completed ticket resets `completed_at` to `NULL` and stops the expiration countdown.
+- [x] Linked ticket titles remain clearly visible and readable without truncation defects.
+- [x] Successfully deployed to Cloudflare Workers with 0 errors.
+
 
 
 

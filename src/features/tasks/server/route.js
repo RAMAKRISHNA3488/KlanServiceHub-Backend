@@ -195,6 +195,54 @@ async function processCommentsWithExpiration(comments, taskId, d1) {
   });
 }
 
+export async function attachDescriptionImagesExpiration(task, d1) {
+  if (!task) return task;
+  const isDone = task.status === 'DONE';
+  const completedAt = task.completed_at || task.completedAt;
+  const completedTime = isDone && completedAt ? new Date(completedAt).getTime() : null;
+  const SIX_DAYS_MS = 6 * 24 * 60 * 60 * 1000;
+  const isExpired = isDone && completedTime && (Date.now() - completedTime > SIX_DAYS_MS);
+
+  let rawImages = [];
+  try {
+    const raw = task.description_images !== undefined ? task.description_images : task.descriptionImages;
+    rawImages = typeof raw === 'string' ? JSON.parse(raw) : (Array.isArray(raw) ? raw : []);
+  } catch (e) {
+    rawImages = [];
+  }
+
+  const taskId = task.id || task.$id;
+
+  // If expired, prune image payloads from DB to save storage
+  if (isExpired && rawImages.length > 0 && taskId) {
+    if (d1) {
+      try {
+        await d1.prepare("UPDATE tasks SET description_images = '[]' WHERE id = ?").bind(taskId).run();
+      } catch (e) {}
+    }
+    try {
+      db.prepare("UPDATE tasks SET description_images = '[]' WHERE id = ?").run(taskId);
+    } catch (e) {}
+    rawImages = [];
+  }
+
+  const expiresAt = completedTime ? new Date(completedTime + SIX_DAYS_MS).toISOString() : null;
+  const daysRemaining = completedTime ? Math.max(1, Math.ceil(((completedTime + SIX_DAYS_MS) - Date.now()) / (1000 * 60 * 60 * 24))) : null;
+
+  task.descriptionImages = isExpired ? [] : rawImages;
+  task.description_images = isExpired ? '[]' : JSON.stringify(rawImages);
+  task.descriptionImagesExpired = isExpired;
+  task.descriptionImagesExpiresAt = expiresAt;
+  task.descriptionImagesDaysRemaining = daysRemaining;
+  task.descriptionImagesStatus = isDone
+    ? (isExpired
+        ? 'Expired (6 days post-completion)'
+        : `Expires in ${daysRemaining} day${daysRemaining === 1 ? '' : 's'} (ticket completed)`)
+    : 'Active (expires 6 days after ticket is completed)';
+
+  return task;
+}
+
 async function attachLikesAndFavoritesToTasks(tasks, userId, d1) {
   if (!tasks || tasks.length === 0) return tasks;
   const taskIds = tasks.map((t) => t.$id || t.id).filter(Boolean);
@@ -817,6 +865,7 @@ const app = new Hono()
 
     await attachAssigneesToTask(task, d1);
     await attachLikesAndFavoritesToTask(task, currentUser?.$id, d1);
+    await attachDescriptionImagesExpiration(task, d1);
 
     return ctx.json({ data: task });
   })
@@ -1043,7 +1092,9 @@ const app = new Hono()
       task = db.prepare('SELECT * FROM tasks WHERE id = ?').get(taskId);
     }
 
-    return ctx.json({ data: await attachAssigneesToTask(formatDoc(task), d1) });
+    const createdTask = await attachAssigneesToTask(formatDoc(task), d1);
+    await attachDescriptionImagesExpiration(createdTask, d1);
+    return ctx.json({ data: createdTask });
   })
   .patch('/:taskId', sessionMiddleware, async (ctx) => {
     const user = ctx.get('user');
@@ -1231,7 +1282,9 @@ const app = new Hono()
       updated = db.prepare('SELECT * FROM tasks WHERE id = ?').get(taskId);
     }
 
-    return ctx.json({ data: await attachAssigneesToTask(formatDoc(updated), d1) });
+    const updatedTask = await attachAssigneesToTask(formatDoc(updated), d1);
+    await attachDescriptionImagesExpiration(updatedTask, d1);
+    return ctx.json({ data: updatedTask });
   })
   .get('/:taskId/comments', sessionMiddleware, async (ctx) => {
     const { taskId } = ctx.req.param();
