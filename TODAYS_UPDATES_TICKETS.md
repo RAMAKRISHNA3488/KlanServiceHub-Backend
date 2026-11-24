@@ -1,6 +1,6 @@
 # KlanServiceHub V1 — Epic & Sub-Tasks Specification
 
-This document is structured so you can first create the **Main Parent Ticket (Epic / Story)** in KlanServiceHub, and then create each of the **45 Sub-tasks** linked directly under it.
+This document is structured so you can first create the **Main Parent Ticket (Epic / Story)** in KlanServiceHub, and then create each of the **46 Sub-tasks** linked directly under it.
 
 ---
 
@@ -9,7 +9,7 @@ This document is structured so you can first create the **Main Parent Ticket (Ep
 - **Issue Type**: `Epic` *(or `Story` if your workflow doesn't use Epics)*
 - **Summary**: `Enhancing the Klanservichub V1`
 - **Priority**: `P1 - High (⬆️)`
-- **Total Story Points**: `207`
+- **Total Story Points**: `210`
 - **Module / Component**: `Core Platform / Multi-Module`
 - **Labels**: `v1-enhancements`, `epic`, `platform-stability`, `ui-ux`, `analytics`, `tasks-boards`, `workflows`, `projects`, `ticket-links`
 
@@ -1655,6 +1655,46 @@ Eliminate the large dead-space / whitespace gap spanning the right side of the s
 - [x] KPI cards and metric grids evenly distribute across the full width.
 - [x] Production build generated clean with zero errors.
 - [x] Successfully deployed to Cloudflare Workers with version ID `85cd8098-7a28-41db-a2f2-aefd45ad47a3`.
+
+---
+
+### 🔹 Sub-task 46: Ultra-Compact Typography & Sizing Refinement for Task Detail & Creation Modals
+
+- **Parent Ticket**: `Enhancing the Klanservichub V1`
+- **Issue Type**: `Sub-task` *(or `Story`)*
+- **Summary**: `Subtask 46: Refine typography, form controls, and dimensions of Task Detail and Creation modals to sleek ultra-compact 11px/10px standard`
+- **Priority**: `P1 - High (⬆️)`
+- **Story Points**: `3`
+- **Component**: `Frontend / Tasks & Modals UI`
+- **Labels**: `typography`, `task-detail-modal`, `create-issue-modal`, `ui-polish`, `compact-design`, `zero-bulk`
+
+#### Description
+Address user feedback regarding oversized title text and bulky form controls in the Task Detail Modal (`KlanserviceHubIssueDetailModal`), the standalone task page (`tasks/[taskId]/client.jsx`), and the Create Issue Modal (`KlanserviceHubCreateIssueModal`). Previously, issue titles rendered at `text-lg font-bold` (18px) or `text-xl`, action buttons (Heart, Save, Share, Link, Save Comment) used thick paddings and large `text-xs font-bold` styling, and sidebar dropdowns stood ~34px tall with awkward multi-line text wrapping on timestamp cards. This task standardized all task modal components to the sleek ultra-compact `11px` body/description, `10px` form control, and `9px` badge/timestamp standard.
+
+#### Scope of Work
+- **Task Detail Modal (`klanservicehub-issue-detail-modal.jsx`)**:
+  - Scaled title summary input from `text-lg font-bold` to `text-[13px] sm:text-[14px] font-bold text-neutral-900`.
+  - Scaled top quick action buttons (Heart, Save, Share, Link) and Status dropdown to `px-2 py-0.5 text-[10px] font-medium h-6` with `size-3` icons.
+  - Scaled tabs (`Comments`, `Sub-tasks`, `Time Tracking`, `Linked Tickets & Dependencies`) to `text-[11px] font-semibold` with `size-3` icons.
+  - Scaled comment textarea (`text-[11px]`), Attach button (`text-[10px]`), and "Save Comment" button to `px-2.5 py-1 text-[10px] font-semibold rounded shadow-2xs`.
+  - Scaled right sidebar property selects (`Assignee`, `Issue Type`, `Priority`, `Story Points`, `Due Date`, `Sprint`) to `h-7 text-[10px] font-medium rounded-md shadow-2xs`.
+  - Resolved timestamp text wrapping on `Created` and `Updated` cards to fit on a single clean line at `text-[10px] px-2 py-1`.
+- **Standalone Issue Page (`tasks/[taskId]/client.jsx`)**:
+  - Applied identical typography and component dimension updates to ensure 100% visual parity with the modal.
+- **Create Issue Modal (`klanservicehub-create-issue-modal.jsx`)**:
+  - Scaled modal header, project & issue type selects, title input, description textarea, assignee checkboxes, and footer action buttons to the compact `11px` / `10px` scale.
+- **Compilation & Deployment**:
+  - Verified clean production build with Vite.
+  - Deployed live to Cloudflare Workers with Version ID `a125c1b3-4d08-4297-b287-0c32f0c0a13f`.
+
+#### Acceptance Criteria
+- [x] Issue title across Task Detail modal and standalone page renders at sleek `text-[13px]`/`text-[14px]` font-bold without visual bulk.
+- [x] Action buttons, filters, and status selectors conform to `h-6` / `text-[10px]` with `size-3` icons.
+- [x] "Save Comment" button conforms to compact `px-2.5 py-1 text-[10px] font-semibold`.
+- [x] Right sidebar property dropdowns and inputs render at uniform `h-7 text-[10px]`.
+- [x] Dates & Timestamps cards render single-line metadata with zero awkward text wraps.
+- [x] Production build generated clean with zero errors.
+- [x] Successfully deployed to Cloudflare Workers with version ID `a125c1b3-4d08-4297-b287-0c32f0c0a13f`.
 
 
 
