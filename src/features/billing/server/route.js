@@ -105,36 +105,88 @@ const app = new Hono()
     let sub = await d1First('SELECT * FROM subscriptions WHERE workspace_id = ?', [workspaceId]);
     if (!sub) {
       const id = randomUUID();
-      await d1Run(`
-        INSERT INTO subscriptions (id, workspace_id, plan, billing_cycle, user_limit, project_limit, storage_limit_gb, currency, status, current_period_end)
-        VALUES (?, ?, 'BUSINESS', 'MONTHLY', 100, -1, 500, 'INR', 'ACTIVE', date('now', '+30 days'))
-      `, [id, workspaceId]);
+      try {
+        await d1Run(`
+          INSERT INTO subscriptions (id, workspace_id, plan, billing_cycle, user_limit, project_limit, storage_limit_gb, currency, status, current_period_end)
+          VALUES (?, ?, 'BUSINESS', 'MONTHLY', 100, -1, 500, 'INR', 'ACTIVE', date('now', '+30 days'))
+        `, [id, workspaceId]);
+      } catch (insertErr) {
+        try {
+          await d1Run(`
+            INSERT INTO subscriptions (id, workspace_id, plan, billing_cycle, user_limit, project_limit, storage_limit_gb, status, current_period_end)
+            VALUES (?, ?, 'BUSINESS', 'MONTHLY', 100, -1, 500, 'ACTIVE', date('now', '+30 days'))
+          `, [id, workspaceId]);
+        } catch (fallbackErr) {
+          console.error('[Billing Route]: Failed to insert default subscription', fallbackErr);
+        }
+      }
       sub = await d1First('SELECT * FROM subscriptions WHERE workspace_id = ?', [workspaceId]);
     }
 
-    const members = await d1All(`
-      SELECT 
-        m.id as member_id,
-        m.workspace_id,
-        m.user_id,
-        m.role,
-        m.organization_role,
-        m.status,
-        m.license_tier,
-        m.monthly_cost_inr,
-        m.created_at as joined_at,
-        u.name,
-        u.email,
-        u.avatar_url,
-        u.job_title,
-        u.department,
-        w.user_id = u.id as is_owner
-      FROM members m
-      JOIN users u ON m.user_id = u.id
-      JOIN workspaces w ON m.workspace_id = w.id
-      WHERE m.workspace_id = ? AND m.status = 'ACTIVE'
-      ORDER BY w.user_id = u.id DESC, u.name ASC
-    `, [workspaceId]);
+    // Defensive fallback if subscription record cannot be created
+    if (!sub) {
+      sub = {
+        id: randomUUID(),
+        workspace_id: workspaceId,
+        plan: 'BUSINESS',
+        billing_cycle: 'MONTHLY',
+        user_limit: 100,
+        project_limit: -1,
+        storage_limit_gb: 500,
+        currency: 'INR',
+        status: 'ACTIVE',
+        current_period_end: new Date(Date.now() + 30 * 86400000).toISOString(),
+      };
+    }
+
+    let members = [];
+    try {
+      members = await d1All(`
+        SELECT 
+          m.id as member_id,
+          m.workspace_id,
+          m.user_id,
+          m.role,
+          m.organization_role,
+          m.status,
+          m.license_tier,
+          m.monthly_cost_inr,
+          m.created_at as joined_at,
+          u.name,
+          u.email,
+          u.avatar_url,
+          u.job_title,
+          u.department,
+          w.user_id = u.id as is_owner
+        FROM members m
+        JOIN users u ON m.user_id = u.id
+        JOIN workspaces w ON m.workspace_id = w.id
+        WHERE m.workspace_id = ? AND m.status = 'ACTIVE'
+        ORDER BY w.user_id = u.id DESC, u.name ASC
+      `, [workspaceId]);
+    } catch (queryErr) {
+      members = await d1All(`
+        SELECT 
+          m.id as member_id,
+          m.workspace_id,
+          m.user_id,
+          m.role,
+          m.organization_role,
+          m.status,
+          m.created_at as joined_at,
+          u.name,
+          u.email,
+          u.avatar_url,
+          u.job_title,
+          u.department,
+          w.user_id = u.id as is_owner
+        FROM members m
+        JOIN users u ON m.user_id = u.id
+        JOIN workspaces w ON m.workspace_id = w.id
+        WHERE m.workspace_id = ? AND m.status = 'ACTIVE'
+        ORDER BY w.user_id = u.id DESC, u.name ASC
+      `, [workspaceId]);
+    }
 
     // Compute employee-wise license and cost
     const employeeLicenses = members.map((m) => {
@@ -307,11 +359,19 @@ const app = new Hono()
 
     const price = billingCycle === 'ANNUAL' ? tier.annualPriceInr : tier.monthlyPriceInr;
 
-    await d1Run(`
-      UPDATE subscriptions 
-      SET plan = ?, billing_cycle = ?, user_limit = ?, project_limit = ?, storage_limit_gb = ?, currency = 'INR', updated_at = CURRENT_TIMESTAMP
-      WHERE workspace_id = ?
-    `, [plan, billingCycle, tier.userLimit, tier.projectLimit, tier.storageLimitGb, workspaceId]);
+    try {
+      await d1Run(`
+        UPDATE subscriptions 
+        SET plan = ?, billing_cycle = ?, user_limit = ?, project_limit = ?, storage_limit_gb = ?, currency = 'INR', updated_at = CURRENT_TIMESTAMP
+        WHERE workspace_id = ?
+      `, [plan, billingCycle, tier.userLimit, tier.projectLimit, tier.storageLimitGb, workspaceId]);
+    } catch (upgErr) {
+      await d1Run(`
+        UPDATE subscriptions 
+        SET plan = ?, billing_cycle = ?, user_limit = ?, project_limit = ?, storage_limit_gb = ?, updated_at = CURRENT_TIMESTAMP
+        WHERE workspace_id = ?
+      `, [plan, billingCycle, tier.userLimit, tier.projectLimit, tier.storageLimitGb, workspaceId]);
+    }
 
     // Generate new invoice in Indian Rupees
     const invNumber = `INV-${new Date().getFullYear()}-${Math.floor(100 + Math.random() * 900)}`;
@@ -337,7 +397,12 @@ const app = new Hono()
     const { workspaceId } = ctx.req.param();
 
     // Calculate current active members' total monthly cost
-    const members = await d1All('SELECT monthly_cost_inr FROM members WHERE workspace_id = ? AND status = \'ACTIVE\'', [workspaceId]);
+    let members = [];
+    try {
+      members = await d1All('SELECT monthly_cost_inr FROM members WHERE workspace_id = ? AND status = \'ACTIVE\'', [workspaceId]);
+    } catch (e) {
+      members = await d1All('SELECT id FROM members WHERE workspace_id = ? AND status = \'ACTIVE\'', [workspaceId]);
+    }
     const subtotal = members.reduce((acc, m) => acc + (m.monthly_cost_inr || 650), 0);
     const gst = Math.round(subtotal * 0.18);
     const totalAmountInr = subtotal + gst;

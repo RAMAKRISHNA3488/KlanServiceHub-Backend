@@ -1,6 +1,6 @@
 # KlanServiceHub V1 — Epic & Sub-Tasks Specification
 
-This document is structured so you can first create the **Main Parent Ticket (Epic / Story)** in KlanServiceHub, and then create each of the **47 Sub-tasks** linked directly under it.
+This document is structured so you can first create the **Main Parent Ticket (Epic / Story)** in KlanServiceHub, and then create each of the **48 Sub-tasks** linked directly under it.
 
 ---
 
@@ -9,7 +9,7 @@ This document is structured so you can first create the **Main Parent Ticket (Ep
 - **Issue Type**: `Epic` *(or `Story` if your workflow doesn't use Epics)*
 - **Summary**: `Enhancing the Klanservichub V1`
 - **Priority**: `P1 - High`
-- **Total Story Points**: `212`
+- **Total Story Points**: `217`
 - **Module / Component**: `Core Platform / Multi-Module`
 - **Labels**: `v1-enhancements`, `epic`, `platform-stability`, `ui-ux`, `analytics`, `tasks-boards`, `workflows`, `projects`, `ticket-links`
 
@@ -1728,6 +1728,49 @@ Address user feedback regarding emojis appearing in Priority dropdown selectors 
 - [x] Selection state and persistence to backend remain fully functional and intact.
 - [x] Production build generated clean with zero errors.
 - [x] Successfully deployed to Cloudflare Workers with version ID `efd028a2-56a0-4f13-bc35-11ed733a0223`.
+
+---
+
+### SUB-TASK 48: Resolve Billing and Seat License Data Load Failure (D1 Migrations, Backend Route Hardening & Frontend Recovery)
+
+- **Parent Ticket**: `Enhancing the Klanservichub V1`
+- **Issue Type**: `Sub-task`
+- **Summary**: `Resolve Billing & Seat License Data Load Failure (D1 Migrations, Backend Hardening & Recovery UI)`
+- **Priority**: `P0 - Critical`
+- **Story Points**: `5`
+- **Component**: `Backend API & Cloudflare D1 / Billing & Seat Management UI`
+- **Labels**: `billing`, `seat-licenses`, `cloudflare-d1`, `migrations`, `sqlite-error`, `backend-hardening`, `error-recovery`
+
+#### Description
+Fix the critical issue where loading `/workspaces/:workspaceId/billing` failed with error toast `"Failed to load billing and seat license data"`. Investigation uncovered that production Cloudflare D1 (`klanservicehub_db`) was missing `members.license_tier`, `members.monthly_cost_inr`, and `subscriptions.currency`, which caused D1 query errors (`no such column: m.license_tier [code: 7500]` and `table subscriptions has no column named currency`). Furthermore, subscription creation failures left `sub` null, causing unhandled 500 server crashes. This task applied live remote D1 migrations, updated schema SQL files, defensively hardened the backend billing API route with multi-layer fallbacks, and added a dedicated frontend error recovery state with a retry action.
+
+#### Scope of Work
+- **Cloudflare D1 Remote Database Migrations**:
+  - Executed `ALTER TABLE members ADD COLUMN license_tier TEXT DEFAULT 'SOFTWARE_DEVELOPER';`
+  - Executed `ALTER TABLE members ADD COLUMN monthly_cost_inr INTEGER DEFAULT 650;`
+  - Executed `ALTER TABLE subscriptions ADD COLUMN currency TEXT DEFAULT 'INR';`
+- **Schema Definitions (`cloudflare-d1-schema.sql` & `schema.sql`)**:
+  - Added `license_tier` and `monthly_cost_inr` to `members` table definition.
+  - Added `currency TEXT DEFAULT 'INR'` to `subscriptions` table definition.
+- **Backend Billing Route Hardening (`src/features/billing/server/route.js`)**:
+  - Added non-null fallback subscription object so `sub.user_limit` never causes null pointer crashes.
+  - Added resilient query fallback for members if license columns are ever unavailable.
+  - Added try-catch guards around subscription updates and invoice calculations.
+- **Frontend Error State (`src/features/company/components/billing-view.jsx`)**:
+  - Added dedicated error state card with "Retry Loading" button if data fetch fails.
+  - Aligned typography and sizing to compact 11px/10px enterprise standard.
+- **Compilation & Live Deployment**:
+  - Verified clean production build with Vite (`dist/assets/index-CZVcwc5w.js`).
+  - Deployed backend to Cloudflare Workers with Version ID `1dcb3375-fe42-47bc-b414-b95c004373c5`.
+  - Deployed frontend to Cloudflare Workers with Version ID `f0dc7924-ded3-48f4-8806-092a0e925652`.
+
+#### Acceptance Criteria
+- [x] Remote Cloudflare D1 database migrated with `license_tier`, `monthly_cost_inr`, and `currency` columns.
+- [x] Schema files (`cloudflare-d1-schema.sql` and `schema.sql`) kept in sync with production database.
+- [x] Backend route `/api/billing/:workspaceId` returns 200 OK with complete subscription, employee licenses, usage, and invoices data.
+- [x] Defensive fallbacks prevent 500 crashes even if database rows or columns are missing.
+- [x] Frontend displays billing view cleanly or provides an error recovery card with retry functionality.
+- [x] Production build and both Cloudflare Workers deployed live and operational.
 
 
 
