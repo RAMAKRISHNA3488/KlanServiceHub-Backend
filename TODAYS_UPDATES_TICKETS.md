@@ -1,6 +1,6 @@
 # KlanServiceHub V1 — Epic & Sub-Tasks Specification
 
-This document is structured so you can first create the **Main Parent Ticket (Epic / Story)** in KlanServiceHub, and then create each of the **46 Sub-tasks** linked directly under it.
+This document is structured so you can first create the **Main Parent Ticket (Epic / Story)** in KlanServiceHub, and then create each of the **47 Sub-tasks** linked directly under it.
 
 ---
 
@@ -8,8 +8,8 @@ This document is structured so you can first create the **Main Parent Ticket (Ep
 
 - **Issue Type**: `Epic` *(or `Story` if your workflow doesn't use Epics)*
 - **Summary**: `Enhancing the Klanservichub V1`
-- **Priority**: `P1 - High (⬆️)`
-- **Total Story Points**: `210`
+- **Priority**: `P1 - High`
+- **Total Story Points**: `212`
 - **Module / Component**: `Core Platform / Multi-Module`
 - **Labels**: `v1-enhancements`, `epic`, `platform-stability`, `ui-ux`, `analytics`, `tasks-boards`, `workflows`, `projects`, `ticket-links`
 
@@ -1695,6 +1695,39 @@ Address user feedback regarding oversized title text and bulky form controls in 
 - [x] Dates & Timestamps cards render single-line metadata with zero awkward text wraps.
 - [x] Production build generated clean with zero errors.
 - [x] Successfully deployed to Cloudflare Workers with version ID `a125c1b3-4d08-4297-b287-0c32f0c0a13f`.
+
+---
+
+### 🔹 Sub-task 47: Remove Emojis from Priority Selectors Across Task Views
+
+- **Parent Ticket**: `Enhancing the Klanservichub V1`
+- **Issue Type**: `Sub-task` *(or `Story`)*
+- **Summary**: `Subtask 47: Standardize priority options to clean enterprise text labels (P0 - Critical through P4 - Lowest) without emoji decorations`
+- **Priority**: `P2 - Medium`
+- **Story Points**: `2`
+- **Component**: `Frontend / Tasks & Modals UI`
+- **Labels**: `priority`, `dropdown`, `clean-ui`, `ui-polish`, `zero-emojis`, `enterprise-standard`
+
+#### Description
+Address user feedback regarding emojis appearing in Priority dropdown selectors (`P0 - Critical ( 🔥 )`, `P1 - High ( ⬆️ )`, `P2 - Medium ( 🟰 )`, `P3 - Low ( ⬇️ )`, `P4 - Lowest ( ⬇️ ⬇️ )`). Emojis added visual noise and diverged from professional Jira/Linear enterprise UI design standards. This task removed all emoji characters from Priority dropdown selectors across the Task Detail Modal, standalone issue page, and Create Issue Modal, standardizing on clean text labels (`P0 - Critical`, `P1 - High`, `P2 - Medium`, `P3 - Low`, `P4 - Lowest`).
+
+#### Scope of Work
+- **Task Detail Modal (`klanservicehub-issue-detail-modal.jsx`)**:
+  - Replaced `<option>` emoji suffixes with clean labels: `P0 - Critical`, `P1 - High`, `P2 - Medium`, `P3 - Low`, `P4 - Lowest`.
+- **Standalone Issue Page (`tasks/[taskId]/client.jsx`)**:
+  - Aligned Priority dropdown options with `P0 - Critical` through `P4 - Lowest` for complete visual parity.
+- **Create Issue Modal (`klanservicehub-create-issue-modal.jsx`)**:
+  - Removed emoji icons from the `PRIORITIES` array definitions.
+- **Compilation & Deployment**:
+  - Verified clean production build with Vite.
+  - Deployed live to Cloudflare Workers with Version ID `efd028a2-56a0-4f13-bc35-11ed733a0223`.
+
+#### Acceptance Criteria
+- [x] All Priority dropdowns across modals and pages display clean text labels (`P0 - Critical` through `P4 - Lowest`).
+- [x] Zero emojis (`🔥`, `⬆️`, `🟰`, `⬇️`, `⬇️⬇️`) displayed in Priority options.
+- [x] Selection state and persistence to backend remain fully functional and intact.
+- [x] Production build generated clean with zero errors.
+- [x] Successfully deployed to Cloudflare Workers with version ID `efd028a2-56a0-4f13-bc35-11ed733a0223`.
 
 
 
