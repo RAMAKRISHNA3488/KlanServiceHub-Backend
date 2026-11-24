@@ -122,6 +122,32 @@ Historical drill-down returning tickets that were in `:status` on `:date` based 
 
 ---
 
+## ⚡ Application-Wide Skeleton Loading Architecture (Zero-CLS)
+
+KlanServiceHub incorporates a comprehensive skeleton loading system across every route, dashboard, modal, and asynchronous data surface. This architecture completely eliminates blank white screens, abrupt layout jumps (Cumulative Layout Shift, CLS = 0), and uninformative isolated spinners.
+
+### 1. Architectural Principles
+- **Geometric Mirroring**: Each skeleton component mirrors the exact flexbox/grid dimensions, paddings, borders, and column layouts of its loaded counterpart.
+- **Predictive Wireframing**: Displays contextual placeholders for priority badges, story points, avatars, status pills, and key metrics rather than generic grey rectangles.
+- **Micro-Interactions**: Smooth `animate-pulse` shimmer with Tailwind color palette (`bg-neutral-200/80` dark-mode aware) provides visual feedback during cold starts, route shifts, and network latency.
+- **Zero Layout Shift (CLS = 0)**: Ensures parent containers maintain static heights (`min-h-[350px]`, `w-[280px]` columns) so arriving data slots directly into position without content popping.
+
+### 2. Component Catalog
+| Skeleton Component | File Path | Targeted Views & Modals |
+| :--- | :--- | :--- |
+| `Skeleton` | `frontend/src/components/ui/skeleton.jsx` | Atomic pulse primitive with customizable radii and styles |
+| `PageLoader` | `frontend/src/components/page-loader.jsx` | Global route-level suspense and application shell fallback |
+| `WorkspaceDashboardSkeleton` | `frontend/src/features/workspaces/components/skeletons/workspace-dashboard-skeleton.jsx` | Workspace planning dashboard, project grids, metrics, activity |
+| `ProjectViewSkeleton` | `frontend/src/features/projects/components/skeletons/project-view-skeleton.jsx` | Project header, metadata banner, analytics strip, task view switcher |
+| `KanbanBoardSkeleton` | `frontend/src/features/tasks/components/skeletons/kanban-board-skeleton.jsx` | 5-column Kanban board with header dots, overload bars, and detailed task cards |
+| `TaskTableSkeleton` | `frontend/src/features/tasks/components/skeletons/task-table-skeleton.jsx` | Enterprise task data table with 6 header columns and 7 row skeletons |
+| `TaskDetailSkeleton` | `frontend/src/features/tasks/components/skeletons/task-detail-skeleton.jsx` | Two-pane issue details modal (`KlanserviceHubIssueDetailModal`) & standalone issue page |
+| `ReportsAnalyticsSkeleton` | `frontend/src/features/reports/components/skeletons/reports-analytics-skeleton.jsx` | Organization analytics dashboard with KPI overview & 4 card grids |
+| `CfdSkeleton` | `frontend/src/features/reports/components/cumulative-flow/cfd-skeleton.jsx` | Cumulative Flow Diagram: 7 metric cards, filter pills, chart canvas, and bottleneck diagnostics |
+| `AdminTableSkeleton` | `frontend/src/features/company/components/skeletons/admin-table-skeleton.jsx` | Enterprise administration tables: Users, Teams, Workflows management |
+
+---
+
 ## 🛠️ Local Development & Deployment
 
 ### Backend
@@ -145,4 +171,4 @@ npm run deploy     # Deploy assets to Cloudflare Workers
 
 ## 📋 Tracking & Sub-Tasks
 
-For the complete catalog of all 42 platform enhancements and sub-tasks, refer to [TODAYS_UPDATES_TICKETS.md](./TODAYS_UPDATES_TICKETS.md).
+For the complete catalog of all 43 platform enhancements and sub-tasks, refer to [TODAYS_UPDATES_TICKETS.md](./TODAYS_UPDATES_TICKETS.md).

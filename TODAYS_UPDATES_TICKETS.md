@@ -1,6 +1,6 @@
 # KlanServiceHub V1 — Epic & Sub-Tasks Specification
 
-This document is structured so you can first create the **Main Parent Ticket (Epic / Story)** in KlanServiceHub, and then create each of the **42 Sub-tasks** linked directly under it.
+This document is structured so you can first create the **Main Parent Ticket (Epic / Story)** in KlanServiceHub, and then create each of the **43 Sub-tasks** linked directly under it.
 
 ---
 
@@ -9,7 +9,7 @@ This document is structured so you can first create the **Main Parent Ticket (Ep
 - **Issue Type**: `Epic` *(or `Story` if your workflow doesn't use Epics)*
 - **Summary**: `Enhancing the Klanservichub V1`
 - **Priority**: `P1 - High (⬆️)`
-- **Total Story Points**: `194`
+- **Total Story Points**: `199`
 - **Module / Component**: `Core Platform / Multi-Module`
 - **Labels**: `v1-enhancements`, `epic`, `platform-stability`, `ui-ux`, `analytics`, `tasks-boards`, `workflows`, `projects`, `ticket-links`
 
@@ -1505,6 +1505,49 @@ Implement a dedicated, fully interactive Cumulative Flow Diagram (CFD) under Rep
 - [x] Exports CFD matrix and drill-down tickets to CSV, and supports PDF printing.
 - [x] Unit test suite (`test-cfd.js`) passes all calculations and edge cases.
 - [x] Successfully deployed to Cloudflare Workers with 0 errors.
+
+---
+
+### 🔹 Sub-task 43: Application-Wide Skeleton Loading & Layout Stability
+
+- **Parent Ticket**: `Enhancing the Klanservichub V1`
+- **Issue Type**: `Sub-task` *(or `Story`)*
+- **Summary**: `Subtask 43: Implement application-wide skeleton loading across dashboards, Kanban boards, issue modals, reports, and admin views to eliminate layout shifts`
+- **Priority**: `P1 - High (⬆️)`
+- **Story Points**: `5`
+- **Component**: `Frontend / UI Shell & Performance`
+- **Labels**: `skeleton-loading`, `ui-ux`, `layout-stability`, `zero-cls`, `kanban`, `dashboards`, `reports`
+
+#### Description
+Implement comprehensive, high-fidelity Skeleton Loading states across the entire KlanServiceHub platform. Previously, route changes and asynchronous data fetching displayed blank screens, isolated raw spinners (`<Loader2 className="animate-spin" />`), or empty container flashes. This task replaces all jarring loading states with tailored animated pulse skeleton components matching the exact geometric layout, cards, and typography of each screen, delivering a seamless Linear/Jira enterprise user experience with zero Cumulative Layout Shift (CLS).
+
+#### Scope of Work
+- **Core Skeleton Primitive (`frontend/src/components/ui/skeleton.jsx`)**:
+  - Created standardized Tailwind pulse primitive with customizable radii and background shades (`animate-pulse rounded-md bg-neutral-200/80`).
+- **Global App & Route Shell Skeleton (`frontend/src/components/page-loader.jsx`)**:
+  - Upgraded `PageLoader` into `AppLayoutSkeleton` featuring top navigation bar, sidebar menu links, project tree, and content canvas placeholders.
+- **Workspace Dashboard Skeleton (`workspace-dashboard-skeleton.jsx`)**:
+  - Header actions, 5 Analytics KPI cards, Project grid cards, recent tasks list rows, and member avatars. Integrated in `app/(dashboard)/workspaces/[workspaceId]/client.jsx`.
+- **Project View Skeleton (`project-view-skeleton.jsx`)**:
+  - Project banner, avatar, key, analytics summary, and task container. Integrated in `app/(dashboard)/workspaces/[workspaceId]/projects/[projectId]/client.jsx`.
+- **Kanban Board & Table Skeletons (`kanban-board-skeleton.jsx`, `task-table-skeleton.jsx`)**:
+  - 5-column Kanban board with status headers, WIP limits, task counters, and realistic task card placeholders (type icons, keys, titles, priority badges, story points, and assignees). Integrated in `task-view-switcher.jsx` and `boards-view.jsx`.
+- **Task Details Modal & Full Page Skeleton (`task-detail-skeleton.jsx`)**:
+  - Two-pane layout with breadcrumbs, title, description, attachments, subtasks, and comments stream on the left; status, assignee, priority, sprint, and time tracking on the right. Integrated in `klanservicehub-issue-detail-modal.jsx` and `TaskIdClient`.
+- **Reports & CFD Skeletons (`reports-analytics-skeleton.jsx`, `cfd-skeleton.jsx`)**:
+  - Analytics KPI cards, filter pills, simulated stacked area chart canvas with gridlines, and bottleneck diagnostics. Integrated in `organization-analytics-page.jsx` and `cumulative-flow-section.jsx`.
+- **Admin & Settings View Skeletons (`admin-table-skeleton.jsx`)**:
+  - Search bars, filter controls, table headers, and animated entity rows. Integrated across `users-admin-view.jsx`, `teams-admin-view.jsx`, `workflows-admin-view.jsx`, and `members-list.jsx`.
+
+#### Acceptance Criteria
+- [x] Application-wide skeleton loading states render seamlessly during initial load and route transitions.
+- [x] Zero blank white screens or raw isolated spinners on dashboards, boards, or reports.
+- [x] Skeletons mirror the exact geometry, height, and margins of resolved data (0 CLS layout shift).
+- [x] Issue details modal and full task page display dual-pane skeleton while fetching task details.
+- [x] Kanban and Table views display multi-column and multi-row skeletons during task filtering and data fetching.
+- [x] Reports & Cumulative Flow Diagram display 7 KPI cards and chart canvas skeletons during telemetry queries.
+- [x] Successfully compiled and deployed to Cloudflare Workers with 0 errors.
+
 
 
 
