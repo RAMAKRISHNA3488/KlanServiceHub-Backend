@@ -148,6 +148,27 @@ KlanServiceHub incorporates a comprehensive skeleton loading system across every
 
 ---
 
+## 🔤 Application-Wide Ultra-Compact Enterprise Typography Scale
+
+KlanServiceHub standardizes on an ultra-compact, high-density Jira/Linear typography scale across all screens, modals, tables, and controls to maximize information density and maintain crisp visual hierarchy:
+
+### 1. Typography & Component Dimension Specifications
+| UI Element | Tailwind Utility | Computed Size | Example Usage |
+| :--- | :--- | :--- | :--- |
+| **Section Titles & Subheaders** | `text-[11px] font-semibold text-neutral-700` | **11px** (line-height: 15px) | `Linked Tickets & Dependencies`, Column headers, Card subtitles |
+| **Body & Descriptions** | `text-[11px] text-neutral-600` / `text-neutral-500` | **11px** (line-height: 15px) | Task descriptions, empty state messages, audit details |
+| **Action Buttons & Form Controls** | `px-2 py-0.5 text-[10px] font-medium rounded shadow-2xs` | **10px** (line-height: 14px) | `+ Link ticket`, `Export CSV`, Filter pills, Select dropdowns |
+| **Status & Counter Badges** | `px-1.5 py-0.2 text-[9px] font-medium rounded-full border` | **9px** (line-height: 12px) | Ticket counters (`0`), Priority badges, Role pills, WIP limits |
+| **Accompanying Icons** | `size-2.5` (10px) / `size-3` (12px) / `size-3.5` (14px) | **10px – 14px** | Button action icons, Link chains, Chevron selectors |
+
+### 2. Multi-Layered Architecture
+1. **Global Tailwind Scale (`frontend/tailwind.config.ts`)**: Custom `fontSize` scale re-maps standard Tailwind tokens (`xs` = 10px, `sm` = 11px, `base` = 11px, `md` = 12px, `lg` = 13px, `xl` = 14px).
+2. **CSS Root Base Font (`frontend/src/app/globals.css`)**: `html, body { font-size: 11px; -webkit-font-smoothing: antialiased; }` ensures 100% cascade consistency.
+3. **UI Component Primitives (`frontend/src/components/ui/`)**: Harmonized atomic components (`Button`, `Badge`, `Input`, `Select`, `Tabs`, `Table`, `Card`, `Dialog`).
+4. **Zero-Missed-Screen Audit**: Comprehensive coverage verified across Navigation, Workspace Planning, Kanban & Table, Task Details Modal & standalone page, Reports & CFD, and Admin views.
+
+---
+
 ## 🛠️ Local Development & Deployment
 
 ### Backend
@@ -171,4 +192,4 @@ npm run deploy     # Deploy assets to Cloudflare Workers
 
 ## 📋 Tracking & Sub-Tasks
 
-For the complete catalog of all 43 platform enhancements and sub-tasks, refer to [TODAYS_UPDATES_TICKETS.md](./TODAYS_UPDATES_TICKETS.md).
+For the complete catalog of all 44 platform enhancements and sub-tasks, refer to [TODAYS_UPDATES_TICKETS.md](./TODAYS_UPDATES_TICKETS.md).

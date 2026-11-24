@@ -1,6 +1,6 @@
 # KlanServiceHub V1 — Epic & Sub-Tasks Specification
 
-This document is structured so you can first create the **Main Parent Ticket (Epic / Story)** in KlanServiceHub, and then create each of the **43 Sub-tasks** linked directly under it.
+This document is structured so you can first create the **Main Parent Ticket (Epic / Story)** in KlanServiceHub, and then create each of the **44 Sub-tasks** linked directly under it.
 
 ---
 
@@ -9,7 +9,7 @@ This document is structured so you can first create the **Main Parent Ticket (Ep
 - **Issue Type**: `Epic` *(or `Story` if your workflow doesn't use Epics)*
 - **Summary**: `Enhancing the Klanservichub V1`
 - **Priority**: `P1 - High (⬆️)`
-- **Total Story Points**: `199`
+- **Total Story Points**: `204`
 - **Module / Component**: `Core Platform / Multi-Module`
 - **Labels**: `v1-enhancements`, `epic`, `platform-stability`, `ui-ux`, `analytics`, `tasks-boards`, `workflows`, `projects`, `ticket-links`
 
@@ -1547,6 +1547,60 @@ Implement comprehensive, high-fidelity Skeleton Loading states across the entire
 - [x] Kanban and Table views display multi-column and multi-row skeletons during task filtering and data fetching.
 - [x] Reports & Cumulative Flow Diagram display 7 KPI cards and chart canvas skeletons during telemetry queries.
 - [x] Successfully compiled and deployed to Cloudflare Workers with 0 errors.
+
+---
+
+### 🔹 Sub-task 44: Application-Wide Ultra-Compact Enterprise Typography Scale (Zero Missed Screen System)
+
+- **Parent Ticket**: `Enhancing the Klanservichub V1`
+- **Issue Type**: `Sub-task` *(or `Story`)*
+- **Summary**: `Subtask 44: Standardize application-wide ultra-compact typography scale (11px headers/body, 10px controls, 9px badges) matching the reference component across all views`
+- **Priority**: `P1 - High (⬆️)`
+- **Story Points**: `5`
+- **Component**: `Full Stack / Global UI Architecture`
+- **Labels**: `typography`, `ui-polish`, `compact-density`, `enterprise-scale`, `tailwind`, `zero-missed-screens`
+
+#### Description
+Standardize typography and component density across the entire KlanServiceHub platform to mirror the high-density, crisp, ultra-compact styling exhibited in the `Linked Tickets & Dependencies` reference component. All oversized headers, tall buttons, bulky inputs, and large badges have been calibrated to an enterprise Jira/Linear scale: `11px` section headings & body text, `10px` interactive buttons, filters, and dropdown selects, and `9px` metadata badges and counters. This was achieved through a multi-layer strategy combining global Tailwind font scale overrides, HTML/body CSS root scaling, UI primitive standardization, and screen-by-screen refinement across all modules.
+
+#### Scope of Work
+- **Global Tailwind Typography Scale (`frontend/tailwind.config.ts`)**:
+  - Configured calibrated `fontSize` mappings:
+    - `3xs: ['8px', { lineHeight: '11px' }]`
+    - `2xs: ['9px', { lineHeight: '12px' }]` (Badges, counters)
+    - `xs: ['10px', { lineHeight: '14px' }]` (Buttons, inputs, controls, tabs)
+    - `sm: ['11px', { lineHeight: '15px' }]` (Section headings, body, empty states)
+    - `base: ['11px', { lineHeight: '16px' }]`
+    - `md: ['12px', { lineHeight: '16px' }]` (Card titles, table headers)
+    - `lg: ['13px', { lineHeight: '18px' }]` (Page headers)
+    - `xl: ['14px', { lineHeight: '20px' }]`
+    - `2xl: ['16px', { lineHeight: '22px' }]`
+- **Root CSS Base Font Scale (`frontend/src/app/globals.css`)**:
+  - Calibrated `html` and `body` with `font-size: 11px`, system font stacks, and subpixel antialiasing (`-webkit-font-smoothing: antialiased`).
+- **UI Primitives Standardization (`frontend/src/components/ui/`)**:
+  - `button.jsx`: Default height refined to `h-7 px-2.5 py-1 text-[10px] font-medium rounded shadow-2xs` with `size-3` icons.
+  - `badge.jsx`: Standardized to `px-1.5 py-0.2 text-[9px] font-medium rounded-full border`.
+  - `input.jsx`: Compact input height `h-7 text-[10px]` with `px-2 py-1`.
+  - `select.jsx`: Compact trigger `h-7 text-[10px]` and items `py-1 text-[10px]`.
+  - `tabs.jsx`: Compact `TabsList` (`h-7 p-0.5`) and `TabsTrigger` (`px-2.5 py-0.5 text-[10px] font-medium`).
+  - `table.jsx`: Header `h-7 px-2 text-[10px] font-bold uppercase` and cells `p-1.5 text-[11px]`.
+  - `card.jsx` & `dialog.jsx`: Titles scaled to `text-[12px] font-bold` and descriptions to `text-[10px] text-neutral-500`.
+- **Systematic Screen Audit & Refinement (Modules A–F)**:
+  - **Module A (App Shell & Navigation)**: Refined `navigation.jsx` items, section tags (`10px`), and `navbar.jsx`.
+  - **Module B (Workspaces & Planning)**: Refined `workspaces/[workspaceId]/client.jsx` headers, action buttons (`h-6 text-[10px]`), and `members-list.jsx` avatar text, role pills, and dropdowns.
+  - **Module C (Projects, Kanban & Tables)**: Refined `projects/[projectId]/client.jsx` project banner, `task-view-switcher.jsx` view triggers, `kanban-card.jsx` issue keys & titles, `kanban-column-header.jsx` status icons (`size-3.5`) and headers (`11px`), and `columns.jsx` table columns.
+  - **Module D (Task Details Modal & Standalone Page)**: Refined `tasks/[taskId]/client.jsx` and `klanservicehub-issue-detail-modal.jsx` tab headers, buttons, comments editor, and right sidebar property selects.
+  - **Module E (Reports & CFD Analytics)**: Refined `organization-analytics-page.jsx`, `cumulative-flow-section.jsx` time-range pills & dropdowns, `cfd-summary-cards.jsx` KPI labels (`9px`) & values (`13px`), `bottleneck-diagnostics-card.jsx` action buttons, and `cfd-ticket-drilldown-modal.jsx` drilldown rows and export buttons.
+  - **Module F (Company Administration)**: Refined `users-admin-view.jsx`, `teams-admin-view.jsx`, `workflows-admin-view.jsx`, and `admin-table-skeleton.jsx`.
+
+#### Acceptance Criteria
+- [x] Entire application adopts the ultra-compact `11px` / `10px` / `9px` typography scale without missing any screen or modal.
+- [x] Action buttons, filters, and dropdown selects conform to compact `h-6` – `h-7` with `text-[10px] font-medium` and `size-2.5` / `size-3` icons.
+- [x] Status pills, role tags, and counter chips scale to `text-[9px] font-medium` with `px-1.5 py-0.2 rounded-full`.
+- [x] Section titles and empty state messages match the reference image at `text-[11px] font-semibold`.
+- [x] High-density layout preserves full readability with zero overlapping or broken UI artifacts.
+- [x] Production build generated clean with zero compilation or lint errors.
+- [x] Successfully deployed to Cloudflare Workers with cache-busting headers.
 
 
 
