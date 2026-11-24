@@ -12,6 +12,36 @@ import { broadcastWorkspaceEvent } from '../../../lib/events.js';
 import { getNextTaskKeyForProject } from '../../../lib/issue-key.js';
 import { getTicketLinksData, getTicketDependenciesData } from '../../ticket-links/server/route.js';
 
+export async function recordTicketStatusTransition({
+  ticketId,
+  projectId,
+  previousStatus,
+  newStatus,
+  userId,
+  d1,
+}) {
+  if (!ticketId || !newStatus) return;
+  const id = randomUUID();
+  if (d1) {
+    try {
+      await d1.prepare(`
+        INSERT INTO ticket_status_history (id, ticket_id, project_id, previous_status, new_status, changed_by, changed_at)
+        VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+      `).bind(id, ticketId, projectId || null, previousStatus || null, newStatus, userId).run();
+    } catch (e) {
+      console.error('[D1_STATUS_TRANSITION_ERROR]:', e);
+    }
+  }
+  try {
+    db.prepare(`
+      INSERT INTO ticket_status_history (id, ticket_id, project_id, previous_status, new_status, changed_by, changed_at)
+      VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+    `).run(id, ticketId, projectId || null, previousStatus || null, newStatus, userId);
+  } catch (e) {
+    console.error('[SQLITE_STATUS_TRANSITION_ERROR]:', e);
+  }
+}
+
 async function attachAssigneesToTasks(tasks, d1) {
   if (!tasks || tasks.length === 0) return tasks;
   const taskIds = tasks.map((t) => t.$id || t.id).filter(Boolean);
@@ -679,6 +709,15 @@ const app = new Hono()
           VALUES (?, ?, ?, 'status', ?, ?)
         `, [randomUUID(), taskId, user.$id, existingTask.status, newStatus], d1);
 
+        await recordTicketStatusTransition({
+          ticketId: taskId,
+          projectId: existingTask.project_id,
+          previousStatus: existingTask.status,
+          newStatus,
+          userId: user.$id,
+          d1,
+        });
+
         logActivity({
           workspaceId: existingTask.workspace_id,
           projectId: existingTask.project_id,
@@ -1068,6 +1107,15 @@ const app = new Hono()
       details: { key, name, issueType, priority },
     });
 
+    await recordTicketStatusTransition({
+      ticketId: taskId,
+      projectId: effectiveProjectId,
+      previousStatus: null,
+      newStatus: status || 'TODO',
+      userId: user.$id,
+      d1,
+    });
+
     triggerAutomations({
       workspaceId: effectiveWorkspaceId,
       triggerEvent: 'ON_ISSUE_CREATED',
@@ -1263,6 +1311,39 @@ const app = new Hono()
     }
 
     if (status && status !== existingTask.status) {
+      await recordTicketStatusTransition({
+        ticketId: taskId,
+        projectId: existingTask.project_id,
+        previousStatus: existingTask.status,
+        newStatus: status,
+        userId: user.$id,
+        d1,
+      });
+
+      if (d1) {
+        try {
+          await d1.prepare(`
+            INSERT INTO task_history (id, task_id, user_id, field_name, old_value, new_value)
+            VALUES (?, ?, ?, 'status', ?, ?)
+          `).bind(randomUUID(), taskId, user.$id, existingTask.status, status).run();
+        } catch (e) {}
+      }
+      try {
+        db.prepare(`
+          INSERT INTO task_history (id, task_id, user_id, field_name, old_value, new_value)
+          VALUES (?, ?, ?, 'status', ?, ?)
+        `).run(randomUUID(), taskId, user.$id, existingTask.status, status);
+      } catch (e) {}
+
+      logActivity({
+        workspaceId: existingTask.workspace_id,
+        projectId: existingTask.project_id,
+        taskId,
+        userId: user.$id,
+        action: 'ISSUE_STATUS_CHANGED',
+        details: `Moved ${existingTask.key || 'issue'} from ${existingTask.status} to ${status}`,
+      });
+
       if (status === 'DONE') {
         triggerAutomations({
           workspaceId: existingTask.workspace_id,
@@ -1694,10 +1775,27 @@ const app = new Hono()
     db.prepare(`UPDATE tasks SET status = ?, updated_at = CURRENT_TIMESTAMP ${completedClause} WHERE id = ?`).run(toStatus, taskId);
 
     // Record in task_history
+    if (d1) {
+      try {
+        await d1.prepare(`
+          INSERT INTO task_history (id, task_id, user_id, field_name, old_value, new_value)
+          VALUES (?, ?, ?, 'status', ?, ?)
+        `).bind(randomUUID(), taskId, user.$id, fromStatus, toStatus).run();
+      } catch (e) {}
+    }
     db.prepare(`
       INSERT INTO task_history (id, task_id, user_id, field_name, old_value, new_value)
       VALUES (?, ?, ?, 'status', ?, ?)
     `).run(randomUUID(), taskId, user.$id, fromStatus, toStatus);
+
+    await recordTicketStatusTransition({
+      ticketId: taskId,
+      projectId: task.project_id,
+      previousStatus: fromStatus,
+      newStatus: toStatus,
+      userId: user.$id,
+      d1,
+    });
 
     // Record activity
     logActivity({

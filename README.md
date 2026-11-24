@@ -68,6 +68,60 @@ Remove relationship link and record deletion in activity history.
 
 ---
 
+## 📊 Cumulative Flow Diagram (CFD) – Advanced Project Analytics
+
+KlanServiceHub provides a Kanban-grade, real-time Cumulative Flow Diagram (CFD) under **Reports & Organization Analytics** to visualize how work moves through workflow stages over time, uncover delivery bottlenecks, and track team velocity.
+
+### 1. Database Schema & Transition History Ledger
+
+Historical snapshots are reconstructed using a dedicated transition ledger table in Cloudflare D1:
+
+```sql
+CREATE TABLE IF NOT EXISTS ticket_status_history (
+  id TEXT PRIMARY KEY,
+  ticket_id TEXT NOT NULL,
+  project_id TEXT NOT NULL,
+  previous_status TEXT,
+  new_status TEXT NOT NULL,
+  changed_by TEXT,
+  changed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (ticket_id) REFERENCES tasks(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_tsh_ticket ON ticket_status_history(ticket_id);
+CREATE INDEX IF NOT EXISTS idx_tsh_project ON ticket_status_history(project_id);
+CREATE INDEX IF NOT EXISTS idx_tsh_changed_at ON ticket_status_history(changed_at);
+```
+
+### 2. Analytics Metrics & Calculation Logic
+
+| Metric | Calculation Method | Description |
+| :--- | :--- | :--- |
+| **Total Tickets** | $\sum \text{tickets in scope}$ | Total work items included in selected project, team, and date range |
+| **Work in Progress (WIP)** | $\text{count}(\text{status} \in \{\text{IN\_PROGRESS}, \text{CODE\_REVIEW}, \text{TESTING}\})$ | Total tickets currently undergoing active development or review |
+| **Completed Tickets** | $\text{count}(\text{status} = \text{DONE})$ | Total tickets that reached completion |
+| **Throughput** | $\frac{\text{Completed Tickets}}{\text{Days in Window}}$ (daily), $\times 7$ (weekly) | Delivery rate of completed tickets per day and week |
+| **Avg Cycle Time** | $\text{avg}(\text{completed\_at} - \text{first\_active\_status\_time})$ | Time from starting active work to final completion |
+| **Avg Lead Time** | $\text{avg}(\text{completed\_at} - \text{created\_at})$ | Total elapsed time from creation to completion |
+| **Bottleneck Indicator** | $\max(\text{count} \times \text{avg\_dwell\_days})$ for active stages | Identifies stages where tickets accumulate with high dwell duration |
+
+### 3. REST API Reference
+
+#### `GET /api/reports/:workspaceId/cumulative-flow`
+Returns timeline buckets (`date`, `label`, `statuses`, `cumulative`, `total`) and sorted workflow statuses.
+- **Query Parameters**: `projectId`, `teamId`, `sprintId`, `dateRange` (`7d`, `14d`, `30d`, `90d`, `custom`), `startDate`, `endDate`, `interval` (`daily`, `weekly`, `monthly`).
+
+#### `GET /api/reports/:workspaceId/cumulative-flow/summary`
+Returns the 7 high-level KPI cards (Total, WIP, Completed, Throughput, Cycle Time, Lead Time, Bottleneck).
+
+#### `GET /api/reports/:workspaceId/cumulative-flow/bottlenecks`
+Returns automated stage diagnostics across `TESTING`, `CODE_REVIEW`, `IN_PROGRESS`, dwell times, affected tickets, severity (`CRITICAL`, `WARNING`, `NORMAL`), and Agile recommendations.
+
+#### `GET /api/reports/:workspaceId/cumulative-flow/tickets`
+Historical drill-down returning tickets that were in `:status` on `:date` based on transition logs.
+
+---
+
 ## 🛠️ Local Development & Deployment
 
 ### Backend
@@ -91,4 +145,4 @@ npm run deploy     # Deploy assets to Cloudflare Workers
 
 ## 📋 Tracking & Sub-Tasks
 
-For the complete catalog of all 39 platform enhancements and sub-tasks, refer to [TODAYS_UPDATES_TICKETS.md](./TODAYS_UPDATES_TICKETS.md).
+For the complete catalog of all 42 platform enhancements and sub-tasks, refer to [TODAYS_UPDATES_TICKETS.md](./TODAYS_UPDATES_TICKETS.md).

@@ -1,6 +1,6 @@
 # KlanServiceHub V1 — Epic & Sub-Tasks Specification
 
-This document is structured so you can first create the **Main Parent Ticket (Epic / Story)** in KlanServiceHub, and then create each of the **41 Sub-tasks** linked directly under it.
+This document is structured so you can first create the **Main Parent Ticket (Epic / Story)** in KlanServiceHub, and then create each of the **42 Sub-tasks** linked directly under it.
 
 ---
 
@@ -9,7 +9,7 @@ This document is structured so you can first create the **Main Parent Ticket (Ep
 - **Issue Type**: `Epic` *(or `Story` if your workflow doesn't use Epics)*
 - **Summary**: `Enhancing the Klanservichub V1`
 - **Priority**: `P1 - High (⬆️)`
-- **Total Story Points**: `186`
+- **Total Story Points**: `194`
 - **Module / Component**: `Core Platform / Multi-Module`
 - **Labels**: `v1-enhancements`, `epic`, `platform-stability`, `ui-ux`, `analytics`, `tasks-boards`, `workflows`, `projects`, `ticket-links`
 
@@ -1447,6 +1447,65 @@ Align ticket description images with the 6-day retention rule established for co
 - [x] Reopening a completed ticket resets `completed_at` to `NULL` and stops the expiration countdown.
 - [x] Linked ticket titles remain clearly visible and readable without truncation defects.
 - [x] Successfully deployed to Cloudflare Workers with 0 errors.
+
+---
+
+### 🔹 Sub-task 42: Cumulative Flow Diagram (CFD) – Advanced Project Analytics
+
+- **Parent Ticket**: `Enhancing the Klanservichub V1`
+- **Issue Type**: `Sub-task` *(or `Story`)*
+- **Summary**: `Subtask 42: Implement Cumulative Flow Diagram (CFD) with historical status tracking, stacked area chart, automated bottleneck diagnostics, and ticket drill-down`
+- **Priority**: `P1 - High (⬆️)`
+- **Story Points**: `8`
+- **Component**: `Full Stack / Reports & Organization Analytics`
+- **Labels**: `analytics`, `cfd`, `cumulative-flow`, `kanban`, `bottlenecks`, `wip`, `cycle-time`, `d1-migration`
+
+#### Description
+Implement a dedicated, fully interactive Cumulative Flow Diagram (CFD) under Reports & Organization Analytics. The CFD visualizes how tickets move through different workflow statuses over time, helping Project Managers, Team Leads, Scrum Masters, and team members identify workflow bottlenecks, work accumulation (WIP), delivery delays, and overall team delivery velocity. The feature reconstructs historical status distributions accurately using a dedicated `ticket_status_history` audit ledger table on Cloudflare D1, provides 7 top-level summary KPI cards, an interactive responsive SVG stacked area chart with status filtering and hover crosshairs, automated bottleneck detection with Agile process recommendations, and historical date-level ticket drill-downs with CSV and PDF export capabilities.
+
+#### Scope of Work
+- **Database Migration & Transition History Ledger**:
+  - Created `ticket_status_history` table on Cloudflare D1 and SQLite (`id`, `ticket_id`, `project_id`, `previous_status`, `new_status`, `changed_by`, `changed_at`).
+  - Added high-performance indexes: `idx_tsh_ticket`, `idx_tsh_project`, `idx_tsh_changed_at`.
+  - Backfilled 192 historical transition records from `task_history` and baseline task states.
+- **Backend Transition Tracking Hooks (`backend/src/features/tasks/server/route.js`)**:
+  - Implemented `recordTicketStatusTransition` hook capturing status changes across task creation, updates, bulk moves, and transitions.
+- **Backend Analytics Engine (`backend/src/features/reports/server/cfd-engine.js`)**:
+  - `getCumulativeFlowData`: Dynamic timeline bucketing (daily, weekly, monthly), historical status reconstruction as of each date bucket, and cumulative stack ordering.
+  - `getCFDSummaryMetrics`: 7 KPI calculations (Total Tickets, WIP, Completed Tickets, Daily/Weekly Throughput, Avg Cycle Time, Avg Lead Time, Primary Bottleneck Indicator).
+  - `getCFDBottlenecks`: Continuous stage diagnostics across active stages (`TESTING`, `CODE_REVIEW`, `IN_PROGRESS`), dwell time calculation, severity classification (`CRITICAL`, `WARNING`, `NORMAL`), and actionable Agile recommendations.
+  - `getCFDTicketsDrilldown`: Historical date-specific status ticket resolution.
+- **Backend REST API Endpoints (`backend/src/features/reports/server/route.js`)**:
+  - `GET /api/reports/:workspaceId/cumulative-flow`
+  - `GET /api/reports/:workspaceId/cumulative-flow/summary`
+  - `GET /api/reports/:workspaceId/cumulative-flow/bottlenecks`
+  - `GET /api/reports/:workspaceId/cumulative-flow/tickets`
+  - `GET /api/reports/:workspaceId/cumulative-flow/throughput`
+  - `GET /api/reports/:workspaceId/cumulative-flow/cycle-time`
+  - `GET /api/reports/:workspaceId/cumulative-flow/lead-time`
+  - Standalone alias routes mounted under `/api/analytics/cumulative-flow`.
+- **Frontend UI Components (`frontend/src/features/reports/components/cumulative-flow/`)**:
+  - `CfdSummaryCards`: 7 KPI cards with tooltips and click triggers.
+  - `CumulativeFlowChart`: Responsive SVG stacked area chart with gradient fills, X/Y axes ticks, interactive hover crosshair, floating tooltip with status breakdown and drill-down links, and status filter toggles in legend.
+  - `BottleneckDiagnosticsCard`: Alert banner, stage cards with dwell times and friction bars, longest-waiting affected tickets list, and Agile recommendations.
+  - `CfdTicketDrilldownModal`: Historical snapshot drawer with ticket details, days in stage, search filter, and CSV export.
+  - `CumulativeFlowSection`: Integrated CFD dashboard container with quick date pills (7d, 14d, 30d, 90d, custom), project/team/sprint selectors, interval toggle (daily, weekly, monthly), refresh, CSV export, and PDF print export.
+- **Organization Analytics Integration**:
+  - Added Cumulative Flow (CFD) tab under Reports & Organization Analytics (`organization-analytics-page.jsx`).
+
+#### Acceptance Criteria
+- [x] Dedicated Cumulative Flow Diagram tab integrated under Reports & Organization Analytics.
+- [x] Status history ledger tracks transitions in `ticket_status_history` table on Cloudflare D1.
+- [x] Accurately reconstructs historical ticket distributions for any past date from transition history.
+- [x] Displays 7 top-level KPI metric cards: Total Tickets, WIP, Completed, Throughput, Cycle Time, Lead Time, Bottleneck.
+- [x] Interactive SVG stacked area chart renders status bands with tooltips, crosshairs, and status toggles.
+- [x] Automated bottleneck detection identifies congested stages, average dwell times, affected tickets, and recommendations.
+- [x] Clicking status area or card opens historical drill-down displaying tickets in that status on that historical date.
+- [x] Filterable by project, team, sprint, date range (7d, 14d, 30d, 90d, custom), and interval (daily, weekly, monthly).
+- [x] Exports CFD matrix and drill-down tickets to CSV, and supports PDF printing.
+- [x] Unit test suite (`test-cfd.js`) passes all calculations and edge cases.
+- [x] Successfully deployed to Cloudflare Workers with 0 errors.
+
 
 
 

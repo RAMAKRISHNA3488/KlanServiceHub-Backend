@@ -2,6 +2,12 @@ import { Hono } from 'hono';
 import { sessionMiddleware } from '../../../lib/session-middleware.js';
 import { db, formatDoc, d1All, d1First, d1Run, pruneActivities, getD1Database } from '../../../db.js';
 import { hasPermission } from '../../../lib/permissions.js';
+import {
+  getCumulativeFlowData,
+  getCFDSummaryMetrics,
+  getCFDBottlenecks,
+  getCFDTicketsDrilldown,
+} from './cfd-engine.js';
 
 const app = new Hono();
 
@@ -1736,6 +1742,153 @@ app.get('/:workspaceId/export', sessionMiddleware, async (ctx) => {
       tasks,
     },
   });
+});
+
+// ============================================================================
+// Cumulative Flow Diagram (CFD) Endpoints
+// ============================================================================
+
+app.get('/:workspaceId/cumulative-flow', sessionMiddleware, async (ctx) => {
+  const { workspaceId } = ctx.req.param();
+  const query = ctx.req.query();
+  const auth = await checkAccess(ctx, workspaceId);
+  if (!auth.allowed) return ctx.json({ error: auth.error }, auth.status);
+
+  const d1 = ctx.env?.DB || getD1Database();
+  const data = await getCumulativeFlowData({ workspaceId, query, d1 });
+  return ctx.json({ data });
+});
+
+app.get('/:workspaceId/cumulative-flow/summary', sessionMiddleware, async (ctx) => {
+  const { workspaceId } = ctx.req.param();
+  const query = ctx.req.query();
+  const auth = await checkAccess(ctx, workspaceId);
+  if (!auth.allowed) return ctx.json({ error: auth.error }, auth.status);
+
+  const d1 = ctx.env?.DB || getD1Database();
+  const data = await getCFDSummaryMetrics({ workspaceId, query, d1 });
+  return ctx.json({ data });
+});
+
+app.get('/:workspaceId/cumulative-flow/bottlenecks', sessionMiddleware, async (ctx) => {
+  const { workspaceId } = ctx.req.param();
+  const query = ctx.req.query();
+  const auth = await checkAccess(ctx, workspaceId);
+  if (!auth.allowed) return ctx.json({ error: auth.error }, auth.status);
+
+  const d1 = ctx.env?.DB || getD1Database();
+  const data = await getCFDBottlenecks({ workspaceId, query, d1 });
+  return ctx.json({ data });
+});
+
+app.get('/:workspaceId/cumulative-flow/tickets', sessionMiddleware, async (ctx) => {
+  const { workspaceId } = ctx.req.param();
+  const query = ctx.req.query();
+  const auth = await checkAccess(ctx, workspaceId);
+  if (!auth.allowed) return ctx.json({ error: auth.error }, auth.status);
+
+  const d1 = ctx.env?.DB || getD1Database();
+  const data = await getCFDTicketsDrilldown({ workspaceId, query, d1 });
+  return ctx.json({ data });
+});
+
+app.get('/:workspaceId/cumulative-flow/throughput', sessionMiddleware, async (ctx) => {
+  const { workspaceId } = ctx.req.param();
+  const query = ctx.req.query();
+  const auth = await checkAccess(ctx, workspaceId);
+  if (!auth.allowed) return ctx.json({ error: auth.error }, auth.status);
+
+  const d1 = ctx.env?.DB || getD1Database();
+  const metrics = await getCFDSummaryMetrics({ workspaceId, query, d1 });
+  return ctx.json({ data: metrics.throughput });
+});
+
+app.get('/:workspaceId/cumulative-flow/cycle-time', sessionMiddleware, async (ctx) => {
+  const { workspaceId } = ctx.req.param();
+  const query = ctx.req.query();
+  const auth = await checkAccess(ctx, workspaceId);
+  if (!auth.allowed) return ctx.json({ error: auth.error }, auth.status);
+
+  const d1 = ctx.env?.DB || getD1Database();
+  const metrics = await getCFDSummaryMetrics({ workspaceId, query, d1 });
+  return ctx.json({ data: { avgCycleTimeDays: metrics.avgCycleTimeDays } });
+});
+
+app.get('/:workspaceId/cumulative-flow/lead-time', sessionMiddleware, async (ctx) => {
+  const { workspaceId } = ctx.req.param();
+  const query = ctx.req.query();
+  const auth = await checkAccess(ctx, workspaceId);
+  if (!auth.allowed) return ctx.json({ error: auth.error }, auth.status);
+
+  const d1 = ctx.env?.DB || getD1Database();
+  const metrics = await getCFDSummaryMetrics({ workspaceId, query, d1 });
+  return ctx.json({ data: { avgLeadTimeDays: metrics.avgLeadTimeDays } });
+});
+
+// Standalone analytics endpoints (/api/analytics/cumulative-flow)
+async function resolveWorkspaceFromAnalytics(ctx) {
+  const query = ctx.req.query();
+  const user = ctx.get('user');
+  const d1 = ctx.env?.DB || getD1Database();
+  let workspaceId = query.workspaceId;
+  if (!workspaceId && query.projectId) {
+    const proj = await d1First('SELECT workspace_id FROM projects WHERE id = ?', [query.projectId], d1);
+    workspaceId = proj?.workspace_id;
+  }
+  if (!workspaceId) {
+    const member = await d1First('SELECT workspace_id FROM members WHERE user_id = ? ORDER BY created_at ASC LIMIT 1', [user.$id], d1);
+    workspaceId = member?.workspace_id;
+  }
+  return { workspaceId, d1, user, query };
+}
+
+app.get('/cumulative-flow', sessionMiddleware, async (ctx) => {
+  const { workspaceId, d1, query } = await resolveWorkspaceFromAnalytics(ctx);
+  if (!workspaceId) return ctx.json({ error: 'Workspace ID required' }, 400);
+  const data = await getCumulativeFlowData({ workspaceId, query, d1 });
+  return ctx.json({ data });
+});
+
+app.get('/cumulative-flow/summary', sessionMiddleware, async (ctx) => {
+  const { workspaceId, d1, query } = await resolveWorkspaceFromAnalytics(ctx);
+  if (!workspaceId) return ctx.json({ error: 'Workspace ID required' }, 400);
+  const data = await getCFDSummaryMetrics({ workspaceId, query, d1 });
+  return ctx.json({ data });
+});
+
+app.get('/cumulative-flow/bottlenecks', sessionMiddleware, async (ctx) => {
+  const { workspaceId, d1, query } = await resolveWorkspaceFromAnalytics(ctx);
+  if (!workspaceId) return ctx.json({ error: 'Workspace ID required' }, 400);
+  const data = await getCFDBottlenecks({ workspaceId, query, d1 });
+  return ctx.json({ data });
+});
+
+app.get('/cumulative-flow/tickets', sessionMiddleware, async (ctx) => {
+  const { workspaceId, d1, query } = await resolveWorkspaceFromAnalytics(ctx);
+  if (!workspaceId) return ctx.json({ error: 'Workspace ID required' }, 400);
+  const data = await getCFDTicketsDrilldown({ workspaceId, query, d1 });
+  return ctx.json({ data });
+});
+
+app.get('/cumulative-flow/throughput', sessionMiddleware, async (ctx) => {
+  const { workspaceId, d1, query } = await resolveWorkspaceFromAnalytics(ctx);
+  if (!workspaceId) return ctx.json({ error: 'Workspace ID required' }, 400);
+  const metrics = await getCFDSummaryMetrics({ workspaceId, query, d1 });
+  return ctx.json({ data: metrics.throughput });
+});
+
+app.get('/cumulative-flow/cycle-time', sessionMiddleware, async (ctx) => {
+  const { workspaceId, d1, query } = await resolveWorkspaceFromAnalytics(ctx);
+  if (!workspaceId) return ctx.json({ error: 'Workspace ID required' }, 400);
+  const metrics = await getCFDSummaryMetrics({ workspaceId, query, d1 });
+  return ctx.json({ data: { avgCycleTimeDays: metrics.avgCycleTimeDays } });
+});
+
+app.get('/cumulative-flow/lead-time', sessionMiddleware, async (ctx) => {
+  const { workspaceId, d1, query } = await resolveWorkspaceFromAnalytics(ctx);
+  if (!workspaceId) return ctx.json({ error: 'Workspace ID required' }, 400);
+  const metrics = await getCFDSummaryMetrics({ workspaceId, query, d1 });
+  return ctx.json({ data: { avgLeadTimeDays: metrics.avgLeadTimeDays } });
 });
 
 // Legacy root endpoint for backwards compatibility

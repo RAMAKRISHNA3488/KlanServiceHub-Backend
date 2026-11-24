@@ -340,6 +340,20 @@ CREATE TABLE IF NOT EXISTS task_history (
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS ticket_status_history (
+  id TEXT PRIMARY KEY,
+  ticket_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  previous_status TEXT,
+  new_status TEXT NOT NULL,
+  changed_by TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  changed_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_tsh_ticket ON ticket_status_history(ticket_id);
+CREATE INDEX IF NOT EXISTS idx_tsh_project ON ticket_status_history(project_id);
+CREATE INDEX IF NOT EXISTS idx_tsh_changed_at ON ticket_status_history(changed_at);
+
 CREATE TABLE IF NOT EXISTS task_attachments (
   id TEXT PRIMARY KEY,
   task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
