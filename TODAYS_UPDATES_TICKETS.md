@@ -1,6 +1,6 @@
 # KlanServiceHub V1 — Epic & Sub-Tasks Specification
 
-This document is structured so you can first create the **Main Parent Ticket (Epic / Story)** in KlanServiceHub, and then create each of the **44 Sub-tasks** linked directly under it.
+This document is structured so you can first create the **Main Parent Ticket (Epic / Story)** in KlanServiceHub, and then create each of the **45 Sub-tasks** linked directly under it.
 
 ---
 
@@ -9,7 +9,7 @@ This document is structured so you can first create the **Main Parent Ticket (Ep
 - **Issue Type**: `Epic` *(or `Story` if your workflow doesn't use Epics)*
 - **Summary**: `Enhancing the Klanservichub V1`
 - **Priority**: `P1 - High (⬆️)`
-- **Total Story Points**: `204`
+- **Total Story Points**: `207`
 - **Module / Component**: `Core Platform / Multi-Module`
 - **Labels**: `v1-enhancements`, `epic`, `platform-stability`, `ui-ux`, `analytics`, `tasks-boards`, `workflows`, `projects`, `ticket-links`
 
@@ -1601,6 +1601,60 @@ Standardize typography and component density across the entire KlanServiceHub pl
 - [x] High-density layout preserves full readability with zero overlapping or broken UI artifacts.
 - [x] Production build generated clean with zero compilation or lint errors.
 - [x] Successfully deployed to Cloudflare Workers with cache-busting headers.
+
+---
+
+### 🔹 Sub-task 45: Modernize Platform Layouts to Fluid Full-Width (Eliminating Right-Side Dead Whitespace)
+
+- **Parent Ticket**: `Enhancing the Klanservichub V1`
+- **Issue Type**: `Sub-task` *(or `Story`)*
+- **Summary**: `Subtask 45: Convert dashboard layout and all view containers to fluid w-full, eliminating dead whitespace on widescreen monitors`
+- **Priority**: `P1 - High (⬆️)`
+- **Story Points**: `3`
+- **Component**: `Frontend / Responsive Layout Architecture`
+- **Labels**: `layout`, `w-full`, `fluid-width`, `ui-polish`, `widescreen-responsive`, `zero-dead-space`
+
+#### Description
+Eliminate the large dead-space / whitespace gap spanning the right side of the screen on widescreen and high-resolution monitors. Previously, the main dashboard shell `<main>` container was capped at `max-w-[1400px] mx-auto` with heavy padding `md:p-8`, and individual page components imposed secondary inner constraints (`max-w-7xl mx-auto`, `max-w-6xl mx-auto`, `max-w-5xl mx-auto`). This caused content to stop abruptly, trapping hundreds of pixels in an empty right-hand gutter. This task converted the dashboard shell and all view containers across all modules to a fluid `w-full min-w-0` layout, allowing KPI cards, charts, activity streams, and Kanban boards to responsively expand across 100% of the available viewport width.
+
+#### Scope of Work
+- **Dashboard Shell Container (`frontend/src/app/(dashboard)/layout.jsx`)**:
+  - Removed `max-w-[1400px] w-full mx-auto` and `md:p-8`.
+  - Converted `<main>` to fluid `w-full min-w-0 p-3 sm:p-4 md:p-5 lg:p-6 pb-20 lg:pb-6`.
+- **Global Page Loader Skeleton (`frontend/src/components/page-loader.jsx`)**:
+  - Converted viewport skeleton container to fluid `w-full min-w-0` matching the main dashboard.
+- **Reports & Analytics Views**:
+  - Removed `max-w-7xl mx-auto` from `organization-analytics-page.jsx` and `reports-analytics-skeleton.jsx`, replacing with `w-full`.
+- **Company Administration Views**:
+  - Replaced restrictive `max-w-6xl mx-auto`, `max-w-7xl mx-auto`, and `max-w-5xl mx-auto` caps with fluid `w-full` across:
+    - `teams-admin-view.jsx`
+    - `users-admin-view.jsx`
+    - `workflows-admin-view.jsx`
+    - `boards-view.jsx`
+    - `dashboards-view.jsx`
+    - `sprints-view.jsx`
+    - `roadmap-view.jsx`
+    - `releases-view.jsx`
+    - `groups-admin-view.jsx`
+    - `billing-view.jsx`
+    - `api-tokens-view.jsx`
+    - `audit-logs-view.jsx`
+    - `automations-view.jsx`
+    - `company-profile-view.jsx`
+    - `data-management-view.jsx`
+    - `security-view.jsx`
+    - `integrations-view.jsx`
+- **Governance & Tasks Views**:
+  - Converted `governance-view.jsx` and `tasks/[taskId]/client.jsx` to fluid `w-full`.
+- **Responsive Layout Verification**:
+  - Confirmed 100% horizontal real estate utilization on widescreen monitors with zero dead right-side gutters.
+
+#### Acceptance Criteria
+- [x] Dashboard content fluidly stretches to utilize 100% of available viewport width across all desktop and laptop resolutions.
+- [x] Zero artificial dead-space or white gaps on the right side of Reports, Dashboards, Boards, and Admin tables.
+- [x] KPI cards and metric grids evenly distribute across the full width.
+- [x] Production build generated clean with zero errors.
+- [x] Successfully deployed to Cloudflare Workers with version ID `85cd8098-7a28-41db-a2f2-aefd45ad47a3`.
 
 
 

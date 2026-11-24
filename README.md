@@ -169,6 +169,19 @@ KlanServiceHub standardizes on an ultra-compact, high-density Jira/Linear typogr
 
 ---
 
+## 📐 Fluid Full-Width Enterprise Layout Architecture (Zero Dead Whitespace)
+
+KlanServiceHub platform views are engineered with a fluid, responsive full-width (`w-full min-w-0`) architecture that completely eliminates artificial dead space, borders, and empty right-side gutters across widescreen monitors and diverse viewport resolutions:
+
+### 1. Viewport & Layout Specifications
+- **Dashboard Shell Container (`frontend/src/app/(dashboard)/layout.jsx`)**: Fluid `w-full min-w-0` layout with balanced responsive padding (`p-3 sm:p-4 md:p-5 lg:p-6 pb-20 lg:pb-6`), removing legacy hard-coded `max-w-[1400px]` constraints.
+- **Global Page Loader & Skeletons (`frontend/src/components/page-loader.jsx`)**: Viewport canvas skeleton matches the active page layout with `w-full min-w-0` for seamless, 0-CLS loading transitions.
+- **Reports & Analytics Dashboard**: Grid distributions (KPI overview cards, Status Donut charts, Organization Activity streams, Cumulative Flow Diagrams) dynamically stretch across 100% of available viewport real estate.
+- **Company Administration Hubs**: All 16 administrative and settings modules (`teams`, `users`, `workflows`, `boards`, `dashboards`, `sprints`, `roadmap`, `releases`, `groups`, `billing`, `api-tokens`, `audit-logs`, `automations`, `company-profile`, `data-management`, `security`, `integrations`) utilize responsive full-width data tables and cards.
+- **Task & Governance Views**: Issue detail views, Kanban boards, and Governance matrices expand fluidly with zero horizontal truncation.
+
+---
+
 ## 🛠️ Local Development & Deployment
 
 ### Backend
@@ -192,4 +205,4 @@ npm run deploy     # Deploy assets to Cloudflare Workers
 
 ## 📋 Tracking & Sub-Tasks
 
-For the complete catalog of all 44 platform enhancements and sub-tasks, refer to [TODAYS_UPDATES_TICKETS.md](./TODAYS_UPDATES_TICKETS.md).
+For the complete catalog of all 45 platform enhancements and sub-tasks (207 Story Points), refer to [TODAYS_UPDATES_TICKETS.md](./TODAYS_UPDATES_TICKETS.md).
