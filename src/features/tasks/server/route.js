@@ -170,6 +170,86 @@ async function attachAssigneesToTask(task, d1) {
   return task;
 }
 
+async function attachReportersToTasks(tasks, d1) {
+  if (!tasks || tasks.length === 0) return tasks;
+  const dbInstance = d1 || getD1Database();
+
+  const userIdsToFetch = new Set();
+  for (const task of tasks) {
+    let ids = [];
+    if (task.reporter_ids) {
+      try {
+        ids = typeof task.reporter_ids === 'string' ? JSON.parse(task.reporter_ids) : task.reporter_ids;
+      } catch (e) {}
+    }
+    if ((!ids || ids.length === 0) && task.reporter_id) {
+      ids = [task.reporter_id];
+    }
+    task._reporterUserIds = Array.isArray(ids) ? ids : [];
+    task._reporterUserIds.forEach((uid) => userIdsToFetch.add(uid));
+  }
+
+  const userMap = {};
+  if (userIdsToFetch.size > 0) {
+    const uids = Array.from(userIdsToFetch);
+    const placeholders = uids.map(() => '?').join(',');
+    let userRows = [];
+    if (dbInstance) {
+      try {
+        const res = await dbInstance.prepare(`
+          SELECT id, name, email, avatar_url FROM users WHERE id IN (${placeholders})
+        `).bind(...uids).all();
+        userRows = res.results || [];
+      } catch (e) {}
+    }
+    if (userRows.length === 0 && !d1) {
+      try {
+        userRows = db.prepare(`
+          SELECT id, name, email, avatar_url FROM users WHERE id IN (${placeholders})
+        `).all(...uids);
+      } catch (e) {}
+    }
+    for (const u of userRows) {
+      userMap[u.id] = {
+        id: u.id,
+        $id: u.id,
+        name: u.name,
+        email: u.email,
+        avatarUrl: u.avatar_url,
+      };
+    }
+  }
+
+  for (const task of tasks) {
+    const rUsers = (task._reporterUserIds || [])
+      .map((uid) => userMap[uid])
+      .filter(Boolean);
+
+    delete task._reporterUserIds;
+
+    if (rUsers.length > 0) {
+      task.reporters = rUsers;
+      task.reporterIds = rUsers.map((r) => r.id);
+      task.reporter = rUsers[0];
+    } else if (task.reporter) {
+      task.reporters = [task.reporter];
+      task.reporterIds = [task.reporter.id || task.reporter.$id];
+    } else {
+      task.reporters = [];
+      task.reporterIds = [];
+      task.reporter = null;
+    }
+  }
+
+  return tasks;
+}
+
+async function attachReportersToTask(task, d1) {
+  if (!task) return task;
+  const wrapped = await attachReportersToTasks([task], d1);
+  return wrapped[0] || task;
+}
+
 async function processCommentsWithExpiration(comments, taskId, d1) {
   let task = null;
   if (d1) {
@@ -547,6 +627,7 @@ const app = new Hono()
 
     await Promise.all([
       attachAssigneesToTasks(documents, d1),
+      attachReportersToTasks(documents, d1),
       attachLikesAndFavoritesToTasks(documents, user?.$id, d1),
     ]);
 
@@ -617,6 +698,9 @@ const app = new Hono()
     ]);
 
     await Promise.all([
+      attachReportersToTasks(assignedDocs, d1),
+      attachReportersToTasks(reportedDocs, d1),
+      attachReportersToTasks(watchedDocs, d1),
       attachLikesAndFavoritesToTasks(assignedDocs, user?.$id, d1),
       attachLikesAndFavoritesToTasks(reportedDocs, user?.$id, d1),
       attachLikesAndFavoritesToTasks(watchedDocs, user?.$id, d1),
@@ -903,6 +987,7 @@ const app = new Hono()
     task.comments = await processCommentsWithExpiration(comments || [], taskId, d1);
 
     await attachAssigneesToTask(task, d1);
+    await attachReportersToTask(task, d1);
     await attachLikesAndFavoritesToTask(task, currentUser?.$id, d1);
     await attachDescriptionImagesExpiration(task, d1);
 
@@ -1004,27 +1089,41 @@ const app = new Hono()
       targetAssigneeIds = [primaryAssigneeId];
     }
 
-    let effectiveReporterId = user.$id;
-    const reqReporterId = reporterId || body.reporter_id;
-    if (reqReporterId) {
+    let targetReporterIds = [];
+    if (Array.isArray(body.reporterIds) && body.reporterIds.length > 0) {
+      targetReporterIds = body.reporterIds.filter(Boolean);
+    } else if (Array.isArray(body.reporter_ids) && body.reporter_ids.length > 0) {
+      targetReporterIds = body.reporter_ids.filter(Boolean);
+    } else if (reporterId || body.reporter_id) {
+      const rId = reporterId || body.reporter_id;
+      targetReporterIds = Array.isArray(rId) ? rId.filter(Boolean) : [rId];
+    }
+
+    if (targetReporterIds.length === 0) {
+      targetReporterIds = [user.$id];
+    }
+
+    const resolvedReporterIds = [];
+    for (const rid of targetReporterIds) {
+      let resolvedId = rid;
       if (d1) {
         try {
-          const mem = await d1.prepare('SELECT user_id FROM members WHERE id = ? AND workspace_id = ?').bind(reqReporterId, effectiveWorkspaceId).first();
-          if (mem && mem.user_id) effectiveReporterId = mem.user_id;
-          else effectiveReporterId = reqReporterId;
-        } catch (e) {
-          effectiveReporterId = reqReporterId;
-        }
+          const mem = await d1.prepare('SELECT user_id FROM members WHERE id = ? AND workspace_id = ?').bind(rid, effectiveWorkspaceId).first();
+          if (mem && mem.user_id) resolvedId = mem.user_id;
+        } catch (e) {}
       } else {
         try {
-          const mem = db.prepare('SELECT user_id FROM members WHERE id = ? AND workspace_id = ?').get(reqReporterId, effectiveWorkspaceId);
-          if (mem && mem.user_id) effectiveReporterId = mem.user_id;
-          else effectiveReporterId = reqReporterId;
-        } catch (e) {
-          effectiveReporterId = reqReporterId;
-        }
+          const mem = db.prepare('SELECT user_id FROM members WHERE id = ? AND workspace_id = ?').get(rid, effectiveWorkspaceId);
+          if (mem && mem.user_id) resolvedId = mem.user_id;
+        } catch (e) {}
+      }
+      if (resolvedId && !resolvedReporterIds.includes(resolvedId)) {
+        resolvedReporterIds.push(resolvedId);
       }
     }
+
+    const effectiveReporterId = resolvedReporterIds[0] || user.$id;
+    const reporterIdsJson = JSON.stringify(resolvedReporterIds.length > 0 ? resolvedReporterIds : [user.$id]);
 
     const descImages = body.descriptionImages || body.description_images || [];
     const descImagesJson = typeof descImages === 'string' ? descImages : JSON.stringify(descImages);
@@ -1034,10 +1133,10 @@ const app = new Hono()
         await d1.prepare(`
           INSERT INTO tasks (
             id, key, name, description, description_images, status, priority, issue_type, workspace_id, project_id,
-            assignee_id, reporter_id, sprint_id, story_points, labels, epic_id, parent_task_id,
+            assignee_id, reporter_id, reporter_ids, sprint_id, story_points, labels, epic_id, parent_task_id,
             original_estimate_hours, due_date, position
           )
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `).bind(
           taskId,
           key,
@@ -1051,6 +1150,7 @@ const app = new Hono()
           effectiveProjectId,
           primaryAssigneeId,
           effectiveReporterId,
+          reporterIdsJson,
           sprintId || null,
           Number(storyPoints) || 1,
           JSON.stringify(labels || []),
@@ -1074,10 +1174,10 @@ const app = new Hono()
     db.prepare(`
       INSERT INTO tasks (
         id, key, name, description, description_images, status, priority, issue_type, workspace_id, project_id,
-        assignee_id, reporter_id, sprint_id, story_points, labels, epic_id, parent_task_id,
+        assignee_id, reporter_id, reporter_ids, sprint_id, story_points, labels, epic_id, parent_task_id,
         original_estimate_hours, due_date, position
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       taskId,
       key,
@@ -1091,6 +1191,7 @@ const app = new Hono()
       effectiveProjectId,
       primaryAssigneeId,
       effectiveReporterId,
+      reporterIdsJson,
       sprintId || null,
       Number(storyPoints) || 1,
       JSON.stringify(labels || []),
@@ -1164,6 +1265,7 @@ const app = new Hono()
     }
 
     const createdTask = await attachAssigneesToTask(formatDoc(task), d1);
+    await attachReportersToTask(createdTask, d1);
     await attachDescriptionImagesExpiration(createdTask, d1);
     return ctx.json({ data: createdTask });
   })
@@ -1320,24 +1422,52 @@ const app = new Hono()
       }
     }
 
-    const reqPatchReporterId = body.reporterId !== undefined ? body.reporterId : body.reporter_id;
-    if (reqPatchReporterId !== undefined) {
-      let resolvedPatchReporterId = reqPatchReporterId;
-      if (reqPatchReporterId) {
+    const reqPatchReporterIds = body.reporterIds !== undefined ? body.reporterIds : body.reporter_ids;
+    if (reqPatchReporterIds !== undefined && Array.isArray(reqPatchReporterIds)) {
+      const resolvedIds = [];
+      for (const rid of reqPatchReporterIds) {
+        let resolved = rid;
         if (d1) {
           try {
-            const mem = await d1.prepare('SELECT user_id FROM members WHERE id = ? AND workspace_id = ?').bind(reqPatchReporterId, existingTask.workspace_id).first();
-            if (mem && mem.user_id) resolvedPatchReporterId = mem.user_id;
+            const mem = await d1.prepare('SELECT user_id FROM members WHERE id = ? AND workspace_id = ?').bind(rid, existingTask.workspace_id).first();
+            if (mem && mem.user_id) resolved = mem.user_id;
           } catch (e) {}
         } else {
           try {
-            const mem = db.prepare('SELECT user_id FROM members WHERE id = ? AND workspace_id = ?').get(reqPatchReporterId, existingTask.workspace_id);
-            if (mem && mem.user_id) resolvedPatchReporterId = mem.user_id;
+            const mem = db.prepare('SELECT user_id FROM members WHERE id = ? AND workspace_id = ?').get(rid, existingTask.workspace_id);
+            if (mem && mem.user_id) resolved = mem.user_id;
           } catch (e) {}
         }
+        if (resolved && !resolvedIds.includes(resolved)) {
+          resolvedIds.push(resolved);
+        }
       }
+      updates.push('reporter_ids = ?');
+      params.push(JSON.stringify(resolvedIds));
       updates.push('reporter_id = ?');
-      params.push(resolvedPatchReporterId || null);
+      params.push(resolvedIds[0] || null);
+    } else {
+      const reqPatchReporterId = body.reporterId !== undefined ? body.reporterId : body.reporter_id;
+      if (reqPatchReporterId !== undefined) {
+        let resolvedPatchReporterId = reqPatchReporterId;
+        if (reqPatchReporterId) {
+          if (d1) {
+            try {
+              const mem = await d1.prepare('SELECT user_id FROM members WHERE id = ? AND workspace_id = ?').bind(reqPatchReporterId, existingTask.workspace_id).first();
+              if (mem && mem.user_id) resolvedPatchReporterId = mem.user_id;
+            } catch (e) {}
+          } else {
+            try {
+              const mem = db.prepare('SELECT user_id FROM members WHERE id = ? AND workspace_id = ?').get(reqPatchReporterId, existingTask.workspace_id);
+              if (mem && mem.user_id) resolvedPatchReporterId = mem.user_id;
+            } catch (e) {}
+          }
+        }
+        updates.push('reporter_id = ?');
+        params.push(resolvedPatchReporterId || null);
+        updates.push('reporter_ids = ?');
+        params.push(JSON.stringify(resolvedPatchReporterId ? [resolvedPatchReporterId] : []));
+      }
     }
 
     if (updates.length > 0) {
@@ -1407,6 +1537,7 @@ const app = new Hono()
     }
 
     const updatedTask = await attachAssigneesToTask(formatDoc(updated), d1);
+    await attachReportersToTask(updatedTask, d1);
     await attachDescriptionImagesExpiration(updatedTask, d1);
     return ctx.json({ data: updatedTask });
   })

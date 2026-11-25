@@ -11,5 +11,6 @@ export const createTaskSchema = z.object({
   assigneeId: z.string().optional().nullable(),
   assigneeIds: z.array(z.string()).optional(),
   reporterId: z.string().optional().nullable(),
+  reporterIds: z.array(z.string()).optional(),
   description: z.string().optional(),
 });

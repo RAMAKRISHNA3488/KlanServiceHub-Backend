@@ -1,6 +1,6 @@
 # KlanServiceHub V1 — Epic & Sub-Tasks Specification
 
-This document is structured so you can first create the **Main Parent Ticket (Epic / Story)** in KlanServiceHub, and then create each of the **49 Sub-tasks** linked directly under it.
+This document is structured so you can first create the **Main Parent Ticket (Epic / Story)** in KlanServiceHub, and then create each of the **50 Sub-tasks** linked directly under it.
 
 ---
 
@@ -9,7 +9,7 @@ This document is structured so you can first create the **Main Parent Ticket (Ep
 - **Issue Type**: `Epic` *(or `Story` if your workflow doesn't use Epics)*
 - **Summary**: `Enhancing the Klanservichub V1`
 - **Priority**: `P1 - High`
-- **Total Story Points**: `222`
+- **Total Story Points**: `227`
 - **Module / Component**: `Core Platform / Multi-Module`
 - **Labels**: `v1-enhancements`, `epic`, `platform-stability`, `ui-ux`, `analytics`, `tasks-boards`, `workflows`, `projects`, `ticket-links`
 
@@ -1815,6 +1815,54 @@ Implement the requested "Reporter" selection option during ticket creation. Prev
 - [x] Task Detail Modal allows viewing and reassigning the Reporter on existing tickets.
 - [x] Production build generated clean with zero errors.
 - [x] Successfully deployed to Cloudflare Workers with version IDs `f5bf03c3-b1bc-49fb-98e2-bce3bd3e02eb` (backend) and `a42765b4-5657-4f43-b4ab-3d60e22dd4aa` (frontend).
+
+---
+
+### SUB-TASK 50: Enable Choosing Multiple People for Reporters (Co-Reporters / Collaborators) & Polish Sidebar Timestamps
+
+- **Parent Ticket**: `Enhancing the Klanservichub V1`
+- **Issue Type**: `Sub-task`
+- **Summary**: `Enable Choosing Multiple People for Reporters & Polish Sidebar Timestamps`
+- **Priority**: `P1 - High`
+- **Story Points**: `5`
+- **Component**: `Core Tasks / Modals & Backend API`
+- **Labels**: `tasks`, `create-issue-modal`, `multi-reporter`, `reporters`, `ui-polish`, `cloudflare-d1`, `backend-api`
+
+#### Description
+Enable choosing multiple people for Reporters (Co-Reporters / Collaborators) during ticket creation and in the Task Detail view, exactly mirroring the multi-assignee UX pattern. This sub-task added a `reporter_ids TEXT DEFAULT '[]'` column to Cloudflare D1 and SQLite schemas, updated backend `POST /api/tasks` and `PATCH /api/tasks/:taskId` to persist and return multiple reporters (`task.reporters` and `task.reporterIds`), updated the Create Issue Modal (`KlanserviceHubCreateIssueModal`) with side-by-side multiple Assignees and multiple Reporters selection boxes with removable avatar chips, updated the Task Detail Modal (`KlanserviceHubIssueDetailModal`) with a dynamic `Reporters (n)` chip list and `+ Add another reporter...` dropdown, and polished the `Dates & Timestamps` sidebar card so formatted dates never wrap awkwardly.
+
+#### Scope of Work
+- **Database Schema & D1 Migration (`cloudflare-d1-schema.sql` & `schema.sql`)**:
+  - Executed remote D1 migration: `ALTER TABLE tasks ADD COLUMN reporter_ids TEXT DEFAULT '[]';`.
+  - Added `reporter_ids TEXT DEFAULT '[]'` to both `cloudflare-d1-schema.sql` and `schema.sql`.
+- **Backend Tasks Schemas & Routing (`src/features/tasks/schema.js` & `src/features/tasks/server/route.js`)**:
+  - Added `reporterIds: z.array(z.string()).optional()` to schemas.
+  - Implemented `attachReportersToTasks` and `attachReportersToTask` helpers to resolve and return full reporter profiles (`id`, `name`, `email`, `avatarUrl`) under `task.reporters` while preserving primary reporter in `task.reporter`.
+  - Updated `POST /api/tasks` to accept `reporterIds`, resolve member/user IDs, and persist both `tasks.reporter_id` and `tasks.reporter_ids`.
+  - Updated `PATCH /api/tasks/:taskId` to accept and update `reporterIds` and sync both columns.
+  - Attached reporters in `GET /api/tasks`, `GET /api/tasks/my-work`, `GET /api/tasks/:taskId`, `POST /api/tasks`, and `PATCH /api/tasks/:taskId`.
+- **Create Issue Modal (`klanservicehub-create-issue-modal.jsx`)**:
+  - Configured state and submission for `reporterIds: []`, pre-selecting current user `(You)` by default.
+  - Restructured form into a symmetrical 2-column layout: `Assignees (Assign to Multiple)` on the left and `Reporters (Choose Multiple)` on the right.
+  - Rendered removable avatar chips and member toggle checklists with clear-all actions for both assignees and reporters.
+- **Task Detail Modal (`klanservicehub-issue-detail-modal.jsx`)**:
+  - Replaced single select with a `Reporters (n)` section featuring individual reporter chips with indigo avatars, full names, and `×` remove buttons.
+  - Added an inline `+ Add another reporter...` dropdown to quickly attach co-reporters with instant optimistic updates and real-time PATCH sync.
+  - Polished `Dates & Timestamps` card items with `shrink-0` labels and `whitespace-nowrap overflow-hidden text-ellipsis` to prevent `PM` from wrapping onto an awkward second line.
+- **Compilation & Live Deployment**:
+  - Verified clean production build with Vite (`dist/assets/index-zMj1649r.js`).
+  - Deployed backend to Cloudflare Workers with Version ID `c0638fb3-f6fe-40e1-9ed9-e8274f709bf1`.
+  - Deployed frontend to Cloudflare Workers with Version ID `9ae8d886-2329-4265-94df-dbc86849b1cc`.
+
+#### Acceptance Criteria
+- [x] Remote Cloudflare D1 database migrated with `reporter_ids` JSON column.
+- [x] Backend accepts `reporterIds` on `POST` and `PATCH`, resolving and storing both primary and full co-reporter list.
+- [x] Task queries return populated `task.reporters` array and primary `task.reporter` object.
+- [x] Create Issue Modal provides a multi-reporter selector with chips, member checklist, and clear-all action.
+- [x] Task Detail Modal renders all co-reporters with removable chips and a `+ Add another reporter...` dropdown matching the Assignees pattern.
+- [x] Dates & Timestamps sidebar formatting prevents awkward wrapped lines.
+- [x] Production build generated clean with zero errors.
+- [x] Both backend (`c0638fb3-f6fe-40e1-9ed9-e8274f709bf1`) and frontend (`9ae8d886-2329-4265-94df-dbc86849b1cc`) deployed live and verified on Cloudflare Workers.
 
 
 

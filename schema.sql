@@ -311,6 +311,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
   assignee_id TEXT REFERENCES members(id) ON DELETE SET NULL,
   reporter_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+  reporter_ids TEXT DEFAULT '[]',
   sprint_id TEXT REFERENCES sprints(id) ON DELETE SET NULL,
   issue_type TEXT NOT NULL DEFAULT 'Task',
   key TEXT,
