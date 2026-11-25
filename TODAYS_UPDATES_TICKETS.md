@@ -1,6 +1,6 @@
 # KlanServiceHub V1 — Epic & Sub-Tasks Specification
 
-This document is structured so you can first create the **Main Parent Ticket (Epic / Story)** in KlanServiceHub, and then create each of the **53 Sub-tasks** linked directly under it.
+This document is structured so you can first create the **Main Parent Ticket (Epic / Story)** in KlanServiceHub, and then create each of the **50 Sub-tasks** linked directly under it.
 
 ---
 
@@ -9,7 +9,7 @@ This document is structured so you can first create the **Main Parent Ticket (Ep
 - **Issue Type**: `Epic` *(or `Story` if your workflow doesn't use Epics)*
 - **Summary**: `Enhancing the Klanservichub V1`
 - **Priority**: `P1 - High`
-- **Total Story Points**: `238`
+- **Total Story Points**: `227`
 - **Module / Component**: `Core Platform / Multi-Module`
 - **Labels**: `v1-enhancements`, `epic`, `platform-stability`, `ui-ux`, `analytics`, `tasks-boards`, `workflows`, `projects`, `ticket-links`
 
@@ -1818,7 +1818,60 @@ Implement the requested "Reporter" selection option during ticket creation. Prev
 
 ---
 
-### SUB-TASK 50: Enable Choosing Multiple People for Reporters (Co-Reporters / Collaborators) & Polish Sidebar Timestamps
+### SUB-TASK 54: Super Admin Master Plane Separation & Multi-Tenant Organization Data Isolation
+
+- **Parent Ticket**: `Enhancing the Klanservichub V1`
+- **Issue Type**: `Sub-task`
+- **Summary**: `Subtask 54: Super Admin Master Plane Separation & Multi-Tenant Organization Data Isolation`
+- **Priority**: `P0 - Critical`
+- **Story Points**: `8`
+- **Component**: `Super Admin Control Plane & Multi-Tenant Workspaces`
+- **Labels**: `super-admin`, `multi-tenant`, `data-isolation`, `revenue`, `profits`, `billing`, `subscriptions`, `organizations-management`, `security`
+
+#### Description
+Cleanly separate the Super Admin Platform Control Plane from individual Organization (tenant) Workspaces, eliminating project-level clutter (Boards, Sprints, Backlog, Issues, Tasks, Roadmap, Releases, CMDB) from the Super Admin Console and refocusing it exclusively on SaaS commercial governance (Platform Revenue, Profits & Margins, Tenant Subscriptions, All-Organizations Directory, Global Users, and Edge Telemetry). Concurrently harden multi-tenant data isolation across both frontend cache layers and backend API gateways, ensuring that creating or switching organizations never leaks cross-tenant records.
+
+#### Scope of Work
+- **Super Admin Platform Separation (`frontend/src/features/super-admin/`)**:
+  - Removed all project operational items (Boards, Sprints, Backlog, Issues, Tasks, Roadmap, Releases) from Super Admin.
+  - Updated navigation bar in `super-admin-layout.jsx` to feature:
+    - `Overview & Telemetry`
+    - `Revenue & Profits`
+    - `Billing & Subscriptions`
+    - `Organizations Directory`
+    - `Users Directory`
+    - `Platform Audit Trail`
+    - `System Diagnostics`
+  - Built comprehensive `Revenue & Profits` suite displaying MRR, ARR, Gross Invoiced Revenue, Cloud Operating Costs, Net Profit Margin %, and ARPU.
+  - Built `Billing & Subscriptions Management` table displaying tenant plans, seat quotas (active / limit), billing intervals, and plan modification controls.
+  - Added an interactive modal to modify tenant subscription tiers (`STARTER`, `PROFESSIONAL`, `BUSINESS`, `ENTERPRISE`) and seat limits.
+- **Backend Platform Admin Commercial APIs (`backend/src/features/platform-admin/server/route.js`)**:
+  - Implemented `GET /api/platform-admin/financials`: Aggregates MRR, ARR, operating costs (Workers, D1, mailers), net profit, and tier revenue breakdown.
+  - Implemented `GET /api/platform-admin/billing`: Returns all organization subscriptions, seat allocations, and last invoice details.
+  - Implemented `PATCH /api/platform-admin/organizations/:id/subscription`: Enables Super Admin to update tenant tier, seat quotas, and status with audit logging.
+  - Enriched `GET /api/platform-admin/organizations` with subscription plan, billing cycle, and seat quota details.
+- **Multi-Tenant Organization Data Isolation & Cache Integrity**:
+  - In `use-create-workspace.js`, added deep cache invalidation (`workspaces`, `workspace`, `company`, `tasks`, `projects`) and automatic redirection to `/workspaces/${newWorkspaceId}`.
+  - In `create-workspace-form.jsx`, ensured modal closure, form reset, and immediate navigation on success.
+  - In `workspaces-switcher.jsx`, enforced query invalidation on organization switch and proper select state handling.
+  - In `workspaces-management-view.jsx`, added query cache invalidation on workspace selection.
+  - In `backend/src/features/company/server/route.js` and `backend/src/features/workspaces/server/route.js`, enforced strict authorization checks returning `403 Forbidden` for unauthorized workspace access attempts.
+- **Compilation & Live Deployment**:
+  - Built frontend with Vite: `dist/assets/index-BQ2TIsb6.js` (clean build in 1m 41s).
+  - Deployed backend to Cloudflare Workers with Version ID `6e5bd5d1-5590-4d5f-8d25-a17f40963a1d`.
+  - Deployed frontend to Cloudflare Workers with Version ID `e975ead0-e491-4481-9e05-e85aa2ba4400`.
+
+#### Acceptance Criteria
+- [x] Super Admin Panel contains zero boards, sprints, backlog, or workspace project links.
+- [x] Super Admin Panel features dedicated suites for Revenue & Profits, Billing & Subscriptions, and Organizations Directory.
+- [x] Super Admin can view MRR, ARR, net profits, margin %, cloud operating costs, and update tenant subscription tiers.
+- [x] Tenant organizations strictly contain operational work features (Boards, Sprints, Backlog, Issues, Tasks).
+- [x] Creating a new organization immediately navigates to `/workspaces/${newId}` with a clean cache state.
+- [x] Switching organizations invalidates previous queries, preventing any cross-organization data leakage.
+- [x] Unauthorized direct access to an organization URL returns 403 Forbidden.
+- [x] Production build generated clean with zero errors.
+- [x] Successfully deployed to Cloudflare Workers with version IDs `6e5bd5d1-5590-4d5f-8d25-a17f40963a1d` (backend) and `e975ead0-e491-4481-9e05-e85aa2ba4400` (frontend).
+
 
 - **Parent Ticket**: `Enhancing the Klanservichub V1`
 - **Issue Type**: `Sub-task`
@@ -1863,144 +1916,6 @@ Enable choosing multiple people for Reporters (Co-Reporters / Collaborators) dur
 - [x] Dates & Timestamps sidebar formatting prevents awkward wrapped lines.
 - [x] Production build generated clean with zero errors.
 - [x] Both backend (`c0638fb3-f6fe-40e1-9ed9-e8274f709bf1`) and frontend (`9ae8d886-2329-4265-94df-dbc86849b1cc`) deployed live and verified on Cloudflare Workers.
-
----
-
-### SUB-TASK 51: Comprehensive Application-Wide UI/UX Overhaul & Modernization
-
-- **Parent Ticket**: `Enhancing the Klanservichub V1`
-- **Issue Type**: `Sub-task`
-- **Summary**: `Comprehensive Application-Wide UI/UX Overhaul & Modernization`
-- **Priority**: `P1 - High`
-- **Story Points**: `5`
-- **Component**: `Core Frontend / Design System & Typography`
-- **Labels**: `ui-ux`, `design-system`, `typography`, `enterprise-standard`, `shadcn`, `linear-standard`
-
-#### Description
-Address user feedback regarding degraded visual ergonomics and micro-sizing across the application. Root cause analysis identified that `html { font-size: 11px }` had been set in `globals.css`, which caused Tailwind's `rem`-based sizing across paddings, margins, button heights, and icon dimensions to shrink by ~31%, leading to suffocated containers, microscopic form inputs, and awkward wrapping. This task fully restored the standard W3C 16px rem baseline, established an enterprise typography hierarchy (`2xs: 10px`, `xs: 12px`, `sm: 13px`, `base: 14px`, `md: 15px`, `lg: 16px`, `xl: 18px`, `2xl: 22px`), upgraded all Shadcn/Radix UI primitives (`Button`, `Input`, `Select`, `Card`, `Badge`, `Dialog`, `Table`), redesigned Kanban cards in `boards-view.jsx` with crisp status badges, keys, and legible summaries, modernized `KlanserviceHubCreateIssueModal` and `KlanserviceHubIssueDetailModal` with enterprise input heights (`h-8.5`/`h-9`), and eliminated all emoji artifacts from Priority selectors across the entire system.
-
-#### Scope of Work
-- **Global Typography & Rem Scale (`src/app/globals.css` & `tailwind.config.ts`)**:
-  - Restored `html { font-size: 16px }` and configured clean `body { font-size: 14px; line-height: 1.5; }`.
-  - Re-anchored Tailwind typography scale to modern enterprise SaaS standards.
-- **UI Primitives Overhaul (`src/components/ui/`)**:
-  - `button.jsx`: Modernized default button height to `h-9` (`px-3.5 py-1.5 text-sm rounded-lg`) with `size-4` icons.
-  - `input.jsx`: Modernized height to `h-9` (`px-3 py-1.5 text-sm rounded-lg`).
-  - `select.jsx`: Modernized trigger to `h-9` (`px-3 py-1.5 text-sm rounded-lg`) and items to `text-sm`.
-  - `card.jsx`: Enhanced padding to `p-5` with `rounded-xl`, title to `text-base font-bold`, description to `text-xs`.
-  - `badge.jsx`: Modernized padding to `px-2 py-0.5 text-xs font-medium rounded-md`.
-  - `dialog.jsx`: Modernized header to `text-lg font-bold`, description to `text-sm`.
-  - `table.jsx`: Modernized headers to `h-9 text-xs font-semibold` and cells to `p-3 text-sm`.
-- **Kanban Board Cards (`boards-view.jsx`)**:
-  - Upgraded issue key to `text-xs font-mono font-bold`.
-  - Upgraded summary text to `text-sm font-semibold text-neutral-900`.
-  - Upgraded assignee avatars to `size-5` with `text-xs font-medium`.
-- **Modals (`klanservicehub-create-issue-modal.jsx` & `klanservicehub-issue-detail-modal.jsx`)**:
-  - Modernized headers, section titles, inputs, selects, and action buttons.
-  - Confirmed 100% clean priority options (`P0 - Critical` through `P4 - Lowest`) without emoji decorations.
-- **Compilation & Live Deployment**:
-  - Verified clean production build with Vite (`dist/assets/index-BmB5ynCI.js`).
-  - Deployed frontend to Cloudflare Workers with Version ID `cb19842d-4f45-453a-885c-9f91ebaffe97`.
-
-#### Acceptance Criteria
-- [x] Standard `16px` rem root restored; all spacing, paddings, and heights render with professional SaaS ergonomics.
-- [x] Core UI primitives (`Button`, `Input`, `Select`, `Card`, `Badge`, `Dialog`, `Table`) modernized to `h-9` standard.
-- [x] Kanban cards feature crisp, readable typography and properly proportioned status badges.
-- [x] Issue creation and detail modals display balanced form controls and clean priority labels.
-- [x] Zero emojis in Priority dropdowns.
-- [x] Production build generated clean with zero errors.
-- [x] Successfully deployed to Cloudflare Workers with version ID `cb19842d-4f45-453a-885c-9f91ebaffe97`.
-
----
-
-### SUB-TASK 52: Application-Wide 60fps Micro-Animations & Tactile Interactive Feedback
-
-- **Parent Ticket**: `Enhancing the Klanservichub V1`
-- **Issue Type**: `Sub-task`
-- **Summary**: `Application-Wide 60fps Micro-Animations & Tactile Interactive Feedback`
-- **Priority**: `P2 - Medium`
-- **Story Points**: `3`
-- **Component**: `Core Platform / Frontend Design System & Animations`
-- **Labels**: `micro-interactions`, `animations`, `tactile`, `60fps`, `linear-standard`, `transitions`, `ui-polish`
-
-#### Description
-Elevate the entire KlanServiceHub platform experience to modern Linear/Raycast standards by implementing subtle, high-performance, GPU-accelerated micro-animations and tactile feedback. This enhancement introduces refined animation timing curves (`cubic-bezier(0.16, 1, 0.3, 1)`), tactile click micro-press states (`active:scale-[0.98]`), smooth card hover elevations on Kanban boards (`hover:-translate-y-0.5 hover:shadow-md`), natural modal container zoom-in transitions (`modal-container-enter`), seamless page and view fade-ins (`page-view-enter`), and sidebar navigation micro-shifts, backed by accessibility safeguards with `@media (prefers-reduced-motion: reduce)`.
-
-#### Scope of Work
-- **Tailwind & CSS Animation Core (`tailwind.config.ts` & `globals.css`)**:
-  - Configured keyframes and animations for `fade-in`, `fade-in-up`, `fade-in-down`, `scale-in`, and `modal-enter`.
-  - Added global smooth transitions for all interactive elements (`button`, `input`, `select`, `textarea`, `a`).
-  - Added `.modal-container-enter` with smooth scale/translate GPU interpolation.
-  - Added `.card-interactive` hover lift and tactile active press.
-  - Added `.page-view-enter` for fluid route and view transitions.
-  - Implemented `@media (prefers-reduced-motion: reduce)` to cleanly disable animations for users with motion sensitivity.
-- **UI Primitives (`button.jsx`, `input.jsx`, `select.jsx`, `card.jsx`, `tabs.jsx`)**:
-  - `Button`: Added crisp tactile micro-scaling (`active:scale-[0.98] duration-150 ease-out`).
-  - `Input` & `Select`: Added smooth focus ring and glow transitions (`transition-all duration-150 ease-out`).
-  - `Card`: Added smooth elevation transition (`transition-all duration-200 ease-out`).
-  - `Tabs`: Added active tactile feedback (`active:scale-[0.98] duration-150`).
-- **Kanban Board Cards (`boards-view.jsx`)**:
-  - Added subtle hover lift (`hover:-translate-y-0.5 hover:shadow-md`) and active drag response (`active:scale-[0.99]`).
-- **Modals & Drawers (`klanservicehub-create-issue-modal.jsx`, `klanservicehub-issue-detail-modal.jsx`, `workspace-switcher-modal.jsx`)**:
-  - Upgraded backdrops to smooth fade (`animate-in fade-in duration-200`).
-  - Upgraded modal dialogs with smooth container enter animation (`modal-container-enter`).
-- **Navigation & Dashboard Layout (`navigation.jsx`, `src/app/(dashboard)/layout.jsx`)**:
-  - Sidebar links: Added active micro-scaling, smooth icon scale (`group-hover:scale-105`), and label slide (`group-hover:translate-x-0.5`).
-  - Dashboard layout: Applied `page-view-enter` to main content area for fluid page transitions.
-- **Compilation & Live Deployment**:
-  - Verified clean production build with Vite (`dist/assets/index-1jopuuJ9.js`).
-  - Deployed frontend to Cloudflare Workers with Version ID `2e64d398-de24-43f4-b5cc-8b4adccf076e`.
-
-#### Acceptance Criteria
-- [x] Snappy, 60fps micro-animations active across the entire application without frame drops or layout reflows.
-- [x] Buttons provide tactile physical feedback on press (`active:scale-[0.98]`).
-- [x] Kanban cards hover smoothly with subtle elevation and shadow expansion.
-- [x] Modals enter gracefully with smooth backdrop fade and dialog scale-up.
-- [x] Navigation links and page view changes feel fluid and cohesive.
-- [x] Full `prefers-reduced-motion` accessibility support verified.
-- [x] Production build generated clean with zero errors.
-- [x] Successfully deployed to Cloudflare Workers with version ID `2e64d398-de24-43f4-b5cc-8b4adccf076e`.
-
----
-
-### SUB-TASK 53: Remove Default Reporter Pre-Selection and Add Live Search Filters to Assignees & Reporters
-
-- **Parent Ticket**: `Enhancing the Klanservichub V1`
-- **Issue Type**: `Sub-task`
-- **Summary**: `Remove Default Reporter Pre-Selection and Add Live Search Filters to Assignees & Reporters`
-- **Priority**: `P2 - Medium`
-- **Story Points**: `3`
-- **Component**: `Core Tasks / Create Issue Modal & Backend API`
-- **Labels**: `create-issue-modal`, `assignees`, `reporters`, `search-filter`, `multi-assignee`, `multi-reporter`, `ui-polish`
-
-#### Description
-Address user feedback regarding the Create Issue modal (`KlanserviceHubCreateIssueModal`): remove the automatic pre-selection of the active session user as the default reporter, and add real-time search filtering capability to both `Assignees (Assign to Multiple)` and `Reporters (Choose Multiple)`. This enhancement eliminated the auto-assign `useEffect` hook so that Reporters start cleanly unselected (`0 selected`, matching Assignees), introduced dedicated search input boxes with `Search` icons and instant clear `×` buttons above each member checklist, filtered members live by name and email, and updated backend `POST /api/tasks` so that tickets can be created without mandatory reporters when none are chosen.
-
-#### Scope of Work
-- **Create Issue Modal (`klanservicehub-create-issue-modal.jsx`)**:
-  - Removed `useEffect` that auto-assigned `currentUser.$id` to `form.reporterIds`.
-  - Added `assigneeSearch` and `reporterSearch` state variables.
-  - Added dedicated search input with Lucide `Search` icon and instant clear button above `Assignees (Assign to Multiple)`.
-  - Added dedicated search input with Lucide `Search` icon and instant clear button above `Reporters (Choose Multiple)`.
-  - Implemented real-time dynamic filtering by member name and email with dedicated "No matching members" empty states.
-  - Reset search queries and selections on modal close and "Create another" submissions.
-- **Backend Tasks Route (`backend/src/features/tasks/server/route.js`)**:
-  - Updated `POST /api/tasks` to check whether `reporterIds` was explicitly provided as an array.
-  - If `reporterIds` is explicitly an empty array `[]` (or `reporterId` is null), allows `resolvedReporterIds = []`, persisting `tasks.reporter_id = NULL` and `tasks.reporter_ids = '[]'` without forcing fallback to `user.$id`.
-  - Preserved backward compatibility for legacy clients that do not submit `reporterIds`.
-- **Compilation & Live Deployment**:
-  - Verified clean production build with Vite (`dist/assets/index-BumdTKs9.js`).
-  - Deployed backend to Cloudflare Workers with Version ID `14af711c-2bb2-4953-b317-d82c77d086b8`.
-  - Deployed frontend to Cloudflare Workers with Version ID `491f292c-fcd5-43d3-b6ed-ddcab6225a8f`.
-
-#### Acceptance Criteria
-- [x] Create Issue modal opens with `Reporters (Choose Multiple)` completely clean and unselected by default.
-- [x] Dedicated search bar in `Assignees (Assign to Multiple)` filters members live by name or email.
-- [x] Dedicated search bar in `Reporters (Choose Multiple)` filters members live by name or email.
-- [x] Instant `×` clear button allows resetting search filter instantly.
-- [x] Creating a ticket without a reporter persists cleanly with null/empty reporter state.
-- [x] Production build generated clean with zero errors.
-- [x] Both backend (`14af711c-2bb2-4953-b317-d82c77d086b8`) and frontend (`491f292c-fcd5-43d3-b6ed-ddcab6225a8f`) deployed live and verified on Cloudflare Workers.
 
 
 

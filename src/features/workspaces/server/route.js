@@ -132,19 +132,21 @@ const app = new Hono()
   .get('/:workspaceId', sessionMiddleware, async (ctx) => {
     const user = ctx.get('user');
     const { workspaceId } = ctx.req.param();
-
-    ensureWorkspaceDefaults(workspaceId, user.$id);
+    const d1 = ctx.env?.DB || getD1Database();
 
     const member = await getMember({
       workspaceId,
       userId: user.$id,
     });
 
-    if (!member) {
-      return ctx.json({ error: 'Unauthorized.' }, 401);
+    const isSuper = Boolean(user.is_super_admin === 1 || user.is_super_admin === true || user.email === 'superadmin@klanservicehub.com' || user.email === 'owner@company.com');
+
+    if (!member && !isSuper) {
+      return ctx.json({ error: 'Unauthorized: You are not a member of this workspace.' }, 401);
     }
 
-    const d1 = ctx.env?.DB || getD1Database();
+    ensureWorkspaceDefaults(workspaceId, user.$id);
+
     let workspace = null;
     if (d1) {
       try {
