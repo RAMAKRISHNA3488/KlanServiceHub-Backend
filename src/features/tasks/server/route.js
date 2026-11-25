@@ -1090,16 +1090,15 @@ const app = new Hono()
     }
 
     let targetReporterIds = [];
-    if (Array.isArray(body.reporterIds) && body.reporterIds.length > 0) {
+    const hasExplicitReporters = Array.isArray(body.reporterIds) || Array.isArray(body.reporter_ids);
+    if (Array.isArray(body.reporterIds)) {
       targetReporterIds = body.reporterIds.filter(Boolean);
-    } else if (Array.isArray(body.reporter_ids) && body.reporter_ids.length > 0) {
+    } else if (Array.isArray(body.reporter_ids)) {
       targetReporterIds = body.reporter_ids.filter(Boolean);
     } else if (reporterId || body.reporter_id) {
       const rId = reporterId || body.reporter_id;
       targetReporterIds = Array.isArray(rId) ? rId.filter(Boolean) : [rId];
-    }
-
-    if (targetReporterIds.length === 0) {
+    } else if (!hasExplicitReporters) {
       targetReporterIds = [user.$id];
     }
 
@@ -1122,8 +1121,8 @@ const app = new Hono()
       }
     }
 
-    const effectiveReporterId = resolvedReporterIds[0] || user.$id;
-    const reporterIdsJson = JSON.stringify(resolvedReporterIds.length > 0 ? resolvedReporterIds : [user.$id]);
+    const effectiveReporterId = resolvedReporterIds[0] || (hasExplicitReporters ? null : user.$id);
+    const reporterIdsJson = JSON.stringify(resolvedReporterIds);
 
     const descImages = body.descriptionImages || body.description_images || [];
     const descImagesJson = typeof descImages === 'string' ? descImages : JSON.stringify(descImages);

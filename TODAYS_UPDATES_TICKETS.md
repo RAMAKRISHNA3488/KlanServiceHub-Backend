@@ -1,6 +1,6 @@
 # KlanServiceHub V1 — Epic & Sub-Tasks Specification
 
-This document is structured so you can first create the **Main Parent Ticket (Epic / Story)** in KlanServiceHub, and then create each of the **52 Sub-tasks** linked directly under it.
+This document is structured so you can first create the **Main Parent Ticket (Epic / Story)** in KlanServiceHub, and then create each of the **53 Sub-tasks** linked directly under it.
 
 ---
 
@@ -9,7 +9,7 @@ This document is structured so you can first create the **Main Parent Ticket (Ep
 - **Issue Type**: `Epic` *(or `Story` if your workflow doesn't use Epics)*
 - **Summary**: `Enhancing the Klanservichub V1`
 - **Priority**: `P1 - High`
-- **Total Story Points**: `235`
+- **Total Story Points**: `238`
 - **Module / Component**: `Core Platform / Multi-Module`
 - **Labels**: `v1-enhancements`, `epic`, `platform-stability`, `ui-ux`, `analytics`, `tasks-boards`, `workflows`, `projects`, `ticket-links`
 
@@ -1960,6 +1960,47 @@ Elevate the entire KlanServiceHub platform experience to modern Linear/Raycast s
 - [x] Full `prefers-reduced-motion` accessibility support verified.
 - [x] Production build generated clean with zero errors.
 - [x] Successfully deployed to Cloudflare Workers with version ID `2e64d398-de24-43f4-b5cc-8b4adccf076e`.
+
+---
+
+### SUB-TASK 53: Remove Default Reporter Pre-Selection and Add Live Search Filters to Assignees & Reporters
+
+- **Parent Ticket**: `Enhancing the Klanservichub V1`
+- **Issue Type**: `Sub-task`
+- **Summary**: `Remove Default Reporter Pre-Selection and Add Live Search Filters to Assignees & Reporters`
+- **Priority**: `P2 - Medium`
+- **Story Points**: `3`
+- **Component**: `Core Tasks / Create Issue Modal & Backend API`
+- **Labels**: `create-issue-modal`, `assignees`, `reporters`, `search-filter`, `multi-assignee`, `multi-reporter`, `ui-polish`
+
+#### Description
+Address user feedback regarding the Create Issue modal (`KlanserviceHubCreateIssueModal`): remove the automatic pre-selection of the active session user as the default reporter, and add real-time search filtering capability to both `Assignees (Assign to Multiple)` and `Reporters (Choose Multiple)`. This enhancement eliminated the auto-assign `useEffect` hook so that Reporters start cleanly unselected (`0 selected`, matching Assignees), introduced dedicated search input boxes with `Search` icons and instant clear `×` buttons above each member checklist, filtered members live by name and email, and updated backend `POST /api/tasks` so that tickets can be created without mandatory reporters when none are chosen.
+
+#### Scope of Work
+- **Create Issue Modal (`klanservicehub-create-issue-modal.jsx`)**:
+  - Removed `useEffect` that auto-assigned `currentUser.$id` to `form.reporterIds`.
+  - Added `assigneeSearch` and `reporterSearch` state variables.
+  - Added dedicated search input with Lucide `Search` icon and instant clear button above `Assignees (Assign to Multiple)`.
+  - Added dedicated search input with Lucide `Search` icon and instant clear button above `Reporters (Choose Multiple)`.
+  - Implemented real-time dynamic filtering by member name and email with dedicated "No matching members" empty states.
+  - Reset search queries and selections on modal close and "Create another" submissions.
+- **Backend Tasks Route (`backend/src/features/tasks/server/route.js`)**:
+  - Updated `POST /api/tasks` to check whether `reporterIds` was explicitly provided as an array.
+  - If `reporterIds` is explicitly an empty array `[]` (or `reporterId` is null), allows `resolvedReporterIds = []`, persisting `tasks.reporter_id = NULL` and `tasks.reporter_ids = '[]'` without forcing fallback to `user.$id`.
+  - Preserved backward compatibility for legacy clients that do not submit `reporterIds`.
+- **Compilation & Live Deployment**:
+  - Verified clean production build with Vite (`dist/assets/index-BumdTKs9.js`).
+  - Deployed backend to Cloudflare Workers with Version ID `14af711c-2bb2-4953-b317-d82c77d086b8`.
+  - Deployed frontend to Cloudflare Workers with Version ID `491f292c-fcd5-43d3-b6ed-ddcab6225a8f`.
+
+#### Acceptance Criteria
+- [x] Create Issue modal opens with `Reporters (Choose Multiple)` completely clean and unselected by default.
+- [x] Dedicated search bar in `Assignees (Assign to Multiple)` filters members live by name or email.
+- [x] Dedicated search bar in `Reporters (Choose Multiple)` filters members live by name or email.
+- [x] Instant `×` clear button allows resetting search filter instantly.
+- [x] Creating a ticket without a reporter persists cleanly with null/empty reporter state.
+- [x] Production build generated clean with zero errors.
+- [x] Both backend (`14af711c-2bb2-4953-b317-d82c77d086b8`) and frontend (`491f292c-fcd5-43d3-b6ed-ddcab6225a8f`) deployed live and verified on Cloudflare Workers.
 
 
 
