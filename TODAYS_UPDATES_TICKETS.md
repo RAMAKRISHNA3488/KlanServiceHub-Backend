@@ -1,6 +1,6 @@
 # KlanServiceHub V1 — Epic & Sub-Tasks Specification
 
-This document is structured so you can first create the **Main Parent Ticket (Epic / Story)** in KlanServiceHub, and then create each of the **51 Sub-tasks** linked directly under it.
+This document is structured so you can first create the **Main Parent Ticket (Epic / Story)** in KlanServiceHub, and then create each of the **52 Sub-tasks** linked directly under it.
 
 ---
 
@@ -9,7 +9,7 @@ This document is structured so you can first create the **Main Parent Ticket (Ep
 - **Issue Type**: `Epic` *(or `Story` if your workflow doesn't use Epics)*
 - **Summary**: `Enhancing the Klanservichub V1`
 - **Priority**: `P1 - High`
-- **Total Story Points**: `232`
+- **Total Story Points**: `235`
 - **Module / Component**: `Core Platform / Multi-Module`
 - **Labels**: `v1-enhancements`, `epic`, `platform-stability`, `ui-ux`, `analytics`, `tasks-boards`, `workflows`, `projects`, `ticket-links`
 
@@ -1910,6 +1910,56 @@ Address user feedback regarding degraded visual ergonomics and micro-sizing acro
 - [x] Zero emojis in Priority dropdowns.
 - [x] Production build generated clean with zero errors.
 - [x] Successfully deployed to Cloudflare Workers with version ID `cb19842d-4f45-453a-885c-9f91ebaffe97`.
+
+---
+
+### SUB-TASK 52: Application-Wide 60fps Micro-Animations & Tactile Interactive Feedback
+
+- **Parent Ticket**: `Enhancing the Klanservichub V1`
+- **Issue Type**: `Sub-task`
+- **Summary**: `Application-Wide 60fps Micro-Animations & Tactile Interactive Feedback`
+- **Priority**: `P2 - Medium`
+- **Story Points**: `3`
+- **Component**: `Core Platform / Frontend Design System & Animations`
+- **Labels**: `micro-interactions`, `animations`, `tactile`, `60fps`, `linear-standard`, `transitions`, `ui-polish`
+
+#### Description
+Elevate the entire KlanServiceHub platform experience to modern Linear/Raycast standards by implementing subtle, high-performance, GPU-accelerated micro-animations and tactile feedback. This enhancement introduces refined animation timing curves (`cubic-bezier(0.16, 1, 0.3, 1)`), tactile click micro-press states (`active:scale-[0.98]`), smooth card hover elevations on Kanban boards (`hover:-translate-y-0.5 hover:shadow-md`), natural modal container zoom-in transitions (`modal-container-enter`), seamless page and view fade-ins (`page-view-enter`), and sidebar navigation micro-shifts, backed by accessibility safeguards with `@media (prefers-reduced-motion: reduce)`.
+
+#### Scope of Work
+- **Tailwind & CSS Animation Core (`tailwind.config.ts` & `globals.css`)**:
+  - Configured keyframes and animations for `fade-in`, `fade-in-up`, `fade-in-down`, `scale-in`, and `modal-enter`.
+  - Added global smooth transitions for all interactive elements (`button`, `input`, `select`, `textarea`, `a`).
+  - Added `.modal-container-enter` with smooth scale/translate GPU interpolation.
+  - Added `.card-interactive` hover lift and tactile active press.
+  - Added `.page-view-enter` for fluid route and view transitions.
+  - Implemented `@media (prefers-reduced-motion: reduce)` to cleanly disable animations for users with motion sensitivity.
+- **UI Primitives (`button.jsx`, `input.jsx`, `select.jsx`, `card.jsx`, `tabs.jsx`)**:
+  - `Button`: Added crisp tactile micro-scaling (`active:scale-[0.98] duration-150 ease-out`).
+  - `Input` & `Select`: Added smooth focus ring and glow transitions (`transition-all duration-150 ease-out`).
+  - `Card`: Added smooth elevation transition (`transition-all duration-200 ease-out`).
+  - `Tabs`: Added active tactile feedback (`active:scale-[0.98] duration-150`).
+- **Kanban Board Cards (`boards-view.jsx`)**:
+  - Added subtle hover lift (`hover:-translate-y-0.5 hover:shadow-md`) and active drag response (`active:scale-[0.99]`).
+- **Modals & Drawers (`klanservicehub-create-issue-modal.jsx`, `klanservicehub-issue-detail-modal.jsx`, `workspace-switcher-modal.jsx`)**:
+  - Upgraded backdrops to smooth fade (`animate-in fade-in duration-200`).
+  - Upgraded modal dialogs with smooth container enter animation (`modal-container-enter`).
+- **Navigation & Dashboard Layout (`navigation.jsx`, `src/app/(dashboard)/layout.jsx`)**:
+  - Sidebar links: Added active micro-scaling, smooth icon scale (`group-hover:scale-105`), and label slide (`group-hover:translate-x-0.5`).
+  - Dashboard layout: Applied `page-view-enter` to main content area for fluid page transitions.
+- **Compilation & Live Deployment**:
+  - Verified clean production build with Vite (`dist/assets/index-1jopuuJ9.js`).
+  - Deployed frontend to Cloudflare Workers with Version ID `2e64d398-de24-43f4-b5cc-8b4adccf076e`.
+
+#### Acceptance Criteria
+- [x] Snappy, 60fps micro-animations active across the entire application without frame drops or layout reflows.
+- [x] Buttons provide tactile physical feedback on press (`active:scale-[0.98]`).
+- [x] Kanban cards hover smoothly with subtle elevation and shadow expansion.
+- [x] Modals enter gracefully with smooth backdrop fade and dialog scale-up.
+- [x] Navigation links and page view changes feel fluid and cohesive.
+- [x] Full `prefers-reduced-motion` accessibility support verified.
+- [x] Production build generated clean with zero errors.
+- [x] Successfully deployed to Cloudflare Workers with version ID `2e64d398-de24-43f4-b5cc-8b4adccf076e`.
 
 
 
