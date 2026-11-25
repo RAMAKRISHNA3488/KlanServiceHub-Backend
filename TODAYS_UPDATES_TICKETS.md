@@ -1,6 +1,6 @@
 # KlanServiceHub V1 — Epic & Sub-Tasks Specification
 
-This document is structured so you can first create the **Main Parent Ticket (Epic / Story)** in KlanServiceHub, and then create each of the **50 Sub-tasks** linked directly under it.
+This document is structured so you can first create the **Main Parent Ticket (Epic / Story)** in KlanServiceHub, and then create each of the **51 Sub-tasks** linked directly under it.
 
 ---
 
@@ -9,7 +9,7 @@ This document is structured so you can first create the **Main Parent Ticket (Ep
 - **Issue Type**: `Epic` *(or `Story` if your workflow doesn't use Epics)*
 - **Summary**: `Enhancing the Klanservichub V1`
 - **Priority**: `P1 - High`
-- **Total Story Points**: `227`
+- **Total Story Points**: `232`
 - **Module / Component**: `Core Platform / Multi-Module`
 - **Labels**: `v1-enhancements`, `epic`, `platform-stability`, `ui-ux`, `analytics`, `tasks-boards`, `workflows`, `projects`, `ticket-links`
 
@@ -1863,6 +1863,53 @@ Enable choosing multiple people for Reporters (Co-Reporters / Collaborators) dur
 - [x] Dates & Timestamps sidebar formatting prevents awkward wrapped lines.
 - [x] Production build generated clean with zero errors.
 - [x] Both backend (`c0638fb3-f6fe-40e1-9ed9-e8274f709bf1`) and frontend (`9ae8d886-2329-4265-94df-dbc86849b1cc`) deployed live and verified on Cloudflare Workers.
+
+---
+
+### SUB-TASK 51: Comprehensive Application-Wide UI/UX Overhaul & Modernization
+
+- **Parent Ticket**: `Enhancing the Klanservichub V1`
+- **Issue Type**: `Sub-task`
+- **Summary**: `Comprehensive Application-Wide UI/UX Overhaul & Modernization`
+- **Priority**: `P1 - High`
+- **Story Points**: `5`
+- **Component**: `Core Frontend / Design System & Typography`
+- **Labels**: `ui-ux`, `design-system`, `typography`, `enterprise-standard`, `shadcn`, `linear-standard`
+
+#### Description
+Address user feedback regarding degraded visual ergonomics and micro-sizing across the application. Root cause analysis identified that `html { font-size: 11px }` had been set in `globals.css`, which caused Tailwind's `rem`-based sizing across paddings, margins, button heights, and icon dimensions to shrink by ~31%, leading to suffocated containers, microscopic form inputs, and awkward wrapping. This task fully restored the standard W3C 16px rem baseline, established an enterprise typography hierarchy (`2xs: 10px`, `xs: 12px`, `sm: 13px`, `base: 14px`, `md: 15px`, `lg: 16px`, `xl: 18px`, `2xl: 22px`), upgraded all Shadcn/Radix UI primitives (`Button`, `Input`, `Select`, `Card`, `Badge`, `Dialog`, `Table`), redesigned Kanban cards in `boards-view.jsx` with crisp status badges, keys, and legible summaries, modernized `KlanserviceHubCreateIssueModal` and `KlanserviceHubIssueDetailModal` with enterprise input heights (`h-8.5`/`h-9`), and eliminated all emoji artifacts from Priority selectors across the entire system.
+
+#### Scope of Work
+- **Global Typography & Rem Scale (`src/app/globals.css` & `tailwind.config.ts`)**:
+  - Restored `html { font-size: 16px }` and configured clean `body { font-size: 14px; line-height: 1.5; }`.
+  - Re-anchored Tailwind typography scale to modern enterprise SaaS standards.
+- **UI Primitives Overhaul (`src/components/ui/`)**:
+  - `button.jsx`: Modernized default button height to `h-9` (`px-3.5 py-1.5 text-sm rounded-lg`) with `size-4` icons.
+  - `input.jsx`: Modernized height to `h-9` (`px-3 py-1.5 text-sm rounded-lg`).
+  - `select.jsx`: Modernized trigger to `h-9` (`px-3 py-1.5 text-sm rounded-lg`) and items to `text-sm`.
+  - `card.jsx`: Enhanced padding to `p-5` with `rounded-xl`, title to `text-base font-bold`, description to `text-xs`.
+  - `badge.jsx`: Modernized padding to `px-2 py-0.5 text-xs font-medium rounded-md`.
+  - `dialog.jsx`: Modernized header to `text-lg font-bold`, description to `text-sm`.
+  - `table.jsx`: Modernized headers to `h-9 text-xs font-semibold` and cells to `p-3 text-sm`.
+- **Kanban Board Cards (`boards-view.jsx`)**:
+  - Upgraded issue key to `text-xs font-mono font-bold`.
+  - Upgraded summary text to `text-sm font-semibold text-neutral-900`.
+  - Upgraded assignee avatars to `size-5` with `text-xs font-medium`.
+- **Modals (`klanservicehub-create-issue-modal.jsx` & `klanservicehub-issue-detail-modal.jsx`)**:
+  - Modernized headers, section titles, inputs, selects, and action buttons.
+  - Confirmed 100% clean priority options (`P0 - Critical` through `P4 - Lowest`) without emoji decorations.
+- **Compilation & Live Deployment**:
+  - Verified clean production build with Vite (`dist/assets/index-BmB5ynCI.js`).
+  - Deployed frontend to Cloudflare Workers with Version ID `cb19842d-4f45-453a-885c-9f91ebaffe97`.
+
+#### Acceptance Criteria
+- [x] Standard `16px` rem root restored; all spacing, paddings, and heights render with professional SaaS ergonomics.
+- [x] Core UI primitives (`Button`, `Input`, `Select`, `Card`, `Badge`, `Dialog`, `Table`) modernized to `h-9` standard.
+- [x] Kanban cards feature crisp, readable typography and properly proportioned status badges.
+- [x] Issue creation and detail modals display balanced form controls and clean priority labels.
+- [x] Zero emojis in Priority dropdowns.
+- [x] Production build generated clean with zero errors.
+- [x] Successfully deployed to Cloudflare Workers with version ID `cb19842d-4f45-453a-885c-9f91ebaffe97`.
 
 
 
