@@ -517,9 +517,12 @@ const app = new Hono()
       return ctx.json({ error: 'Workspace ID required' }, 400);
     }
 
+    const d1 = ctx.env?.DB || getD1Database();
+
     const member = await getMember({
       workspaceId,
       userId: user.$id,
+      d1,
     });
 
     if (!member) {
@@ -573,7 +576,6 @@ const app = new Hono()
 
     query += ' ORDER BY t.position ASC, t.created_at DESC';
 
-    const d1 = ctx.env?.DB || getD1Database();
     let rows = [];
     if (d1) {
       try {

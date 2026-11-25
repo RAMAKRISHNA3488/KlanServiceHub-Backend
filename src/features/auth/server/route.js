@@ -656,11 +656,16 @@ const app = new Hono()
 
         if (user) {
           const wsQuery = await d1All(`
-            SELECT w.id, w.name, w.domain_slug, w.image_url, m.role, m.organization_role, m.status, w.user_id = ? as is_owner
-            FROM members m
-            JOIN workspaces w ON m.workspace_id = w.id
-            WHERE m.user_id = ? AND m.status = 'ACTIVE'
-          `, [user.id, user.id], ctx.env?.DB);
+            SELECT DISTINCT w.id, w.name, w.domain_slug, w.image_url, 
+                   COALESCE(m.role, 'ADMIN') as role, 
+                   COALESCE(m.organization_role, 'COMPANY_OWNER') as organization_role, 
+                   COALESCE(m.status, 'ACTIVE') as status, 
+                   (w.user_id = ?) as is_owner
+            FROM workspaces w
+            LEFT JOIN members m ON m.workspace_id = w.id AND m.user_id = ?
+            WHERE (m.user_id = ? AND (m.status = 'ACTIVE' OR m.status IS NULL)) OR w.user_id = ?
+            ORDER BY w.created_at DESC
+          `, [user.id, user.id, user.id, user.id], ctx.env?.DB);
           workspaces = wsQuery || [];
         }
       }

@@ -21,17 +21,17 @@ const app = new Hono()
     if (d1) {
       try {
         const res = await d1.prepare(`
-          SELECT w.*, 
-                 m.role as user_role, 
-                 m.organization_role,
+          SELECT DISTINCT w.*, 
+                 COALESCE(m.role, 'ADMIN') as user_role, 
+                 COALESCE(m.organization_role, 'COMPANY_OWNER') as organization_role,
                  (SELECT COUNT(*) FROM members WHERE workspace_id = w.id) as member_count,
                  (SELECT COUNT(*) FROM projects WHERE workspace_id = w.id) as project_count,
                  (SELECT COUNT(*) FROM tasks WHERE workspace_id = w.id) as task_count
           FROM workspaces w
-          JOIN members m ON w.id = m.workspace_id
-          WHERE m.user_id = ?
+          LEFT JOIN members m ON w.id = m.workspace_id AND m.user_id = ?
+          WHERE m.user_id = ? OR w.user_id = ?
           ORDER BY w.created_at DESC
-        `).bind(user.$id).all();
+        `).bind(user.$id, user.$id, user.$id).all();
         rows = res.results || [];
       } catch (err) {
         console.error('[D1_WORKSPACES_GET_ERROR]:', err);
@@ -137,6 +137,7 @@ const app = new Hono()
     const member = await getMember({
       workspaceId,
       userId: user.$id,
+      d1,
     });
 
     const isSuper = Boolean(user.is_super_admin === 1 || user.is_super_admin === true || user.email === 'superadmin@klanservicehub.com' || user.email === 'owner@company.com');
@@ -198,6 +199,7 @@ const app = new Hono()
     const member = await getMember({
       workspaceId,
       userId: user.$id,
+      d1,
     });
 
     const d1 = ctx.env?.DB || getD1Database();
@@ -288,6 +290,7 @@ const app = new Hono()
     const member = await getMember({
       workspaceId,
       userId: user.$id,
+      d1,
     });
 
     if (!member && workspace.user_id !== user.$id) {
@@ -376,6 +379,7 @@ const app = new Hono()
     const member = await getMember({
       workspaceId,
       userId: user.$id,
+      d1,
     });
 
     if (!member) {
@@ -426,6 +430,7 @@ const app = new Hono()
     const member = await getMember({
       workspaceId,
       userId: user.$id,
+      d1,
     });
 
     if (!member || member.role !== MemberRole.ADMIN) {
@@ -515,6 +520,7 @@ const app = new Hono()
     const member = await getMember({
       workspaceId,
       userId: user.$id,
+      d1,
     });
 
     if (!member) {
@@ -552,9 +558,9 @@ const app = new Hono()
     const incompleteTaskDifference = thisMonthIncomplete - lastMonthIncomplete;
 
     // 5. Overdue tasks & trend
-    const overdueTaskCount = await countTasks("AND UPPER(status) NOT IN ('DONE', 'COMPLETED', 'RESOLVED', 'BACKLOG') AND due_date IS NOT NULL AND trim(due_date) != '' AND datetime(due_date) < datetime('now')");
-    const thisMonthOverdue = await countTasks("AND UPPER(status) NOT IN ('DONE', 'COMPLETED', 'RESOLVED', 'BACKLOG') AND due_date IS NOT NULL AND trim(due_date) != '' AND datetime(due_date) < datetime('now') AND strftime('%Y-%m', created_at) = strftime('%Y-%m', 'now')");
-    const lastMonthOverdue = await countTasks("AND UPPER(status) NOT IN ('DONE', 'COMPLETED', 'RESOLVED', 'BACKLOG') AND due_date IS NOT NULL AND trim(due_date) != '' AND datetime(due_date) < datetime('now') AND strftime('%Y-%m', created_at) = strftime('%Y-%m', 'now', '-1 month')");
+    const overdueTaskCount = await countTasks("AND UPPER(status) NOT IN ('DONE', 'COMPLETED', 'RESOLVED', 'BACKLOG') AND due_date IS NOT NULL AND trim(due_date) != '' AND datetime(replace(substr(due_date, 1, 19), 'T', ' ')) < datetime('now')");
+    const thisMonthOverdue = await countTasks("AND UPPER(status) NOT IN ('DONE', 'COMPLETED', 'RESOLVED', 'BACKLOG') AND due_date IS NOT NULL AND trim(due_date) != '' AND datetime(replace(substr(due_date, 1, 19), 'T', ' ')) < datetime('now') AND strftime('%Y-%m', created_at) = strftime('%Y-%m', 'now')");
+    const lastMonthOverdue = await countTasks("AND UPPER(status) NOT IN ('DONE', 'COMPLETED', 'RESOLVED', 'BACKLOG') AND due_date IS NOT NULL AND trim(due_date) != '' AND datetime(replace(substr(due_date, 1, 19), 'T', ' ')) < datetime('now') AND strftime('%Y-%m', created_at) = strftime('%Y-%m', 'now', '-1 month')");
     const overdueTaskDifference = overdueTaskCount - lastMonthOverdue;
 
     return ctx.json({

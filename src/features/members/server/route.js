@@ -20,17 +20,17 @@ const app = new Hono()
     async (ctx) => {
       const user = ctx.get('user');
       const { workspaceId } = ctx.req.valid('query');
+      const d1 = ctx.env?.DB || getD1Database();
 
       const member = await getMember({
         workspaceId,
         userId: user.$id,
+        d1,
       });
 
       if (!member) {
         return ctx.json({ error: 'Unauthorized.' }, 401);
       }
-
-      const d1 = ctx.env?.DB || getD1Database();
       let rows = [];
       if (d1) {
         try {

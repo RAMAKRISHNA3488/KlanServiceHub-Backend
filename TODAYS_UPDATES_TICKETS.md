@@ -2069,3 +2069,43 @@ Addressed the user requirement to eliminate every remaining piece of synthetic, 
 - [x] Real Invoices Ledger rendered directly from the `invoices` table with invoice numbers, amounts, and statuses.
 - [x] Currency dynamically formats according to D1 records (`₹` for INR).
 - [x] Production builds verified and deployed live to Cloudflare Workers (`efad21eb-b82e-4e40-92cd-aa920c4e06aa` & `930b0e48-192c-451f-bc4d-ea154158ab96`).
+
+---
+
+### 🔹 Sub-task 30: Fix Application-Wide Data Fetching and Session Re-login Workspace Switcher Persistence
+
+- **Parent Ticket**: `Enhancing the Klanservichub V1`
+- **Issue Type**: `Sub-task`
+- **Summary**: `Subtask 30: Fix cross-domain Hono client endpoint binding, workspace switcher trigger blanking, and database owner fallback on re-login`
+- **Priority**: `P0 - Blocker (🚨)`
+- **Story Points**: `8`
+- **Component**: `Session Binding, Hono Client, Workspace Switcher, D1 Database`
+- **Labels**: `data-fetching`, `session-binding`, `hono-client`, `workspaces-switcher`, `rbac`, `cloud-flare-workers`
+
+#### Description
+Resolved an architectural defect where logging out and logging back in caused entire pages (Workspace Planning Summary, Tasks, Projects, Members, and Workspace Switcher dropdown) to display empty data (`0` tasks, `0` projects, empty organizations dropdown) due to a base URL mismatch in the Hono client, absence of owner fallback in `getMember`, and missing resilient fallback in the `WorkspaceSwitcher` component.
+
+#### Scope of Work
+- **Unified Hono Client Base URL (`frontend/src/lib/hono.js`)**:
+  - Replaced hardcoded `https://klanservicehub-backend.klanservicehub.workers.dev` with relative same-origin `''` in production.
+  - Allowed all 24 Hono RPC hooks (`useGetTasks`, `useGetProjects`, `useGetMembers`, `useGetWorkspaces`, `useGetWorkspaceAnalytics`, etc.) to call `/api/...` directly on `klanservicehub-frontend.klanservicehub.workers.dev`, seamlessly leveraging Cloudflare's internal Service Binding (`env.BACKEND.fetch(request)`) with same-origin cookies and Bearer tokens.
+- **Resilient Workspace Switcher (`frontend/src/components/workspaces-switcher.jsx`)**:
+  - Imported `useCurrent()` to provide instant fallback workspace lists from `/api/auth/current`.
+  - Added dedicated `<SelectTrigger>` display rendering active workspace avatar and name directly so the dropdown trigger never renders a blank gray box.
+- **Robust D1 Member Lookup & Owner Fallback (`backend/src/features/members/utils.js`)**:
+  - Updated `getMember({ workspaceId, userId, d1 })` to accept live `d1` instance.
+  - Implemented automatic owner fallback: if member row is missing or delayed, verifies `workspaces.user_id = user_id`, auto-creates the member row and grants synthetic `ADMIN` permissions, preventing false 401 Unauthorized errors.
+- **Enhanced Routes with Live D1 Context**:
+  - Passed `ctx.env?.DB` directly to `getMember` across `tasks/server/route.js`, `projects/server/route.js`, `members/server/route.js`, and `workspaces/server/route.js`.
+  - Updated `workspaces/server/route.js` and `auth/server/route.js` to return owned workspaces even if member relations are temporarily unsynced.
+- **Workspace Dashboard Skeleton & State Management**:
+  - Refined loading conditions in `frontend/src/app/(dashboard)/workspaces/[workspaceId]/client.jsx` to render dashboard skeleton during active fetches and prevent flashing zero states.
+- **Live Verification**:
+  - Verified live Cloudflare Worker deployment with real session: 71 tasks, 2 projects, 10 members, and live KPI analytics successfully returned with HTTP 200.
+
+#### Acceptance Criteria
+- [x] Logging out and logging back in preserves full access to workspaces, tasks, projects, members, and analytics.
+- [x] Organizations dropdown in the sidebar renders active workspace name and avatar without blank boxes.
+- [x] Workspace Planning Summary displays actual counts (71 tasks, 2 projects, 10 members) with correct KPI breakdowns.
+- [x] Cloudflare Service Binding securely proxies Hono RPC calls same-origin without CORS or eTLD+1 cookie drop issues.
+- [x] Backend and frontend successfully compiled and deployed to Cloudflare Workers (`b51ed0ae-cf23-4918-907d-6170508866c7` and `c058df57-b5d0-49f3-b174-947978cb7605`).
