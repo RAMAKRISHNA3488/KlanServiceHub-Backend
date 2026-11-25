@@ -2073,6 +2073,9 @@ export function formatDoc(row) {
   if (row.image_id !== undefined) doc.imageId = row.image_id;
   if (row.image_url !== undefined) doc.imageUrl = row.image_url;
   if (row.invite_code !== undefined) doc.inviteCode = row.invite_code;
+  if (row.is_super_admin !== undefined || row.email !== undefined) {
+    doc.isSuperAdmin = Boolean(row.is_super_admin === 1 || row.is_super_admin === true || row.email === 'superadmin@klanservicehub.com' || row.email === 'owner@company.com');
+  }
   if (row.due_date !== undefined) doc.dueDate = row.due_date;
   if (row.start_date !== undefined) doc.startDate = row.start_date;
   if (row.end_date !== undefined) doc.endDate = row.end_date;

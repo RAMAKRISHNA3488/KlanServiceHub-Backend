@@ -16,6 +16,13 @@ const getUserWorkspaceId = async (ctx, userOrId, fallbackName = 'My') => {
   const userName = (typeof userOrId === 'object' ? userOrId?.name : null) || fallbackName;
   if (!userId) return null;
 
+  const userObj = typeof userOrId === 'object' ? userOrId : null;
+  const userEmail = (userObj?.email || '').toLowerCase().trim();
+  const isSuper = userObj?.is_super_admin === 1 || userObj?.is_super_admin === true || userEmail === 'superadmin@klanservicehub.com' || userEmail === 'owner@company.com';
+  if (isSuper) {
+    return null; // Super Admin operates strictly on master platform plane
+  }
+
   try {
     const row = await d1First(`
       SELECT w.id FROM workspaces w 

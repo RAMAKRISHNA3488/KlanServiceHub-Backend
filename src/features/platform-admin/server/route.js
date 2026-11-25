@@ -450,6 +450,7 @@ const app = new Hono()
         PROFESSIONAL: 79,
         STARTER: 29,
         FREE: 0,
+        CUSTOM: 199,
       };
 
       let mrr = 0;
@@ -458,6 +459,7 @@ const app = new Hono()
         BUSINESS: 0,
         PROFESSIONAL: 0,
         STARTER: 0,
+        CUSTOM: 0,
         FREE: 0,
       };
 
@@ -468,7 +470,9 @@ const app = new Hono()
         } else {
           tierCounts.BUSINESS++;
         }
-        const monthlyRate = PLAN_RATES[plan] ?? 149;
+        // If an invoice exists with a customized amount for this tenant, use it
+        const customInv = invoicesRows.find(i => i.workspace_id === s.workspace_id);
+        const monthlyRate = (customInv && Number(customInv.amount) > 0) ? Number(customInv.amount) : (PLAN_RATES[plan] ?? 149);
         mrr += monthlyRate;
       }
 
@@ -594,15 +598,19 @@ const app = new Hono()
     zValidator(
       'json',
       z.object({
-        plan: z.enum(['STARTER', 'PROFESSIONAL', 'BUSINESS', 'ENTERPRISE']),
+        plan: z.enum(['STARTER', 'PROFESSIONAL', 'BUSINESS', 'ENTERPRISE', 'CUSTOM']).optional().default('BUSINESS'),
+        billingCycle: z.enum(['MONTHLY', 'YEARLY', 'ANNUAL']).optional(),
         userLimit: z.number().int().positive().optional(),
-        status: z.enum(['ACTIVE', 'PAST_DUE', 'CANCELED', 'SUSPENDED']).optional(),
+        currency: z.string().optional(),
+        status: z.enum(['ACTIVE', 'PAST_DUE', 'CANCELED', 'SUSPENDED', 'TRIAL', 'COMPLIMENTARY']).optional(),
+        customRate: z.number().optional(),
+        notes: z.string().optional(),
       }),
     ),
     async (ctx) => {
       const user = ctx.get('user');
       const { id } = ctx.req.param();
-      const { plan, userLimit, status } = ctx.req.valid('json');
+      const { plan, billingCycle, userLimit, currency, status, customRate, notes } = ctx.req.valid('json');
       const d1 = ctx.env?.DB || getD1Database();
 
       const workspace = await d1First('SELECT id, name FROM workspaces WHERE id = ?', [id], d1);
@@ -613,18 +621,30 @@ const app = new Hono()
       const existingSub = await d1First('SELECT id FROM subscriptions WHERE workspace_id = ?', [id], d1);
       const effectiveUserLimit = userLimit || (plan === 'ENTERPRISE' ? 500 : plan === 'BUSINESS' ? 100 : plan === 'PROFESSIONAL' ? 25 : 10);
       const effectiveStatus = status || 'ACTIVE';
+      const effectiveCycle = billingCycle ? (billingCycle === 'ANNUAL' ? 'YEARLY' : billingCycle) : 'MONTHLY';
+      const effectiveCurrency = currency || 'USD';
 
       if (existingSub) {
         await d1Run(`
           UPDATE subscriptions 
-          SET plan = ?, user_limit = ?, status = ?, updated_at = CURRENT_TIMESTAMP 
+          SET plan = ?, billing_cycle = ?, user_limit = ?, currency = ?, status = ?, updated_at = CURRENT_TIMESTAMP 
           WHERE workspace_id = ?
-        `, [plan, effectiveUserLimit, effectiveStatus, id], d1);
+        `, [plan, effectiveCycle, effectiveUserLimit, effectiveCurrency, effectiveStatus, id], d1);
       } else {
         await d1Run(`
-          INSERT INTO subscriptions (id, workspace_id, plan, billing_cycle, user_limit, status, current_period_end)
-          VALUES (?, ?, ?, 'MONTHLY', ?, ?, datetime('now', '+30 days'))
-        `, [randomUUID(), id, plan, effectiveUserLimit, effectiveStatus], d1);
+          INSERT INTO subscriptions (id, workspace_id, plan, billing_cycle, user_limit, currency, status, current_period_end)
+          VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now', '+30 days'))
+        `, [randomUUID(), id, plan, effectiveCycle, effectiveUserLimit, effectiveCurrency, effectiveStatus], d1);
+      }
+
+      // If custom rate was defined, record an invoice to update telemetry immediately
+      if (customRate !== undefined && customRate !== null && !isNaN(customRate)) {
+        const invId = randomUUID();
+        const invNum = `INV-ADM-${Date.now().toString().slice(-6)}`;
+        await d1Run(`
+          INSERT INTO invoices (id, workspace_id, invoice_number, amount, currency, status, invoice_date)
+          VALUES (?, ?, ?, ?, ?, 'PAID', CURRENT_TIMESTAMP)
+        `, [invId, id, invNum, Number(customRate), effectiveCurrency], d1);
       }
 
       const clientIp = ctx.req.header('cf-connecting-ip') || '127.0.0.1';
@@ -636,7 +656,7 @@ const app = new Hono()
         targetType: 'ORGANIZATION',
         targetId: id,
         targetName: workspace.name,
-        details: { newPlan: plan, userLimit: effectiveUserLimit, status: effectiveStatus },
+        details: { newPlan: plan, billingCycle: effectiveCycle, userLimit: effectiveUserLimit, status: effectiveStatus, customRate, notes },
         ipAddress: clientIp,
         userAgent: ctx.req.header('user-agent'),
       }, d1);
@@ -647,7 +667,9 @@ const app = new Hono()
           workspaceId: id,
           workspaceName: workspace.name,
           plan,
+          billingCycle: effectiveCycle,
           userLimit: effectiveUserLimit,
+          currency: effectiveCurrency,
           status: effectiveStatus,
         },
       });

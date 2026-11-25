@@ -1932,3 +1932,47 @@ Enable choosing multiple people for Reporters (Co-Reporters / Collaborators) dur
 
 
 
+
+
+---
+
+### 🔹 Sub-task 55: Dedicated Super Admin Interface & Organization Admin Isolation
+
+- **Parent Ticket**: `Enhancing the Klanservichub V1`
+- **Issue Type**: `Sub-task`
+- **Summary**: `Implement Separate Super Admin Interface & Keep Organization Admin UI Untouched`
+- **Priority**: `P0 - Blocker`
+- **Story Points**: `8`
+- **Component**: `Master Control Plane & Multi-Tenant Routing`
+- **Labels**: `super-admin`, `routing`, `multi-tenant-isolation`, `billing-customization`, `revenue-ledger`, `cloudflare-workers`
+
+#### Description
+Delivers a completely separate, dedicated Super Admin user interface while leaving the Organization Admin and tenant member workspace interface 100% untouched. Strictly enforces layout and privilege demarcation: Super Admin deals strictly with platform-wide summary (revenue, profits, operating expenses, ARR/MRR), managing all customer tenant organizations, and customizing tenant billing details (subscription plans, custom pricing, seat quotas, billing cycle, status), and is strictly blocked from creating tickets or creating personal workspaces, with zero boards, sprints, backlog, issues, or roadmap.
+
+#### Scope of Work
+- **Dedicated Super Admin Layout (`frontend/src/features/super-admin/components/super-admin-layout.jsx`)**:
+  - Engineered master left sidebar with dark theme (`#030712`), rose/violet glowing brand header, and `SUPER ADMIN` badge.
+  - Organized navigation into three clear modules: Commercials & Telemetry (`Platform Summary`, `Revenue & Profits`, `Customize Billing`), Tenant Governance (`All Organizations`, `Users Directory`), and Security & Cloud Edge (`Platform Audit Trail`, `System Diagnostics`).
+  - Added live Cloudflare D1 edge latency and MFA status indicator in top master header.
+  - Complete removal of workspace switcher, `+ Create Workspace` button, `+ Create` ticket button, and planning suite from Super Admin.
+- **Tenant Billing Details Customization (`frontend/src/features/super-admin/components/super-admin-dashboard.jsx`)**:
+  - Implemented interactive "Customize Billing Details" modal supporting Plan Tier (`STARTER`, `PROFESSIONAL`, `BUSINESS`, `ENTERPRISE`, `CUSTOM`), Custom Pricing/Rate per cycle, Currency (`USD`, `INR`, `EUR`, `GBP`), User Seat Quota Limit (with 10, 25, 50, 100, 250, 500 presets), Billing Interval (Monthly vs Annual), and Status (`ACTIVE`, `TRIAL`, `COMPLIMENTARY`, `PAST_DUE`, `SUSPENDED`).
+  - Integrated custom billing action across both the "Customize Billing" tab and "All Organizations" directory.
+- **Backend Dynamic Billing & Revenue Overrides (`backend/src/features/platform-admin/server/route.js`)**:
+  - Enhanced `PATCH /organizations/:id/subscription` to accept `plan`, `billingCycle`, `userLimit`, `currency`, `status`, `customRate`, and `notes`.
+  - Automatically records an invoice when a custom rate is set, dynamically updating MRR, ARR, and gross revenue telemetry.
+  - Handled `CUSTOM` plan tiers and custom rate calculations in `GET /financials`.
+- **Strict Route Demarcation & Isolation**:
+  - Guarded `DashboardLayout` in `frontend/src/app/(dashboard)/layout.jsx` to redirect Super Admins immediately to `/super-admin/dashboard`, preventing access to the workspace sidebar and ticket creation.
+  - Kept Organization Admin layout, navigation, and planning suite 100% intact for regular tenant organizations.
+- **Compilation & Deployment**:
+  - Verified clean production build with Vite (`npm --prefix frontend run build`).
+  - Deployed backend to Cloudflare Workers with Version ID `3a42a809-627a-4922-9061-bcaef52f1fd1`.
+  - Deployed frontend to Cloudflare Workers with Version ID `46704d4d-b80d-492a-9c94-ae6c6877842d`.
+
+#### Acceptance Criteria
+- [x] Super Admin has a dedicated separate user interface (`/super-admin/dashboard`, `/super-admin/financials`, `/super-admin/billing`, etc.).
+- [x] Zero ticket creation, zero workspace creation, and zero boards/sprints/tasks in Super Admin.
+- [x] Super Admin can customize billing details (plan, custom rate, user limit, billing cycle, currency, status) for any tenant organization.
+- [x] Organization Admin workspace interface remains 100% untouched for tenant organizations.
+- [x] Both backend (`3a42a809-627a-4922-9061-bcaef52f1fd1`) and frontend (`46704d4d-b80d-492a-9c94-ae6c6877842d`) deployed and verified live on Cloudflare Workers.
