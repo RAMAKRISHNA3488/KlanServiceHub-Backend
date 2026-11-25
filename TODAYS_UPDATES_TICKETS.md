@@ -1,6 +1,6 @@
 # KlanServiceHub V1 — Epic & Sub-Tasks Specification
 
-This document is structured so you can first create the **Main Parent Ticket (Epic / Story)** in KlanServiceHub, and then create each of the **48 Sub-tasks** linked directly under it.
+This document is structured so you can first create the **Main Parent Ticket (Epic / Story)** in KlanServiceHub, and then create each of the **49 Sub-tasks** linked directly under it.
 
 ---
 
@@ -9,7 +9,7 @@ This document is structured so you can first create the **Main Parent Ticket (Ep
 - **Issue Type**: `Epic` *(or `Story` if your workflow doesn't use Epics)*
 - **Summary**: `Enhancing the Klanservichub V1`
 - **Priority**: `P1 - High`
-- **Total Story Points**: `217`
+- **Total Story Points**: `222`
 - **Module / Component**: `Core Platform / Multi-Module`
 - **Labels**: `v1-enhancements`, `epic`, `platform-stability`, `ui-ux`, `analytics`, `tasks-boards`, `workflows`, `projects`, `ticket-links`
 
@@ -1771,6 +1771,50 @@ Fix the critical issue where loading `/workspaces/:workspaceId/billing` failed w
 - [x] Defensive fallbacks prevent 500 crashes even if database rows or columns are missing.
 - [x] Frontend displays billing view cleanly or provides an error recovery card with retry functionality.
 - [x] Production build and both Cloudflare Workers deployed live and operational.
+
+---
+
+### SUB-TASK 49: Add 'Reporter' Selection Option During Ticket Creation & Detail Views
+
+- **Parent Ticket**: `Enhancing the Klanservichub V1`
+- **Issue Type**: `Sub-task`
+- **Summary**: `Add 'Reporter' Selection Option During Ticket Creation & Detail Views`
+- **Priority**: `P1 - High`
+- **Story Points**: `5`
+- **Component**: `Core Tasks / Modals & Backend API`
+- **Labels**: `tasks`, `create-issue-modal`, `reporter`, `jira-parity`, `ui-polish`, `backend-api`
+
+#### Description
+Implement the requested "Reporter" selection option during ticket creation. Previously, the Create Issue Modal (`KlanserviceHubCreateIssueModal`) omitted a Reporter field and the backend hardcoded `reporter_id` to the session user. This sub-task added a modern, compact Reporter selection dropdown into the ticket creation modal (defaulting to the current logged-in user with `(You)` tag and allowing selection of any workspace member), updated `CreateTaskForm`, added `reporterId` to frontend/backend schemas, updated the backend `POST /api/tasks` endpoint to resolve and persist `reporter_id` in both Cloudflare D1 and SQLite, and enabled editing the Reporter on existing tickets in `KlanserviceHubIssueDetailModal`.
+
+#### Scope of Work
+- **Create Issue Modal (`klanservicehub-create-issue-modal.jsx`)**:
+  - Integrated `useCurrent` hook to obtain active session user.
+  - Added Reporter select dropdown in a 3-column row with Priority and Sprint.
+  - Automatically pre-selected `currentUser.$id` with `(You)` indicator.
+  - Passed `reporterId` in `tasksApi.createTask` submission.
+- **Secondary Task Form (`create-task-form.jsx`)**:
+  - Added `reporterId` to form state and rendered a Reporter selection dropdown with user avatars.
+- **Schema Validation (`schema.js` frontend & backend)**:
+  - Added `reporterId: z.string().optional().nullable()` to `createTaskSchema`.
+- **Backend API (`src/features/tasks/server/route.js`)**:
+  - Extracted `reporterId` in `POST /api/tasks` and resolved member/user IDs to persist to `tasks.reporter_id`.
+  - Added `reporterId` support in `PATCH /api/tasks/:taskId` to allow updating ticket reporters.
+- **Task Detail Modal (`klanservicehub-issue-detail-modal.jsx`)**:
+  - Upgraded static Reporter display to an interactive `<select>` dropdown matching other sidebar fields.
+- **Compilation & Live Deployment**:
+  - Verified clean production build with Vite (`dist/assets/index-xTcWZYX_.js`).
+  - Deployed backend to Cloudflare Workers with Version ID `f5bf03c3-b1bc-49fb-98e2-bce3bd3e02eb`.
+  - Deployed frontend to Cloudflare Workers with Version ID `a42765b4-5657-4f43-b4ab-3d60e22dd4aa`.
+
+#### Acceptance Criteria
+- [x] Create Issue Modal displays a clean "Reporter" selector populated with workspace members.
+- [x] Active logged-in user is pre-selected by default with `(You)` indicator.
+- [x] Selecting a different member correctly assigns them as Reporter upon ticket creation.
+- [x] Backend `POST /api/tasks` accurately resolves and stores `reporter_id` in database.
+- [x] Task Detail Modal allows viewing and reassigning the Reporter on existing tickets.
+- [x] Production build generated clean with zero errors.
+- [x] Successfully deployed to Cloudflare Workers with version IDs `f5bf03c3-b1bc-49fb-98e2-bce3bd3e02eb` (backend) and `a42765b4-5657-4f43-b4ab-3d60e22dd4aa` (frontend).
 
 
 

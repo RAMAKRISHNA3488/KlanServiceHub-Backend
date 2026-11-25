@@ -10,5 +10,6 @@ export const createTaskSchema = z.object({
   dueDate: z.coerce.date().optional(),
   assigneeId: z.string().optional().nullable(),
   assigneeIds: z.array(z.string()).optional(),
+  reporterId: z.string().optional().nullable(),
   description: z.string().optional(),
 });

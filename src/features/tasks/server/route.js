@@ -934,6 +934,7 @@ const app = new Hono()
       dueDate,
       assigneeId = null,
       assigneeIds = null,
+      reporterId = null,
       description = '',
       issueType = 'Task',
       priority = 'MEDIUM',
@@ -1003,6 +1004,28 @@ const app = new Hono()
       targetAssigneeIds = [primaryAssigneeId];
     }
 
+    let effectiveReporterId = user.$id;
+    const reqReporterId = reporterId || body.reporter_id;
+    if (reqReporterId) {
+      if (d1) {
+        try {
+          const mem = await d1.prepare('SELECT user_id FROM members WHERE id = ? AND workspace_id = ?').bind(reqReporterId, effectiveWorkspaceId).first();
+          if (mem && mem.user_id) effectiveReporterId = mem.user_id;
+          else effectiveReporterId = reqReporterId;
+        } catch (e) {
+          effectiveReporterId = reqReporterId;
+        }
+      } else {
+        try {
+          const mem = db.prepare('SELECT user_id FROM members WHERE id = ? AND workspace_id = ?').get(reqReporterId, effectiveWorkspaceId);
+          if (mem && mem.user_id) effectiveReporterId = mem.user_id;
+          else effectiveReporterId = reqReporterId;
+        } catch (e) {
+          effectiveReporterId = reqReporterId;
+        }
+      }
+    }
+
     const descImages = body.descriptionImages || body.description_images || [];
     const descImagesJson = typeof descImages === 'string' ? descImages : JSON.stringify(descImages);
 
@@ -1027,7 +1050,7 @@ const app = new Hono()
           effectiveWorkspaceId,
           effectiveProjectId,
           primaryAssigneeId,
-          user.$id,
+          effectiveReporterId,
           sprintId || null,
           Number(storyPoints) || 1,
           JSON.stringify(labels || []),
@@ -1067,7 +1090,7 @@ const app = new Hono()
       effectiveWorkspaceId,
       effectiveProjectId,
       primaryAssigneeId,
-      user.$id,
+      effectiveReporterId,
       sprintId || null,
       Number(storyPoints) || 1,
       JSON.stringify(labels || []),
@@ -1295,6 +1318,26 @@ const app = new Hono()
           }
         } catch (err) {}
       }
+    }
+
+    const reqPatchReporterId = body.reporterId !== undefined ? body.reporterId : body.reporter_id;
+    if (reqPatchReporterId !== undefined) {
+      let resolvedPatchReporterId = reqPatchReporterId;
+      if (reqPatchReporterId) {
+        if (d1) {
+          try {
+            const mem = await d1.prepare('SELECT user_id FROM members WHERE id = ? AND workspace_id = ?').bind(reqPatchReporterId, existingTask.workspace_id).first();
+            if (mem && mem.user_id) resolvedPatchReporterId = mem.user_id;
+          } catch (e) {}
+        } else {
+          try {
+            const mem = db.prepare('SELECT user_id FROM members WHERE id = ? AND workspace_id = ?').get(reqPatchReporterId, existingTask.workspace_id);
+            if (mem && mem.user_id) resolvedPatchReporterId = mem.user_id;
+          } catch (e) {}
+        }
+      }
+      updates.push('reporter_id = ?');
+      params.push(resolvedPatchReporterId || null);
     }
 
     if (updates.length > 0) {
