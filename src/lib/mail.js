@@ -14,7 +14,7 @@ class SmtpSocketClient {
     this.buffer = '';
   }
 
-  async readResponse(timeoutMs = 10000) {
+  async readResponse(timeoutMs = 12000) {
     const start = Date.now();
     while (Date.now() - start < timeoutMs) {
       const newlineIdx = this.buffer.indexOf('\n');
@@ -27,23 +27,31 @@ class SmtpSocketClient {
         if (line.length === 3) {
           return { code: parseInt(line, 10), line };
         }
-        // Multi-line reply (e.g. "250-SMTPUTF8"), keep reading
+        // Multi-line reply (e.g. "250-SIZE"), keep reading until final line with space separator
         continue;
       }
 
+      let timerId;
       const readPromise = this.reader.read();
-      const timeoutPromise = new Promise((_, reject) =>
-        setTimeout(() => reject(new Error('SMTP read timeout')), timeoutMs),
-      );
-      const { value, done } = await Promise.race([readPromise, timeoutPromise]);
-      if (done) break;
-      this.buffer += this.decoder.decode(value, { stream: true });
+      const timeoutPromise = new Promise((_, reject) => {
+        timerId = setTimeout(() => reject(new Error('SMTP socket read timeout')), timeoutMs);
+      });
+
+      try {
+        const { value, done } = await Promise.race([readPromise, timeoutPromise]);
+        clearTimeout(timerId);
+        if (done) break;
+        this.buffer += this.decoder.decode(value, { stream: true });
+      } catch (err) {
+        clearTimeout(timerId);
+        throw err;
+      }
     }
     const finalLine = this.buffer.trim();
     return { code: parseInt(finalLine.slice(0, 3), 10) || 0, line: finalLine };
   }
 
-  async sendCommand(cmd, timeoutMs = 10000) {
+  async sendCommand(cmd, timeoutMs = 12000) {
     await this.writer.write(this.encoder.encode(cmd + '\r\n'));
     return await this.readResponse(timeoutMs);
   }
@@ -52,6 +60,7 @@ class SmtpSocketClient {
     this.reader.releaseLock();
     this.writer.releaseLock();
     const secureSocket = this.socket.startTls();
+    await secureSocket.opened;
     this.socket = secureSocket;
     this.reader = secureSocket.readable.getReader();
     this.writer = secureSocket.writable.getWriter();
@@ -59,16 +68,16 @@ class SmtpSocketClient {
   }
 
   async close() {
-    try { await this.writer.close(); } catch (e) {}
-    try { await this.reader.cancel(); } catch (e) {}
-    try { if (typeof this.socket?.close === 'function') this.socket.close(); } catch (e) {}
+    try { await this.writer.close(); } catch (_) {}
+    try { await this.reader.cancel(); } catch (_) {}
+    try { if (typeof this.socket?.close === 'function') this.socket.close(); } catch (_) {}
   }
 }
 
 /**
  * Send an email directly via Cloudflare Workers TCP/TLS sockets
  */
-async function sendViaCloudflareSockets({ to, subject, text, html, env = {} }) {
+async function sendViaCloudflareSockets({ to, subject, text, html, env = {}, forcedPort = null }) {
   let connect;
   try {
     const socketsModule = await import('cloudflare:sockets');
@@ -78,7 +87,7 @@ async function sendViaCloudflareSockets({ to, subject, text, html, env = {} }) {
   }
 
   const host = env.SMTP_HOST || process.env.SMTP_HOST || 'smtp.gmail.com';
-  const port = Number(env.SMTP_PORT || process.env.SMTP_PORT) || 587;
+  const port = forcedPort || Number(env.SMTP_PORT || process.env.SMTP_PORT) || 465;
   const isDirectTls = port === 465 || env.SMTP_SECURE === 'true' || process.env.SMTP_SECURE === 'true';
   const user = env.SMTP_USER || process.env.SMTP_USER || 'navithajune06@gmail.com';
   const pass = env.SMTP_PASS || process.env.SMTP_PASS || 'epmoebutojwwicnf';
@@ -91,10 +100,11 @@ async function sendViaCloudflareSockets({ to, subject, text, html, env = {} }) {
 
   console.log(`[Mail Socket] Connecting to ${host}:${port} (secureTransport: ${socketOptions.secureTransport})...`);
   const socket = connect({ hostname: host, port }, socketOptions);
+  await socket.opened;
   const client = new SmtpSocketClient(socket);
 
   try {
-    const greeting = await client.readResponse(10000);
+    const greeting = await client.readResponse(12000);
     if (greeting.code !== 220) {
       throw new Error(`Unexpected greeting from SMTP server: ${greeting.line}`);
     }
@@ -122,13 +132,13 @@ async function sendViaCloudflareSockets({ to, subject, text, html, env = {} }) {
       throw new Error(`AUTH LOGIN initiation failed: ${authReq.line}`);
     }
 
-    const userB64 = btoa(user);
+    const userB64 = Buffer.from(user, 'utf-8').toString('base64');
     const userRes = await client.sendCommand(userB64);
     if (userRes.code !== 334) {
       throw new Error(`Username challenge failed: ${userRes.line}`);
     }
 
-    const passB64 = btoa(pass);
+    const passB64 = Buffer.from(pass, 'utf-8').toString('base64');
     const passRes = await client.sendCommand(passB64);
     if (passRes.code !== 235) {
       throw new Error(`SMTP Authentication failed: ${passRes.line}`);
@@ -152,17 +162,23 @@ async function sendViaCloudflareSockets({ to, subject, text, html, env = {} }) {
     const messageId = `<${Date.now()}.${Math.random().toString(36).substring(2)}@klanservicehub.internal>`;
     const dateStr = new Date().toUTCString();
 
+    // RFC 5321 & RFC 2045: base64 payload must be wrapped into lines of max 76 characters
+    const rawContent = html || text || '';
+    const base64Body = Buffer.from(rawContent, 'utf-8').toString('base64');
+    const wrappedBody = (base64Body.match(/.{1,76}/g) || [base64Body]).join('\r\n');
+    const encodedSubject = `=?UTF-8?B?${Buffer.from(subject, 'utf-8').toString('base64')}?=`;
+
     const mimeMessage = [
       `From: ${rawFrom}`,
       `To: ${to}`,
-      `Subject: =?UTF-8?B?${btoa(unescape(encodeURIComponent(subject)))}?=`,
+      `Subject: ${encodedSubject}`,
       `Date: ${dateStr}`,
       `Message-ID: ${messageId}`,
       `MIME-Version: 1.0`,
       `Content-Type: text/html; charset=UTF-8`,
       `Content-Transfer-Encoding: base64`,
       ``,
-      btoa(unescape(encodeURIComponent(html || text || ''))),
+      wrappedBody,
       `.`,
     ].join('\r\n');
 
@@ -171,9 +187,9 @@ async function sendViaCloudflareSockets({ to, subject, text, html, env = {} }) {
       throw new Error(`Message body rejected: ${finishRes.line}`);
     }
 
-    try { await client.sendCommand('QUIT'); } catch (e) {}
+    try { await client.sendCommand('QUIT'); } catch (_) {}
     console.log(`✉️ [Mail Socket] Successfully delivered email to ${to}: ${messageId}`);
-    return { success: true, messageId };
+    return { success: true, messageId, transport: `edge-sockets-${port}` };
   } finally {
     await client.close();
   }
@@ -184,8 +200,8 @@ async function sendViaCloudflareSockets({ to, subject, text, html, env = {} }) {
  */
 export function getTransporter(env = {}) {
   const host = env.SMTP_HOST || process.env.SMTP_HOST || 'smtp.gmail.com';
-  const port = Number(env.SMTP_PORT || process.env.SMTP_PORT) || 587;
-  const secure = env.SMTP_SECURE === 'true' || process.env.SMTP_SECURE === 'true' || port === 465;
+  const port = Number(env.SMTP_PORT || process.env.SMTP_PORT) || 465;
+  const secure = port === 465 || env.SMTP_SECURE === 'true' || process.env.SMTP_SECURE === 'true';
   const user = env.SMTP_USER || process.env.SMTP_USER || 'navithajune06@gmail.com';
   const pass = env.SMTP_PASS || process.env.SMTP_PASS || 'epmoebutojwwicnf';
 
@@ -204,20 +220,31 @@ export const transporter = getTransporter();
 
 /**
  * Unified Email Dispatcher
- * Automatically chooses Cloudflare Workers sockets on edge, or Nodemailer in Node.js
+ * Priority:
+ * 1. Cloudflare Workers Sockets via Port 465 (Direct Implicit TLS)
+ * 2. Cloudflare Workers Sockets via Port 587 (STARTTLS fallback)
+ * 3. Node.js Nodemailer fallback
  */
 export async function dispatchEmail({ to, subject, text, html, env = {} }) {
   const rawFrom = env.SMTP_FROM || process.env.SMTP_FROM || `"klanservicehub" <${env.SMTP_USER || process.env.SMTP_USER || 'navithajune06@gmail.com'}>`;
 
-  // 1. If running inside Cloudflare Workers isolate, use edge sockets
+  // 1. Primary: Cloudflare Workers edge sockets on Port 465 (Direct TLS)
   try {
-    const res = await sendViaCloudflareSockets({ to, subject, text, html, env });
+    const res = await sendViaCloudflareSockets({ to, subject, text, html, env, forcedPort: 465 });
     if (res?.success) return res;
-  } catch (edgeErr) {
-    console.warn(`[Mail] Edge socket delivery skipped or encountered: ${edgeErr.message}. Trying Nodemailer fallback...`);
+  } catch (edgeErr465) {
+    console.warn(`[Mail] Edge socket (Port 465) attempt encountered: ${edgeErr465.message}. Trying Port 587 fallback...`);
+    
+    // 2. Secondary: Cloudflare Workers edge sockets on Port 587 (STARTTLS)
+    try {
+      const res587 = await sendViaCloudflareSockets({ to, subject, text, html, env, forcedPort: 587 });
+      if (res587?.success) return res587;
+    } catch (edgeErr587) {
+      console.warn(`[Mail] Edge socket (Port 587) fallback encountered: ${edgeErr587.message}. Trying Nodemailer...`);
+    }
   }
 
-  // 2. Fallback to standard Node.js nodemailer
+  // 3. Tertiary fallback: Node.js standard nodemailer
   try {
     const t = getTransporter(env);
     const info = await t.sendMail({
@@ -228,7 +255,7 @@ export async function dispatchEmail({ to, subject, text, html, env = {} }) {
       html,
     });
     console.log(`✉️ [Mail Nodemailer] Successfully sent email to ${to}: ${info.messageId}`);
-    return { success: true, messageId: info.messageId };
+    return { success: true, messageId: info.messageId, transport: 'nodemailer' };
   } catch (nodeErr) {
     console.error(`❌ [Mail] All email delivery transports failed for ${to}:`, nodeErr.message);
     return { success: false, error: nodeErr.message };

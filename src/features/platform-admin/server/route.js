@@ -8,7 +8,7 @@ import { randomUUID } from 'node:crypto';
 import { sessionMiddleware } from '../../../lib/session-middleware.js';
 import { db, d1All, d1First, d1Run, formatDoc, getD1Database, logPlatformAudit } from '../../../db.js';
 import { AUTH_COOKIE, SESSION_MAX_AGE_SECONDS, SESSION_MAX_AGE_MS } from '../../auth/constants.js';
-import { sendOtpEmail } from '../../../lib/mail.js';
+import { sendOtpEmail, sendPasswordResetEmail, sendInvitationEmail, dispatchEmail } from '../../../lib/mail.js';
 
 // Super Admin authorization verification
 export async function verifySuperAdminUser(user, session, d1) {
@@ -1201,7 +1201,74 @@ const app = new Hono()
     const logs = await d1All(query, params, d1);
 
     return ctx.json({ data: { logs: logs.map(formatDoc), total: logs.length } });
-  });
+  })
+
+  // =========================================================================
+  // 6. MAIL DELIVERY DIAGNOSTICS & TEST SUITE
+  // =========================================================================
+
+  .post(
+    '/mail-test',
+    zValidator(
+      'json',
+      z.object({
+        targetEmail: z.string().email(),
+        testType: z.enum(['otp', 'reset', 'invite', 'custom']).optional().default('otp'),
+      }),
+    ),
+    async (ctx) => {
+      const { targetEmail, testType } = ctx.req.valid('json');
+      const start = Date.now();
+
+      try {
+        let result;
+        if (testType === 'reset') {
+          result = await sendPasswordResetEmail({
+            to: targetEmail,
+            userName: 'Platform Administrator',
+            otpCode: '123456',
+            resetUrl: 'https://klanservicehub-frontend.klanservicehub.workers.dev/reset-password',
+            env: ctx.env,
+          });
+        } else if (testType === 'invite') {
+          result = await sendInvitationEmail({
+            to: targetEmail,
+            inviterName: 'Platform Super Admin',
+            organizationName: 'KlanServiceHub Enterprise',
+            role: 'Administrator',
+            inviteUrl: 'https://klanservicehub-frontend.klanservicehub.workers.dev/invite/test-token',
+            password: 'TempPassword123!',
+            env: ctx.env,
+          });
+        } else {
+          result = await sendOtpEmail({
+            to: targetEmail,
+            otpCode: Math.floor(100000 + Math.random() * 900000).toString(),
+            env: ctx.env,
+          });
+        }
+
+        const latencyMs = Date.now() - start;
+        return ctx.json({
+          success: Boolean(result.success),
+          latencyMs,
+          messageId: result.messageId || null,
+          transport: result.transport || null,
+          error: result.error || null,
+          targetEmail,
+          testType,
+        });
+      } catch (err) {
+        return ctx.json({
+          success: false,
+          latencyMs: Date.now() - start,
+          error: err.message,
+          targetEmail,
+          testType,
+        }, 500);
+      }
+    },
+  );
 
 export default app;
 

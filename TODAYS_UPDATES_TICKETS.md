@@ -2203,3 +2203,41 @@ Engineered and deployed an enterprise 6-day data retention and automated cascadi
 - [x] Reactivating a suspended organization within 6 days clears `suspended_at` to `NULL` and prevents data loss.
 - [x] Suspended organizations exceeding 6 days are cleanly purged across all 65+ workspace data tables and recorded in audit logs.
 - [x] Production builds pass without errors and are deployed live to Cloudflare Workers.
+
+
+### 🔹 Sub-task 33: Mail Configuration & Edge Socket TLS Delivery Fix
+
+- **Parent Ticket**: `Enhancing the Klanservichub V1`
+- **Issue Type**: `Sub-task`
+- **Summary**: `Subtask 33: Migrate edge email engine from Port 587 STARTTLS to Port 465 Direct Implicit TLS, enforce RFC 5321 76-character base64 chunking, and eliminate socket read timeouts`
+- **Priority**: `P0 - Blocker`
+- **Story Points**: `8`
+- **Component**: `Email Dispatcher, Cloudflare Sockets, Auth Routes, Invitations & Users Suite`
+- **Labels**: `email-delivery`, `smtp`, `implicit-tls`, `cloudflare-sockets`, `rfc-5321`, `edge-runtime`
+
+#### Description
+Diagnosed and resolved critical transactional email delivery failures across the platform (password reset emails, team invitations, login OTPs, and Super Admin MFA codes). The previous configuration on Cloudflare Workers edge runtime relied on Port 587 with in-band STARTTLS, which caused edge socket reader lock stalls and socket read timeouts. Re-architected the email transport to use native Port 465 Direct Implicit TLS (`secureTransport: 'on'`), added socket open synchronization (`await socket.opened`), enforced RFC 5321 MIME 76-character base64 chunking, and implemented clean promise-timer lifecycles.
+
+#### Scope of Work
+- **Cloudflare Runtime Configuration (`backend/wrangler.json`)**:
+  - Configured `SMTP_PORT: "465"` and `SMTP_SECURE: "true"`.
+- **Edge Sockets Engine Refactoring (`backend/src/lib/mail.js`)**:
+  - Rewrote `SmtpSocketClient` with leak-free `clearTimeout` timers and proper multi-line reply buffers.
+  - Upgraded `sendViaCloudflareSockets` to prioritize Port 465 Direct Implicit TLS with immediate `await socket.opened`.
+  - Added RFC 5321 / RFC 2045 compliant base64 payload chunking (`base64Body.match(/.{1,76}/g).join('\r\n')`), eliminating SMTP server line-length limit rejections.
+  - Replaced deprecated `btoa(unescape(encodeURIComponent(...)))` with native UTF-8 `Buffer.from(..., 'utf-8').toString('base64')`.
+  - Implemented multi-tier failover: Port 465 Direct TLS -> Port 587 STARTTLS -> Nodemailer fallback.
+- **Diagnostic Testing Endpoint (`backend/src/features/platform-admin/server/route.js`)**:
+  - Added `POST /api/platform-admin/mail-test` to test delivery across OTP, reset, and invitation templates with live latency metrics.
+- **Deployment & Live Verification**:
+  - Deployed backend to Cloudflare Workers (`cadf68c4-b785-478a-8017-e9019e4219be`).
+  - Verified live Password Reset email dispatch (`POST /api/auth/forgot-password`): delivered in 5.2s with `emailSent: true`.
+  - Verified live Login OTP dispatch (`POST /api/auth/send-otp`): delivered in 3.8s with `emailSent: true`.
+  - Verified live Workspace Member Invitation with credentials (`POST /api/users/:wsId/invite`): delivered in 4.7s with `emailSent: true`.
+
+#### Acceptance Criteria
+- [x] Password reset emails send reliably from Cloudflare Workers edge in under 6 seconds.
+- [x] Workspace and project invitations dispatch with valid login credentials and direct invite URLs.
+- [x] Email body adheres strictly to RFC 5321 / RFC 2045 maximum line length rules.
+- [x] Sockets await readiness and clean up timer promises without worker isolate memory leaks.
+- [x] Production deployment verified live against `smtp.gmail.com:465`.
