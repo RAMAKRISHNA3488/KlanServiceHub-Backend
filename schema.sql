@@ -73,6 +73,7 @@ CREATE TABLE IF NOT EXISTS workspaces (
   date_format TEXT DEFAULT 'YYYY-MM-DD',
   currency TEXT DEFAULT 'USD',
   status TEXT DEFAULT 'ACTIVE', -- ACTIVE, INACTIVE, SUSPENDED
+  suspended_at DATETIME DEFAULT NULL,
   domain_slug TEXT DEFAULT '',
   industry TEXT DEFAULT '',
   company_size TEXT DEFAULT '',

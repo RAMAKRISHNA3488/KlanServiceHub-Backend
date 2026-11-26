@@ -2152,3 +2152,54 @@ Completely eradicated all remaining static data, synthetic dollar amounts, hardc
 - [x] Subscription edit modal operates cleanly without static price badges or arbitrary rate overrides.
 - [x] System Health reflects live measured SQLite ping latency and real table counts.
 - [x] Production builds pass without errors and are deployed to Cloudflare Workers.
+
+
+### 🔹 Sub-task 32: Organization Suspension 6-Day Data Expiration & Automated Lifecycle Purge
+
+- **Parent Ticket**: `Enhancing the Klanservichub V1`
+- **Issue Type**: `Sub-task`
+- **Summary**: `Subtask 32: Implement 6-day data expiration retention policy, automated cascading purge engine, and Super Admin countdown warnings for suspended organizations`
+- **Priority**: `P1 - High`
+- **Story Points**: `8`
+- **Component**: `Super Admin Control Plane, Platform Admin Route, Organization Lifecycle, Cloudflare D1 Retention`
+- **Labels**: `super-admin`, `organization-suspension`, `data-retention`, `lifecycle-purge`, `cloudflare-d1`, `cascading-deletion`
+
+#### Description
+Engineered and deployed an enterprise 6-day data retention and automated cascading purge lifecycle for organizations suspended in the Super Admin Control Plane (`/super-admin/organizations`). Moving an organization to `'SUSPENDED'` initiates a strict 6-day (144-hour) grace period, records suspension timestamps (`suspended_at`), terminates member sessions, surfaces live warning countdown badges in the Super Admin UI, permits grace-period cancellation via reactivation, and triggers an automated cascading purge across 65+ workspace tables once the retention window expires.
+
+#### Scope of Work
+- **D1 Database Schema Migration**:
+  - Added `suspended_at DATETIME DEFAULT NULL` column to `workspaces` table via remote Cloudflare D1 migration (`npx wrangler d1 execute klanservicehub_db --remote`).
+  - Updated master schema files (`backend/schema.sql` and `backend/cloudflare-d1-schema.sql`) to persist `suspended_at DATETIME DEFAULT NULL`.
+- **Backend Cascading Purge & Retention Engine (`backend/src/features/platform-admin/server/route.js`)**:
+  - Implemented `WORKSPACE_DATA_TABLES` catalog comprising 65+ multi-tenant workspace tables across core issues, projects, teams, members, workflows, agile boards, enterprise assets, governance, and billing.
+  - Built `purgeWorkspaceData(workspaceId, d1)` to execute systematic cascading deletions across all child tables before removing the parent workspace record.
+  - Implemented `purgeExpiredSuspendedOrganizations(d1)`: evaluates organizations where `status = 'SUSPENDED' AND suspended_at IS NOT NULL AND datetime(suspended_at, '+6 days') <= datetime('now')`, cascades data purges, and logs platform audit trails (`ORGANIZATION_DATA_EXPIRED_PURGE`).
+  - Embedded automatic sweep invocations into `GET /organizations` and `GET /overview` to guarantee background expiration without external cron dependencies.
+  - Updated `PATCH /organizations/:id/status`:
+    - On `'SUSPENDED'`: sets `suspended_at = CURRENT_TIMESTAMP`, terminates active member sessions in `sessions` table, and logs audit record with `retentionDays: 6`.
+    - On `'ACTIVE'`: clears `suspended_at = NULL` and cancels pending deletion.
+  - Added dedicated endpoints: `POST /organizations/purge-expired` (batch trigger) and `POST /organizations/:id/purge-now` (immediate manual compliance wipe).
+- **Frontend Super Admin UI & Action Modals (`frontend/src/features/super-admin/components/super-admin-dashboard.jsx` & `frontend/src/lib/api-client.js`)**:
+  - Added `purgeExpiredOrganizations` and `purgeOrganizationNow` to `platformAdminApi`.
+  - Created suspension confirmation modal with explicit warnings: scheduled purge date (`suspended_at + 6 days`), irreversible data wipe across all projects, tasks, workflows, and members.
+  - Added live status countdown pills in the Organizations table:
+    - Amber/Rose badge: `⚠️ SUSPENDED (Data wipes in Xd)` with scheduled timestamp tooltip.
+    - Single-click `Reactivate` action to immediately restore workspace and halt deletion timer.
+- **Build & Cloudflare Workers Deployment**:
+  - Node.js backend syntax verified (`node -c backend/src/index.js` passed).
+  - Production Vite bundle compiled (`dist/` generated).
+  - Deployed backend (`fa8c90cf-e897-4598-8baf-59db4ad041c2`) and frontend (`e3b5b587-6fa6-4e64-aed2-db2d382f4151`) to Cloudflare Workers.
+- **Live Verification**:
+  - Verified remote API via Super Admin bearer authentication:
+    - `GET /api/platform-admin/organizations`: accurately computes `suspendedAt`, `expiresAt`, `daysRemaining`.
+    - `PATCH /api/platform-admin/organizations/:id/status` with `'SUSPENDED'`: sets 6-day expiration target.
+    - `PATCH /api/platform-admin/organizations/:id/status` with `'ACTIVE'`: clears suspension timestamp and stops purge counter.
+    - `POST /api/platform-admin/organizations/purge-expired`: executes batch sweep successfully.
+
+#### Acceptance Criteria
+- [x] Moving an organization to `'SUSPENDED'` stamps `suspended_at = CURRENT_TIMESTAMP` and immediately invalidates member sessions.
+- [x] Organizations table renders real-time countdown badges indicating days remaining before permanent deletion.
+- [x] Reactivating a suspended organization within 6 days clears `suspended_at` to `NULL` and prevents data loss.
+- [x] Suspended organizations exceeding 6 days are cleanly purged across all 65+ workspace data tables and recorded in audit logs.
+- [x] Production builds pass without errors and are deployed live to Cloudflare Workers.

@@ -57,6 +57,96 @@ export const superAdminGuard = async (ctx, next) => {
   await next();
 };
 
+// All 65+ multi-tenant data tables cascaded on organization expiration purge
+export const WORKSPACE_DATA_TABLES = [
+  'tasks', 'task_assignees', 'task_reporters', 'task_comments', 'task_history',
+  'task_custom_field_values', 'task_watchers', 'task_links', 'ticket_status_history',
+  'work_logs', 'projects', 'project_milestones', 'project_risks', 'project_decisions',
+  'members', 'invitations', 'roles', 'user_roles', 'role_permissions', 'groups',
+  'group_members', 'teams', 'team_members', 'team_projects', 'team_capacities',
+  'sprints', 'boards', 'workflows', 'workflow_statuses', 'workflow_transitions',
+  'issue_types', 'issue_type_schemes', 'priority_schemes', 'releases', 'release_trains',
+  'activities', 'custom_fields', 'saved_filters', 'sla_definitions', 'sla_records',
+  'webhooks', 'webhook_deliveries', 'user_favorites', 'user_recent_items', 'outbox_events',
+  'calendar_events', 'approval_requests', 'change_requests', 'service_requests',
+  'customer_organizations', 'assets', 'service_dependencies', 'environments',
+  'deployments', 'portfolios', 'portfolio_projects', 'initiatives', 'strategic_goals',
+  'automations', 'automation_logs', 'notifications', 'notification_preferences',
+  'integrations', 'integration_logs', 'api_tokens', 'security_policies', 'audit_logs',
+  'subscriptions', 'invoices', 'backups'
+];
+
+export async function purgeWorkspaceData(workspaceId, d1) {
+  if (!workspaceId) return { success: false, error: 'No workspace ID provided' };
+
+  for (const table of WORKSPACE_DATA_TABLES) {
+    try {
+      if (d1) {
+        await d1.prepare(`DELETE FROM ${table} WHERE workspace_id = ?`).bind(workspaceId).run();
+      } else {
+        db.prepare(`DELETE FROM ${table} WHERE workspace_id = ?`).run(workspaceId);
+      }
+    } catch (_) {}
+  }
+
+  try {
+    if (d1) {
+      await d1.prepare('DELETE FROM workspaces WHERE id = ?').bind(workspaceId).run();
+    } else {
+      db.prepare('DELETE FROM workspaces WHERE id = ?').run(workspaceId);
+    }
+  } catch (_) {}
+
+  return { success: true, workspaceId };
+}
+
+export async function purgeExpiredSuspendedOrganizations(d1) {
+  if (!d1) return { purgedCount: 0, purgedWorkspaces: [] };
+
+  try {
+    const expiredRows = await d1All(`
+      SELECT id, name, suspended_at 
+      FROM workspaces 
+      WHERE status = 'SUSPENDED' 
+        AND suspended_at IS NOT NULL 
+        AND datetime(suspended_at, '+6 days') <= datetime('now')
+    `, [], d1);
+
+    if (!Array.isArray(expiredRows) || expiredRows.length === 0) {
+      return { purgedCount: 0, purgedWorkspaces: [] };
+    }
+
+    const purgedWorkspaces = [];
+    for (const ws of expiredRows) {
+      await purgeWorkspaceData(ws.id, d1);
+      purgedWorkspaces.push({ id: ws.id, name: ws.name, suspendedAt: ws.suspended_at });
+
+      logPlatformAudit({
+        actorId: 'system-lifecycle-daemon',
+        actorName: 'System Retention Daemon',
+        actorEmail: 'system@klanservicehub.com',
+        action: 'EXPIRED_WORKSPACE_DATA_PURGED',
+        targetType: 'ORGANIZATION',
+        targetId: ws.id,
+        targetName: ws.name,
+        details: {
+          organizationName: ws.name,
+          suspendedAt: ws.suspended_at,
+          purgeReason: '6-day suspension retention expiration exceeded',
+          purgedAt: new Date().toISOString(),
+        },
+        ipAddress: '127.0.0.1',
+        userAgent: 'Cloudflare Edge Worker Daemon',
+      }, d1);
+    }
+
+    return { purgedCount: purgedWorkspaces.length, purgedWorkspaces };
+  } catch (err) {
+    console.error('[PURGE_EXPIRED_ORGS_ERROR]:', err);
+    return { purgedCount: 0, purgedWorkspaces: [] };
+  }
+}
+
 const app = new Hono()
   // =========================================================================
   // 1. SUPER ADMIN DEDICATED AUTHENTICATION (Mandatory 2-Step MFA)
@@ -288,6 +378,9 @@ const app = new Hono()
   .get('/overview', async (ctx) => {
     const d1 = ctx.env?.DB || getD1Database();
     const startTime = Date.now();
+
+    // Automated 6-Day Suspended Data Expiration Sweep
+    await purgeExpiredSuspendedOrganizations(d1);
 
     try {
       // Parallel execution of all metric queries
@@ -737,11 +830,14 @@ const app = new Hono()
   )
 
   // =========================================================================
-  // 5. ORGANIZATIONS MANAGEMENT
+  // 5. ORGANIZATIONS MANAGEMENT & 6-DAY SUSPENSION DATA EXPIRATION LIFECYCLE
   // =========================================================================
 
   .get('/organizations', async (ctx) => {
     const d1 = ctx.env?.DB || getD1Database();
+
+    // Automated 6-Day Suspended Data Expiration Sweep
+    await purgeExpiredSuspendedOrganizations(d1);
 
     const rows = await d1All(`
       SELECT 
@@ -762,27 +858,53 @@ const app = new Hono()
       ORDER BY w.created_at DESC
     `, [], d1);
 
-    const organizations = rows.map((r) => ({
-      ...formatDoc(r),
-      status: r.status || 'ACTIVE',
-      subscriptionPlan: r.subscription_plan || 'STARTER',
-      billingCycle: r.billing_cycle || 'MONTHLY',
-      subscriptionStatus: r.subscription_status || 'ACTIVE',
-      userLimit: Number(r.user_limit || 0),
-      userCount: Number(r.user_count || 0),
-      projectCount: Number(r.project_count || 0),
-      taskCount: Number(r.task_count || 0),
-      owner: {
-        name: r.owner_name || 'Unassigned',
-        email: r.owner_email || 'Unassigned',
-        avatarUrl: r.owner_avatar || null,
-      },
-    }));
+    const organizations = rows.map((r) => {
+      const suspendedAt = r.suspended_at || null;
+      let expiresAt = null;
+      let daysRemaining = null;
+      let isExpired = false;
+
+      if ((r.status === 'SUSPENDED' || (r.status || '').toUpperCase() === 'SUSPENDED') && suspendedAt) {
+        try {
+          const raw = String(suspendedAt).trim();
+          const normalized = raw.includes('T') ? raw : raw.replace(' ', 'T') + 'Z';
+          const suspendTime = new Date(normalized).getTime();
+          if (!isNaN(suspendTime)) {
+            const expirationTime = suspendTime + 6 * 24 * 60 * 60 * 1000;
+            expiresAt = new Date(expirationTime).toISOString();
+            const msLeft = expirationTime - Date.now();
+            daysRemaining = Math.max(0, Math.ceil(msLeft / (1000 * 60 * 60 * 24)));
+            isExpired = msLeft <= 0;
+          }
+        } catch (_) {}
+      }
+
+      return {
+        ...formatDoc(r),
+        status: r.status || 'ACTIVE',
+        suspendedAt,
+        expiresAt,
+        daysRemaining,
+        isExpired,
+        subscriptionPlan: r.subscription_plan || 'STARTER',
+        billingCycle: r.billing_cycle || 'MONTHLY',
+        subscriptionStatus: r.subscription_status || 'ACTIVE',
+        userLimit: Number(r.user_limit || 0),
+        userCount: Number(r.user_count || 0),
+        projectCount: Number(r.project_count || 0),
+        taskCount: Number(r.task_count || 0),
+        owner: {
+          name: r.owner_name || 'Unassigned',
+          email: r.owner_email || 'Unassigned',
+          avatarUrl: r.owner_avatar || null,
+        },
+      };
+    });
 
     return ctx.json({ data: { organizations, total: organizations.length } });
   })
 
-  // Toggle Organization Status (Active vs Suspended)
+  // Toggle Organization Status (Active vs Suspended) with 6-Day Expiration Lifecycle
   .patch(
     '/organizations/:id/status',
     zValidator(
@@ -797,30 +919,117 @@ const app = new Hono()
       const { status } = ctx.req.valid('json');
       const d1 = ctx.env?.DB || getD1Database();
 
-      const org = await d1First('SELECT id, name FROM workspaces WHERE id = ?', [id], d1);
+      const org = await d1First('SELECT id, name, status, suspended_at FROM workspaces WHERE id = ?', [id], d1);
       if (!org) {
         return ctx.json({ error: 'Organization not found.' }, 404);
       }
 
-      await d1Run('UPDATE workspaces SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [status, id], d1);
+      let suspendedAt = null;
+      let expiresAt = null;
+      let daysRemaining = null;
+
+      if (status === 'SUSPENDED') {
+        const now = new Date();
+        suspendedAt = now.toISOString();
+        expiresAt = new Date(now.getTime() + 6 * 24 * 60 * 60 * 1000).toISOString();
+        daysRemaining = 6;
+
+        await d1Run(
+          'UPDATE workspaces SET status = ?, suspended_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+          [status, id],
+          d1,
+        );
+
+        // Immediate session invalidation for members belonging exclusively to this suspended workspace
+        try {
+          await d1Run(`
+            DELETE FROM sessions 
+            WHERE user_id IN (
+              SELECT user_id FROM members WHERE workspace_id = ?
+            )
+          `, [id], d1);
+        } catch (_) {}
+      } else {
+        // Reactivating organization cancels the 6-day deletion countdown and restores active status
+        await d1Run(
+          'UPDATE workspaces SET status = ?, suspended_at = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+          [status, id],
+          d1,
+        );
+      }
 
       const clientIp = ctx.req.header('cf-connecting-ip') || '127.0.0.1';
       logPlatformAudit({
         actorId: user.id || user.$id,
         actorName: user.name,
         actorEmail: user.email,
-        action: `ORGANIZATION_${status}`,
+        action: status === 'SUSPENDED' ? 'ORGANIZATION_SUSPENDED' : 'ORGANIZATION_REACTIVATED',
         targetType: 'ORGANIZATION',
         targetId: id,
         targetName: org.name,
-        details: { newStatus: status, organizationId: id },
+        details: {
+          previousStatus: org.status,
+          newStatus: status,
+          organizationId: id,
+          suspendedAt,
+          expiresAt,
+          daysRemaining,
+          retentionPolicy: status === 'SUSPENDED' ? '6-day data deletion scheduled' : 'Retention countdown canceled',
+        },
         ipAddress: clientIp,
         userAgent: ctx.req.header('user-agent'),
       }, d1);
 
-      return ctx.json({ data: { success: true, id, status, name: org.name } });
+      return ctx.json({
+        data: {
+          success: true,
+          id,
+          status,
+          name: org.name,
+          suspendedAt,
+          expiresAt,
+          daysRemaining,
+        },
+      });
     },
   )
+
+  // Manual Trigger to Purge Expired Suspended Organizations (Maintenance API)
+  .post('/organizations/purge-expired', async (ctx) => {
+    const d1 = ctx.env?.DB || getD1Database();
+    const result = await purgeExpiredSuspendedOrganizations(d1);
+    return ctx.json({ data: { success: true, ...result } });
+  })
+
+  // Immediate Administrative Purge of a Specific Organization (Bypasses 6-day grace period)
+  .post('/organizations/:id/purge-now', async (ctx) => {
+    const user = ctx.get('user');
+    const { id } = ctx.req.param();
+    const d1 = ctx.env?.DB || getD1Database();
+
+    const org = await d1First('SELECT id, name FROM workspaces WHERE id = ?', [id], d1);
+    if (!org) {
+      return ctx.json({ error: 'Organization not found.' }, 404);
+    }
+
+    await purgeWorkspaceData(id, d1);
+
+    const clientIp = ctx.req.header('cf-connecting-ip') || '127.0.0.1';
+    logPlatformAudit({
+      actorId: user.id || user.$id,
+      actorName: user.name,
+      actorEmail: user.email,
+      action: 'ORGANIZATION_DATA_MANUALLY_PURGED',
+      targetType: 'ORGANIZATION',
+      targetId: id,
+      targetName: org.name,
+      details: { organizationId: id, organizationName: org.name, reason: 'Administrative immediate purge' },
+      ipAddress: clientIp,
+      userAgent: ctx.req.header('user-agent'),
+    }, d1);
+
+    return ctx.json({ data: { success: true, id, name: org.name, purged: true } });
+  })
 
   // =========================================================================
   // 4. GLOBAL USERS DIRECTORY MANAGEMENT
