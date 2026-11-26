@@ -331,8 +331,8 @@ const app = new Hono()
           ORDER BY created_at DESC
           LIMIT 12
         `, [], d1).catch(() => []),
-        d1First("SELECT COUNT(*) as c FROM sessions WHERE expires_at > datetime('now')", [], d1).catch(() => ({ c: 1 })),
-        d1First("SELECT COUNT(*) as c FROM sqlite_master WHERE type='table'", [], d1).catch(() => ({ c: 85 })),
+        d1First("SELECT COUNT(*) as c FROM sessions WHERE expires_at > datetime('now')", [], d1).catch(() => ({ c: 0 })),
+        d1First("SELECT COUNT(*) as c FROM sqlite_master WHERE type='table'", [], d1).catch(() => ({ c: 0 })),
       ]);
 
       const queryLatencyMs = Date.now() - startTime;
@@ -352,14 +352,14 @@ const app = new Hono()
       const openIssues = Math.max(0, totalTickets - closedIssues);
       const criticalIssues = Number(criticalTasksRow?.c || 0);
       const overdueTasks = Number(overdueTasksRow?.c || 0);
-      const activeSessions = Number(activeSessionsRow?.c || 1);
-      const totalTables = Number(tablesCountRow?.c || 85);
+      const activeSessions = Number(activeSessionsRow?.c || 0);
+      const totalTables = Number(tablesCountRow?.c || 0);
 
       const systemHealth = {
         status: 'HEALTHY',
         databaseEngine: 'Cloudflare D1 Distributed SQLite',
         queryLatencyMs,
-        uptimeSeconds: Math.floor(process.uptime ? process.uptime() : 86400),
+        uptimeSeconds: Math.floor(process.uptime ? process.uptime() : 0),
         edgeRegion: 'Global Edge Anycast',
         environment: 'Production Cloudflare Workers',
         activeSessions,
@@ -406,12 +406,12 @@ const app = new Hono()
     const latency = Date.now() - t0;
 
     const [tableCountRow, activeSessionsRow, totalUsersRow, totalWorkspacesRow, totalTasksRow, totalInvoicesRow] = await Promise.all([
-      d1First("SELECT COUNT(*) as c FROM sqlite_master WHERE type='table'", [], d1).catch(() => ({ c: 85 })),
-      d1First("SELECT COUNT(*) as c FROM sessions WHERE expires_at > datetime('now')", [], d1).catch(() => ({ c: 1 })),
-      d1First('SELECT COUNT(*) as c FROM users', [], d1).catch(() => ({ c: 14 })),
-      d1First('SELECT COUNT(*) as c FROM workspaces', [], d1).catch(() => ({ c: 18 })),
-      d1First('SELECT COUNT(*) as c FROM tasks', [], d1).catch(() => ({ c: 71 })),
-      d1First('SELECT COUNT(*) as c FROM invoices', [], d1).catch(() => ({ c: 17 })),
+      d1First("SELECT COUNT(*) as c FROM sqlite_master WHERE type='table'", [], d1).catch(() => ({ c: 0 })),
+      d1First("SELECT COUNT(*) as c FROM sessions WHERE expires_at > datetime('now')", [], d1).catch(() => ({ c: 0 })),
+      d1First('SELECT COUNT(*) as c FROM users', [], d1).catch(() => ({ c: 0 })),
+      d1First('SELECT COUNT(*) as c FROM workspaces', [], d1).catch(() => ({ c: 0 })),
+      d1First('SELECT COUNT(*) as c FROM tasks', [], d1).catch(() => ({ c: 0 })),
+      d1First('SELECT COUNT(*) as c FROM invoices', [], d1).catch(() => ({ c: 0 })),
     ]);
 
     const totalRecords = Number(totalUsersRow?.c || 0) + Number(totalWorkspacesRow?.c || 0) + Number(totalTasksRow?.c || 0) + Number(totalInvoicesRow?.c || 0);
@@ -423,15 +423,15 @@ const app = new Hono()
           status: dbStatus,
           engine: 'Cloudflare D1 Distributed SQLite',
           latencyMs: latency,
-          tableCount: Number(tableCountRow?.c || 85),
+          tableCount: Number(tableCountRow?.c || 0),
           totalRecords,
         },
         runtime: {
           platform: 'Cloudflare Workers (V8 Edge Isolates)',
-          uptimeSeconds: Math.floor(process.uptime ? process.uptime() : 86400),
-          memoryUsage: process.memoryUsage ? process.memoryUsage() : { heapUsed: 42 * 1024 * 1024 },
+          uptimeSeconds: Math.floor(process.uptime ? process.uptime() : 0),
+          memoryUsage: process.memoryUsage ? process.memoryUsage() : null,
         },
-        activeSessions: Number(activeSessionsRow?.c || 1),
+        activeSessions: Number(activeSessionsRow?.c || 0),
         timestamp: new Date().toISOString(),
       },
     });
@@ -511,13 +511,9 @@ const app = new Hono()
         const isSuspended = (w.workspace_status || '').toUpperCase() === 'SUSPENDED' || (w.subscription_status || '').toUpperCase() === 'SUSPENDED';
         if (isSuspended) continue;
 
-        const plan = (w.plan || 'BUSINESS').toUpperCase();
-        const customPrice = Number(w.custom_rate || 0);
-        // Default monthly rate if no invoice exists yet
-        const defaultRate = primaryCurrency === 'INR'
-          ? (plan === 'ENTERPRISE' ? 19999 : plan === 'BUSINESS' ? 7999 : plan === 'PROFESSIONAL' ? 3999 : 1499)
-          : (plan === 'ENTERPRISE' ? 299 : plan === 'BUSINESS' ? 149 : plan === 'PROFESSIONAL' ? 79 : 29);
-        const monthlyRate = customPrice > 0 ? customPrice : defaultRate;
+        const plan = (w.plan || 'STARTER').toUpperCase();
+        // Look up actual billed rate from invoices or custom_rate recorded strictly in D1
+        const monthlyRate = Number(w.custom_rate || 0);
 
         tierCounts[plan] = (tierCounts[plan] || 0) + 1;
         tierRevenues[plan] = (tierRevenues[plan] || 0) + monthlyRate;
@@ -568,7 +564,7 @@ const app = new Hono()
         return {
           tier: capitalized,
           planKey,
-          price: `${primaryCurrency === 'INR' ? '₹' : '$'}${avg.toLocaleString()}/mo`,
+          price: avg > 0 ? `${primaryCurrency === 'INR' ? '₹' : '$'}${avg.toLocaleString()}/mo` : 'Unbilled / Trial',
           count,
           revenue,
         };
@@ -634,19 +630,19 @@ const app = new Hono()
         workspaceId: r.workspace_id,
         workspaceName: r.workspace_name,
         workspaceStatus: r.workspace_status || 'ACTIVE',
-        ownerName: r.owner_name || 'Organization Owner',
-        ownerEmail: r.owner_email || 'owner@company.com',
+        ownerName: r.owner_name || 'Unassigned',
+        ownerEmail: r.owner_email || 'Unassigned',
         subscriptionId: r.subscription_id || r.workspace_id,
-        plan: r.plan || 'BUSINESS',
+        plan: r.plan || 'STARTER',
         billingCycle: r.billing_cycle || 'MONTHLY',
-        userLimit: Number(r.user_limit || 100),
-        currency: r.currency || 'USD',
+        userLimit: Number(r.user_limit || 0),
+        currency: r.currency || 'INR',
         status: r.subscription_status || 'ACTIVE',
         currentPeriodEnd: r.current_period_end || new Date(Date.now() + 30 * 86400 * 1000).toISOString(),
-        activeMembers: Number(r.active_members || 1),
+        activeMembers: Number(r.active_members || 0),
         invoiceCount: Number(r.invoice_count || 0),
-        lastInvoiceAmount: Number(r.last_invoice_amount || 149),
-        lastInvoiceStatus: r.last_invoice_status || 'PAID',
+        lastInvoiceAmount: r.last_invoice_amount !== null && r.last_invoice_amount !== undefined ? Number(r.last_invoice_amount) : 0,
+        lastInvoiceStatus: r.last_invoice_status || 'UNBILLED',
       }));
 
       return ctx.json({ data: { subscriptions, total: subscriptions.length } });
@@ -769,16 +765,16 @@ const app = new Hono()
     const organizations = rows.map((r) => ({
       ...formatDoc(r),
       status: r.status || 'ACTIVE',
-      subscriptionPlan: r.subscription_plan || 'BUSINESS',
+      subscriptionPlan: r.subscription_plan || 'STARTER',
       billingCycle: r.billing_cycle || 'MONTHLY',
       subscriptionStatus: r.subscription_status || 'ACTIVE',
-      userLimit: Number(r.user_limit || 100),
-      userCount: Number(r.user_count || 1),
+      userLimit: Number(r.user_limit || 0),
+      userCount: Number(r.user_count || 0),
       projectCount: Number(r.project_count || 0),
       taskCount: Number(r.task_count || 0),
       owner: {
-        name: r.owner_name || 'Organization Owner',
-        email: r.owner_email || 'owner@company.com',
+        name: r.owner_name || 'Unassigned',
+        email: r.owner_email || 'Unassigned',
         avatarUrl: r.owner_avatar || null,
       },
     }));
@@ -855,8 +851,8 @@ const app = new Hono()
       name: r.name,
       email: r.email,
       avatarUrl: r.avatar_url,
-      jobTitle: r.job_title || 'Software Engineer',
-      department: r.department || 'Engineering',
+      jobTitle: r.job_title || '—',
+      department: r.department || '—',
       status: r.status || 'ACTIVE',
       isSuperAdmin: Boolean(r.is_super_admin === 1 || r.is_super_admin === true || r.email === 'superadmin@klanservicehub.com' || r.email === 'owner@company.com'),
       workspaceCount: Number(r.workspace_count || 0),
