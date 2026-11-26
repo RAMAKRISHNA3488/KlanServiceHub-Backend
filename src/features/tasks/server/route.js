@@ -42,6 +42,108 @@ export async function recordTicketStatusTransition({
   }
 }
 
+// Fetch complete status transitions and field change history for a task
+export async function getTaskHistoryData(taskId, d1) {
+  if (!taskId) return [];
+
+  const dbInstance = d1 || getD1Database();
+  let statusTransitions = [];
+  try {
+    if (dbInstance) {
+      const res = await dbInstance.prepare(`
+        SELECT tsh.id, tsh.ticket_id, tsh.previous_status, tsh.new_status, tsh.changed_at,
+               u.id as user_id, u.name as user_name, u.email as user_email, u.avatar_url as user_avatar
+        FROM ticket_status_history tsh
+        LEFT JOIN users u ON tsh.changed_by = u.id
+        WHERE tsh.ticket_id = ?
+        ORDER BY tsh.changed_at DESC
+      `).bind(taskId).all();
+      statusTransitions = res?.results || [];
+    } else {
+      statusTransitions = db.prepare(`
+        SELECT tsh.id, tsh.ticket_id, tsh.previous_status, tsh.new_status, tsh.changed_at,
+               u.id as user_id, u.name as user_name, u.email as user_email, u.avatar_url as user_avatar
+        FROM ticket_status_history tsh
+        LEFT JOIN users u ON tsh.changed_by = u.id
+        WHERE tsh.ticket_id = ?
+        ORDER BY tsh.changed_at DESC
+      `).all(taskId);
+    }
+  } catch (e) {
+    console.error('[GET_STATUS_TRANSITIONS_ERROR]:', e);
+  }
+
+  let fieldChanges = [];
+  try {
+    if (dbInstance) {
+      const res = await dbInstance.prepare(`
+        SELECT th.id, th.task_id, th.field_name, th.old_value, th.new_value, th.created_at as changed_at,
+               u.id as user_id, u.name as user_name, u.email as user_email, u.avatar_url as user_avatar
+        FROM task_history th
+        LEFT JOIN users u ON th.user_id = u.id
+        WHERE th.task_id = ? AND th.field_name != 'status'
+        ORDER BY th.created_at DESC
+      `).bind(taskId).all();
+      fieldChanges = res?.results || [];
+    } else {
+      fieldChanges = db.prepare(`
+        SELECT th.id, th.task_id, th.field_name, th.old_value, th.new_value, th.created_at as changed_at,
+               u.id as user_id, u.name as user_name, u.email as user_email, u.avatar_url as user_avatar
+        FROM task_history th
+        LEFT JOIN users u ON th.user_id = u.id
+        WHERE th.task_id = ? AND th.field_name != 'status'
+        ORDER BY th.created_at DESC
+      `).all(taskId);
+    }
+  } catch (e) {
+    console.error('[GET_FIELD_CHANGES_ERROR]:', e);
+  }
+
+  const combined = [];
+
+  for (const st of statusTransitions) {
+    const isCreation = !st.previous_status;
+    combined.push({
+      id: st.id,
+      type: isCreation ? 'CREATION' : 'STATUS_TRANSITION',
+      previousStatus: st.previous_status || null,
+      newStatus: st.new_status,
+      timestamp: st.changed_at,
+      actor: {
+        id: st.user_id,
+        name: st.user_name || 'Team Member',
+        email: st.user_email || '',
+        avatarUrl: st.user_avatar || null,
+      },
+      description: isCreation
+        ? `created this ticket as ${st.new_status}`
+        : `moved status from ${st.previous_status} to ${st.new_status}`,
+    });
+  }
+
+  for (const fc of fieldChanges) {
+    combined.push({
+      id: fc.id,
+      type: 'FIELD_UPDATE',
+      fieldName: fc.field_name,
+      oldValue: fc.old_value,
+      newValue: fc.new_value,
+      timestamp: fc.changed_at,
+      actor: {
+        id: fc.user_id,
+        name: fc.user_name || 'Team Member',
+        email: fc.user_email || '',
+        avatarUrl: fc.user_avatar || null,
+      },
+      description: `changed ${fc.field_name} from "${fc.old_value || 'None'}" to "${fc.new_value}"`,
+    });
+  }
+
+  combined.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+
+  return combined;
+}
+
 async function attachAssigneesToTasks(tasks, d1) {
   if (!tasks || tasks.length === 0) return tasks;
   const taskIds = tasks.map((t) => t.$id || t.id).filter(Boolean);
@@ -842,12 +944,14 @@ const app = new Hono()
                  p.id as p_id, p.name as p_name, p.key as p_key, p.image_url as p_image_url, p.workspace_id as p_workspace_id,
                  m.id as m_id, m.role as m_role, m.workspace_id as m_workspace_id, m.user_id as m_user_id,
                  u.name as u_name, u.email as u_email, u.avatar_url as u_avatar,
-                 ru.name as rep_name, ru.email as rep_email, ru.avatar_url as rep_avatar
+                 ru.name as rep_name, ru.email as rep_email, ru.avatar_url as rep_avatar,
+                 cu.id as creator_id, cu.name as creator_name, cu.email as creator_email, cu.avatar_url as creator_avatar
           FROM tasks t
           LEFT JOIN projects p ON t.project_id = p.id
           LEFT JOIN members m ON t.assignee_id = m.id
           LEFT JOIN users u ON m.user_id = u.id
           LEFT JOIN users ru ON t.reporter_id = ru.id
+          LEFT JOIN users cu ON t.created_by = cu.id
           WHERE t.id = ?
         `).bind(taskId).first();
       } catch (e) {}
@@ -859,12 +963,14 @@ const app = new Hono()
                p.id as p_id, p.name as p_name, p.key as p_key, p.image_url as p_image_url, p.workspace_id as p_workspace_id,
                m.id as m_id, m.role as m_role, m.workspace_id as m_workspace_id, m.user_id as m_user_id,
                u.name as u_name, u.email as u_email, u.avatar_url as u_avatar,
-               ru.name as rep_name, ru.email as rep_email, ru.avatar_url as rep_avatar
+               ru.name as rep_name, ru.email as rep_email, ru.avatar_url as rep_avatar,
+               cu.id as creator_id, cu.name as creator_name, cu.email as creator_email, cu.avatar_url as creator_avatar
         FROM tasks t
         LEFT JOIN projects p ON t.project_id = p.id
         LEFT JOIN members m ON t.assignee_id = m.id
         LEFT JOIN users u ON m.user_id = u.id
         LEFT JOIN users ru ON t.reporter_id = ru.id
+        LEFT JOIN users cu ON t.created_by = cu.id
         WHERE t.id = ?
       `).get(taskId);
     }
@@ -900,6 +1006,59 @@ const app = new Hono()
           avatarUrl: row.rep_avatar,
         }
       : null;
+
+    // Resolve ticket creator details
+    let creator = null;
+    if (row.creator_id || row.creator_name) {
+      creator = {
+        id: row.creator_id,
+        name: row.creator_name,
+        email: row.creator_email,
+        avatarUrl: row.creator_avatar,
+        createdAt: row.created_at,
+      };
+    } else {
+      // Historical fallback: look up initial ticket creation transition in ticket_status_history
+      let initRow = null;
+      try {
+        if (d1) {
+          initRow = await d1.prepare(`
+            SELECT tsh.changed_by, tsh.changed_at, u.id, u.name, u.email, u.avatar_url
+            FROM ticket_status_history tsh
+            LEFT JOIN users u ON tsh.changed_by = u.id
+            WHERE tsh.ticket_id = ? AND tsh.previous_status IS NULL
+            ORDER BY tsh.changed_at ASC LIMIT 1
+          `).bind(taskId).first();
+        } else {
+          initRow = db.prepare(`
+            SELECT tsh.changed_by, tsh.changed_at, u.id, u.name, u.email, u.avatar_url
+            FROM ticket_status_history tsh
+            LEFT JOIN users u ON tsh.changed_by = u.id
+            WHERE tsh.ticket_id = ? AND tsh.previous_status IS NULL
+            ORDER BY tsh.changed_at ASC LIMIT 1
+          `).get(taskId);
+        }
+      } catch (e) {}
+
+      if (initRow && (initRow.name || initRow.id)) {
+        creator = {
+          id: initRow.id || initRow.changed_by,
+          name: initRow.name || 'Team Member',
+          email: initRow.email || '',
+          avatarUrl: initRow.avatar_url || null,
+          createdAt: initRow.changed_at || row.created_at,
+        };
+      } else if (task.reporter) {
+        creator = {
+          id: task.reporter.id || task.reporter.$id,
+          name: task.reporter.name,
+          email: task.reporter.email,
+          avatarUrl: task.reporter.avatarUrl,
+          createdAt: row.created_at,
+        };
+      }
+    }
+    task.creator = creator;
     task.labels = JSON.parse(row.labels || '[]');
     task.storyPoints = row.story_points || 1;
     task.issueType = row.issue_type || 'Task';
@@ -993,7 +1152,16 @@ const app = new Hono()
     await attachLikesAndFavoritesToTask(task, currentUser?.$id, d1);
     await attachDescriptionImagesExpiration(task, d1);
 
+    // Attach complete chronological status transition and modification history
+    task.history = await getTaskHistoryData(taskId, d1);
+
     return ctx.json({ data: task });
+  })
+  .get('/:taskId/history', sessionMiddleware, async (ctx) => {
+    const { taskId } = ctx.req.param();
+    const d1 = ctx.env?.DB || getD1Database();
+    const history = await getTaskHistoryData(taskId, d1);
+    return ctx.json({ data: history });
   })
   .get('/:taskId/links', sessionMiddleware, async (ctx) => {
     const { taskId } = ctx.req.param();
@@ -1134,10 +1302,10 @@ const app = new Hono()
         await d1.prepare(`
           INSERT INTO tasks (
             id, key, name, description, description_images, status, priority, issue_type, workspace_id, project_id,
-            assignee_id, reporter_id, reporter_ids, sprint_id, story_points, labels, epic_id, parent_task_id,
+            assignee_id, reporter_id, reporter_ids, created_by, sprint_id, story_points, labels, epic_id, parent_task_id,
             original_estimate_hours, due_date, position
           )
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `).bind(
           taskId,
           key,
@@ -1152,6 +1320,7 @@ const app = new Hono()
           primaryAssigneeId,
           effectiveReporterId,
           reporterIdsJson,
+          user.$id,
           sprintId || null,
           Number(storyPoints) || 1,
           JSON.stringify(labels || []),
@@ -1175,10 +1344,10 @@ const app = new Hono()
     db.prepare(`
       INSERT INTO tasks (
         id, key, name, description, description_images, status, priority, issue_type, workspace_id, project_id,
-        assignee_id, reporter_id, reporter_ids, sprint_id, story_points, labels, epic_id, parent_task_id,
+        assignee_id, reporter_id, reporter_ids, created_by, sprint_id, story_points, labels, epic_id, parent_task_id,
         original_estimate_hours, due_date, position
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       taskId,
       key,
@@ -1193,6 +1362,7 @@ const app = new Hono()
       primaryAssigneeId,
       effectiveReporterId,
       reporterIdsJson,
+      user.$id,
       sprintId || null,
       Number(storyPoints) || 1,
       JSON.stringify(labels || []),

@@ -2289,3 +2289,57 @@ Built a centralized **Assigned Roles** management interface under the Super Admi
 - [x] Workspace user directories and RBAC permission matrices inherit and support platform roles.
 - [x] Both backend and frontend workers are deployed and verified live in production.
 
+
+### 🔹 Sub-task 35: Ticket Creator Identity & Chronological Status Transition Audit History
+- **Ticket ID**: `KLAN-35`
+- **Parent Ticket**: `Enhancing the Klanservichub V1`
+- **Issue Type**: `Sub-task`
+- **Summary**: `Subtask 35: Display ticket creator identity with avatar and timestamp, and render comprehensive chronological status transition timeline (Backlog, Todo, In Progress, Done) with actors and field updates in ticket details modal and standalone page`
+- **Priority**: `P1 - High`
+- **Story Points**: `8`
+- **Component**: `Tasks Suite, Ticket Details Modal, Standalone Issue Page, Task History Engine, Cloudflare D1 Database`
+- **Labels**: `ticket-details`, `status-history`, `creator-tracking`, `audit-trail`, `jira-parity`, `cloudflare-d1`
+
+#### Description
+Implemented comprehensive ticket creator identity attribution and a high-fidelity chronological status transition history timeline in both the interactive ticket details modal (`KlanserviceHubIssueDetailModal`) and the full-page issue detail view (`TaskIdClient`). Users can now clearly see who initially created the ticket (with initials/avatar, full name, email tooltip, and relative/absolute timestamp) under "Dates & Timestamps" in the issue metadata sidebar. Additionally, a dedicated "History" activity tab visualizes all workflow status movements (e.g., from `BACKLOG` to `TODO`, `TODO` to `IN_PROGRESS`, `IN_PROGRESS` to `DONE`) with actors, status pills, and directional arrows, alongside historical field changes and filter tabs (`All`, `Status Moves`, `Field Updates`).
+
+#### Scope of Work
+- **Cloudflare D1 Database Schema Migration**:
+  - Migrated `tasks` table on remote Cloudflare D1 `klanservicehub_db` (`e4065dbf-b85b-4d17-8334-f07f19109c70`) with `created_by TEXT` column and index `idx_tasks_created_by`.
+  - Updated master schema files (`backend/schema.sql` and `backend/cloudflare-d1-schema.sql`).
+- **Backend Task History Engine & Endpoints (`backend/src/features/tasks/server/route.js`)**:
+  - Implemented `getTaskHistoryData(taskId, d1)` helper: Normalizes events from `ticket_status_history` and `task_history` joined with `users` table into a unified chronological descending event stream (`CREATION`, `STATUS_TRANSITION`, `FIELD_UPDATE`).
+  - Enhanced `GET /api/tasks/:taskId`:
+    - Added `LEFT JOIN users cu ON t.created_by = cu.id`.
+    - Added resilient fallback creator resolution from `ticket_status_history WHERE ticket_id = ? AND previous_status IS NULL LIMIT 1`, falling back to `task.reporter`.
+    - Attaches `task.creator = { id, name, email, avatarUrl, createdAt }`.
+    - Attaches complete history array to `task.history`.
+  - Added dedicated endpoint `GET /api/tasks/:taskId/history`.
+  - Updated `POST /api/tasks`: Writes `created_by: user.$id` during initial ticket insertion in both Cloudflare D1 and SQLite.
+- **Frontend Ticket Details Modal (`KlanserviceHubIssueDetailModal.jsx`)**:
+  - Added "Created By" card under "Dates & Timestamps" in the right sidebar properties panel displaying creator avatar/initials, full name, and email tooltip.
+  - Added `History ({taskHistory.length})` tab button alongside Comments, Subtasks, Worklog, and Linked Tickets.
+  - Implemented interactive vertical timeline view with actor badges, status pills (`[FROM] -> [TO]`), field update diffs, and category filter buttons (`All`, `Status Moves`, `Field Updates`).
+  - Synchronized state reset on ticket change to prevent cross-ticket data bleed.
+- **Frontend Standalone Issue Page (`TaskIdClient.jsx`)**:
+  - Parity implementation of "Created By" card in the right sidebar metadata panel.
+  - Parity implementation of `History ({taskHistory.length})` activity tab and vertical timeline with filter controls.
+- **Dynamic Role Reflection Safeguards (`client.jsx` & `members-list.jsx`)**:
+  - Synchronized `inviteRole` state with dynamically loaded `activeRoles` from Super Admin platform roles.
+  - Updated fallback options to include all platform roles (`Developer`, `Product Manager`, `Company Admin`, `QA Engineer`, `DevOps & SRE`, `Viewer`).
+- **Production Build & Cloudflare Workers Deployment**:
+  - Verified backend syntax (`node -c backend/src/index.js` passed).
+  - Rolldown/Vite production compilation (`npm run build` passed with 0 errors).
+  - Deployed backend (`55d2125b-10c8-4b69-a51c-15a0497642c0`) to Cloudflare Workers.
+  - Deployed frontend (`59210e36-beee-4294-bc48-5221caa96bfa`) to Cloudflare Workers.
+
+#### Acceptance Criteria
+- [x] Ticket details modal displays "Created By" row with creator initials/avatar, name, and tooltip.
+- [x] Standalone task details page displays "Created By" row under "Dates & Timestamps".
+- [x] Activity tabs include "History" with a real-time event counter.
+- [x] History tab displays chronological audit cards for creation, status transitions (`[FROM] -> [TO]`), and field changes.
+- [x] Actor identity and exact timestamps are attributed to each status transition.
+- [x] Sub-filters allow toggling between "All", "Status Moves", and "Field Updates".
+- [x] Both backend and frontend workers are deployed and verified live in production.
+
+

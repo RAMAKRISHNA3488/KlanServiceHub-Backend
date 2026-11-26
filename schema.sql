@@ -313,6 +313,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   assignee_id TEXT REFERENCES members(id) ON DELETE SET NULL,
   reporter_id TEXT REFERENCES users(id) ON DELETE SET NULL,
   reporter_ids TEXT DEFAULT '[]',
+  created_by TEXT REFERENCES users(id) ON DELETE SET NULL,
   sprint_id TEXT REFERENCES sprints(id) ON DELETE SET NULL,
   issue_type TEXT NOT NULL DEFAULT 'Task',
   key TEXT,
@@ -967,6 +968,7 @@ CREATE INDEX IF NOT EXISTS idx_workspaces_user_id ON workspaces(user_id);
 CREATE INDEX IF NOT EXISTS idx_members_workspace_id ON members(workspace_id);
 CREATE INDEX IF NOT EXISTS idx_members_user_id ON members(user_id);
 CREATE INDEX IF NOT EXISTS idx_projects_workspace_id ON projects(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_tasks_created_by ON tasks(created_by);
 CREATE INDEX IF NOT EXISTS idx_tasks_workspace_id ON tasks(workspace_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_project_id ON tasks(project_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_assignee_id ON tasks(assignee_id);
