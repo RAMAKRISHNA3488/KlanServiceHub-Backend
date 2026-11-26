@@ -455,6 +455,67 @@ export async function attachDescriptionImagesExpiration(task, d1) {
   return task;
 }
 
+export async function processTaskHistoryExpiration(task, history, d1) {
+  if (!task) return { task, history };
+  const isDone = task.status === 'DONE';
+  const completedAt = task.completed_at || task.completedAt || (isDone ? (task.updated_at || task.updatedAt) : null);
+  const completedTime = isDone && completedAt ? new Date(completedAt).getTime() : null;
+  // 6 months retention window = 180 days in milliseconds
+  const SIX_MONTHS_MS = 180 * 24 * 60 * 60 * 1000;
+  const isExpired = isDone && completedTime && (Date.now() - completedTime > SIX_MONTHS_MS);
+
+  const taskId = task.id || task.$id;
+
+  // If expired, prune intermediate transitions from DB while preserving the initial CREATION event for creator attribution
+  if (isExpired && taskId) {
+    if (d1) {
+      try {
+        await d1.prepare(`
+          DELETE FROM ticket_status_history 
+          WHERE ticket_id = ? AND previous_status IS NOT NULL
+        `).bind(taskId).run();
+        await d1.prepare(`
+          DELETE FROM task_history 
+          WHERE task_id = ? AND field_name = 'status'
+        `).bind(taskId).run();
+      } catch (e) {
+        console.error('[PRUNE_EXPIRED_STATUS_HISTORY_D1_ERROR]:', e);
+      }
+    }
+    try {
+      db.prepare(`
+        DELETE FROM ticket_status_history 
+        WHERE ticket_id = ? AND previous_status IS NOT NULL
+      `).run(taskId);
+      db.prepare(`
+        DELETE FROM task_history 
+        WHERE task_id = ? AND field_name = 'status'
+      `).run(taskId);
+    } catch (e) {
+      console.error('[PRUNE_EXPIRED_STATUS_HISTORY_SQLITE_ERROR]:', e);
+    }
+
+    // Filter out intermediate transitions from current memory stream, keeping CREATION and non-status field updates
+    history = (history || []).filter((h) => h.type === 'CREATION' || (h.type === 'FIELD_UPDATE' && h.fieldName !== 'status'));
+  }
+
+  const expiresAt = completedTime ? new Date(completedTime + SIX_MONTHS_MS).toISOString() : null;
+  const daysRemaining = completedTime ? Math.max(0, Math.ceil(((completedTime + SIX_MONTHS_MS) - Date.now()) / (1000 * 60 * 60 * 24))) : null;
+  const monthsRemaining = daysRemaining !== null ? Math.ceil(daysRemaining / 30) : null;
+
+  task.historyExpired = Boolean(isExpired);
+  task.historyExpiresAt = expiresAt;
+  task.historyDaysRemaining = daysRemaining;
+  task.historyMonthsRemaining = monthsRemaining;
+  task.historyRetentionMessage = isDone
+    ? (isExpired
+        ? 'Stage history expired (6-month retention policy for completed tickets)'
+        : `Stage history expires in ${monthsRemaining} mo (${daysRemaining}d)`)
+    : 'Active (expires 6 months after Done)';
+
+  return { task, history };
+}
+
 async function attachLikesAndFavoritesToTasks(tasks, userId, d1) {
   if (!tasks || tasks.length === 0) return tasks;
   const taskIds = tasks.map((t) => t.$id || t.id).filter(Boolean);
@@ -1152,8 +1213,10 @@ const app = new Hono()
     await attachLikesAndFavoritesToTask(task, currentUser?.$id, d1);
     await attachDescriptionImagesExpiration(task, d1);
 
-    // Attach complete chronological status transition and modification history
-    task.history = await getTaskHistoryData(taskId, d1);
+    // Attach complete chronological status transition and modification history with 6-month retention enforcement
+    const rawHistory = await getTaskHistoryData(taskId, d1);
+    const { history: finalHistory } = await processTaskHistoryExpiration(task, rawHistory, d1);
+    task.history = finalHistory;
     task.stageHistory = (task.history || []).filter((h) => h.type === 'STATUS_TRANSITION' || h.type === 'CREATION');
     task.lastStageMove = (task.stageHistory || []).find((h) => h.type === 'STATUS_TRANSITION') || null;
 
@@ -1162,8 +1225,18 @@ const app = new Hono()
   .get('/:taskId/history', sessionMiddleware, async (ctx) => {
     const { taskId } = ctx.req.param();
     const d1 = ctx.env?.DB || getD1Database();
-    const history = await getTaskHistoryData(taskId, d1);
-    return ctx.json({ data: history });
+    let task = null;
+    if (d1) {
+      task = await d1.prepare('SELECT id, status, completed_at, updated_at FROM tasks WHERE id = ?').bind(taskId).first();
+    } else {
+      task = db.prepare('SELECT id, status, completed_at, updated_at FROM tasks WHERE id = ?').get(taskId);
+    }
+    let rawHistory = await getTaskHistoryData(taskId, d1);
+    if (task) {
+      const { history } = await processTaskHistoryExpiration(task, rawHistory, d1);
+      rawHistory = history;
+    }
+    return ctx.json({ data: rawHistory });
   })
   .get('/:taskId/links', sessionMiddleware, async (ctx) => {
     const { taskId } = ctx.req.param();
@@ -2085,17 +2158,6 @@ const app = new Hono()
     });
 
     return ctx.json({ success: true, data: formatDoc(task) });
-  })
-  .get('/:taskId/history', sessionMiddleware, async (ctx) => {
-    const { taskId } = ctx.req.param();
-    const history = db.prepare(`
-      SELECT h.*, u.name as changed_by_name, u.email as changed_by_email, u.avatar_url as changed_by_avatar
-      FROM task_history h
-      JOIN users u ON h.user_id = u.id
-      WHERE h.task_id = ?
-      ORDER BY h.created_at DESC
-    `).all(taskId);
-    return ctx.json({ data: history.map(formatDoc) });
   })
   .post('/:taskId/transitions', sessionMiddleware, async (ctx) => {
     const user = ctx.get('user');

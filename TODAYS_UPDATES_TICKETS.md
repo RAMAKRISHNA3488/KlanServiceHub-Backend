@@ -2385,3 +2385,47 @@ Embedded complete stage movement attribution and transitions directly into the *
 
 
 
+
+
+### 🔹 Sub-task 37: Workflow Stage Journey Stepper Removal & 6-Month Status History Expiration Lifecycle
+- **Ticket ID**: `KLAN-37`
+- **Parent Ticket**: `Enhancing the Klanservichub V1`
+- **Issue Type**: `Sub-task`
+- **Summary**: `Subtask 37: Streamline ticket details layout by removing the main-column workflow stage stepper while enforcing automated 6-month status history retention and pruning for completed tickets`
+- **Priority**: `P1 - High`
+- **Story Points**: `5`
+- **Component**: `Tasks Suite, Ticket Details Modal, Standalone Issue Page, Task History Engine, Cloudflare D1 Database`
+- **Labels**: `ticket-details`, `stage-history`, `history-expiration`, `retention-policy`, `layout-cleanup`, `cloudflare-d1`
+
+#### Description
+Cleaned up the main description column across both `KlanserviceHubIssueDetailModal` and `TaskIdClient` by removing the bulky horizontal `Workflow Stage Journey` stepper bar as requested ("remove there only"), keeping the description area focused and compact. Preserved all stage movement telemetry and attribution within the right Details sidebar ("Current Stage & Stage Moved By" card, "Stage Movement History" timeline) and the comprehensive History tab. Implemented an automated 6-month (180-day) data retention and pruning engine for tickets in the `DONE` workflow stage: once a ticket has been completed for 6 months, intermediate status transitions are automatically pruned from D1 and SQLite while permanently safeguarding the ticket's creation record and original author identity.
+
+#### Scope of Work
+- **Main Column Stepper Removal (`KlanserviceHubIssueDetailModal.jsx`, `TaskIdClient.jsx`)**:
+  - Completely removed the horizontal `Workflow Stage Journey` stepper container from above the description in both the interactive modal and the standalone full-page view.
+  - Retained the high-density "Current Stage & Stage Moved By" card and "Stage Movement History" audit trail in the right Details column.
+- **Backend 6-Month History Expiration Engine (`backend/src/features/tasks/server/route.js`)**:
+  - Implemented `processTaskHistoryExpiration(task, history, d1)` evaluating `task.status === 'DONE'` and `completed_at` (with fallback to `updated_at`).
+  - Enforced 6-month threshold (`180 * 24 * 60 * 60 * 1000` ms).
+  - Automatically executes atomic pruning on D1 and SQLite:
+    - `DELETE FROM ticket_status_history WHERE ticket_id = ? AND previous_status IS NOT NULL`
+    - `DELETE FROM task_history WHERE task_id = ? AND field_name = 'status'`
+  - Preserves initial ticket creation record and creator attribution (`WHERE previous_status IS NULL`).
+  - Computes `historyExpired`, `historyExpiresAt`, `historyDaysRemaining`, `historyMonthsRemaining`, and user-friendly `historyRetentionMessage`.
+  - Integrated into `GET /api/tasks/:taskId` and `GET /api/tasks/:taskId/history`.
+  - Eliminated stale legacy duplicate `GET /:taskId/history` route in Hono router.
+- **Frontend Retention Badges & Notices**:
+  - Added subtle **History Retention** badge in the "Current Stage" sidebar card for completed tickets displaying remaining retention or expiration notice.
+  - Added **6-Month Retention Policy Applied** compliance alert in the Details sidebar's "Stage Movement History" section when history has expired.
+  - Added enterprise audit banner in the **History Tab** indicating active retention status or pruning notice.
+- **Build & Cloudflare Workers Deployment**:
+  - Backend deployed to Cloudflare Workers (`50984928-b0e9-4f8d-965e-c5898c6b80ad`).
+  - Production frontend bundle compiled with Vite in 3.80s and deployed to Cloudflare Workers (`5372a490-2f07-4847-aef0-5a03b9e17c0a`).
+
+#### Acceptance Criteria
+- [x] Horizontal stage journey stepper removed from above description in both modal and full task page ("remove there only").
+- [x] Right sidebar preserves "Current Stage & Stage Moved By" attribution card and "Stage Movement History" timeline.
+- [x] 6-month retention policy enforced on tickets in `DONE` status (180 days from completion).
+- [x] Intermediate status transitions automatically pruned while initial creation event and author attribution are permanently preserved.
+- [x] Retention status and remaining countdown/expiration notices rendered clearly in Details sidebar and History tab.
+- [x] Production builds pass without errors and are deployed live to Cloudflare Workers.
