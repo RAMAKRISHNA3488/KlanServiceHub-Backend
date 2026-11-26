@@ -126,8 +126,27 @@ const app = new Hono()
       `, [memberId, workspaceId, userId], ctx.env?.DB);
     }
 
-    // Find or assign role
-    const role = await d1First('SELECT id FROM roles WHERE workspace_id = ? AND name = ?', [workspaceId, roleName], ctx.env?.DB);
+    // Find or assign role (supporting both workspace roles and global platform roles)
+    let role = await d1First('SELECT id FROM roles WHERE workspace_id = ? AND name = ?', [workspaceId, roleName], ctx.env?.DB);
+    if (!role) {
+      const platRole = await d1First('SELECT * FROM platform_roles WHERE name = ? OR id = ?', [roleName, roleName], ctx.env?.DB);
+      if (platRole) {
+        const mirrorId = randomUUID();
+        await d1Run(`
+          INSERT INTO roles (id, workspace_id, name, description, is_system, color)
+          VALUES (?, ?, ?, ?, ?, ?)
+        `, [mirrorId, workspaceId, platRole.name, platRole.description || '', platRole.is_system || 0, platRole.color || '#2563eb'], ctx.env?.DB);
+
+        let perms = [];
+        try {
+          perms = JSON.parse(platRole.permissions_json || '[]');
+        } catch (_) {}
+        for (const code of perms) {
+          await d1Run(`INSERT OR IGNORE INTO role_permissions (role_id, permission_code) VALUES (?, ?)`, [mirrorId, code], ctx.env?.DB);
+        }
+        role = { id: mirrorId };
+      }
+    }
     if (role) {
       await d1Run(`
         INSERT OR REPLACE INTO user_roles (id, workspace_id, user_id, role_id)

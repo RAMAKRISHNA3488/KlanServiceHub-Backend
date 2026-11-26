@@ -1268,7 +1268,248 @@ const app = new Hono()
         }, 500);
       }
     },
-  );
+  )
+
+  // =========================================================================
+  // 7. PLATFORM ASSIGNED ROLES GOVERNANCE (GLOBAL MULTI-TENANT RBAC)
+  // =========================================================================
+
+  // List all platform roles (active application-wide)
+  .get('/roles', sessionMiddleware, superAdminGuard, async (ctx) => {
+    const d1 = ctx.env?.DB || getD1Database();
+
+    // Ensure platform_roles table exists
+    try {
+      await d1Run(`
+        CREATE TABLE IF NOT EXISTS platform_roles (
+          id TEXT PRIMARY KEY,
+          name TEXT NOT NULL UNIQUE,
+          description TEXT DEFAULT '',
+          color TEXT DEFAULT '#2563eb',
+          is_system INTEGER DEFAULT 0,
+          permissions_json TEXT DEFAULT '[]',
+          display_order INTEGER DEFAULT 0,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+      `, [], d1);
+    } catch (_) {}
+
+    const rows = await d1All('SELECT * FROM platform_roles ORDER BY display_order ASC, created_at ASC', [], d1);
+
+    const roles = rows.map((r) => {
+      let permissions = [];
+      try {
+        permissions = r.permissions_json ? JSON.parse(r.permissions_json) : [];
+      } catch {
+        permissions = [];
+      }
+      return {
+        ...formatDoc(r),
+        permissions,
+        isSystem: r.is_system === 1 || r.is_system === true,
+        displayOrder: r.display_order ?? 0,
+      };
+    });
+
+    const systemCount = roles.filter((r) => r.isSystem).length;
+    const customCount = roles.length - systemCount;
+
+    return ctx.json({
+      data: {
+        roles,
+        total: roles.length,
+        systemCount,
+        customCount,
+      },
+    });
+  })
+
+  // Create new platform role
+  .post(
+    '/roles',
+    sessionMiddleware,
+    superAdminGuard,
+    zValidator(
+      'json',
+      z.object({
+        name: z.string().min(2).max(50),
+        description: z.string().max(255).optional().default(''),
+        color: z.string().max(20).optional().default('#2563eb'),
+        permissions: z.array(z.string()).optional().default([]),
+        displayOrder: z.number().int().optional().default(10),
+      }),
+    ),
+    async (ctx) => {
+      const user = ctx.get('user');
+      const d1 = ctx.env?.DB || getD1Database();
+      const { name, description, color, permissions, displayOrder } = ctx.req.valid('json');
+
+      const trimmedName = name.trim();
+
+      // Check for conflict
+      const existing = await d1First(
+        'SELECT id FROM platform_roles WHERE LOWER(name) = LOWER(?)',
+        [trimmedName],
+        d1,
+      );
+      if (existing) {
+        return ctx.json({ error: `A role with the name "${trimmedName}" already exists.` }, 400);
+      }
+
+      const id = `role-plat-${randomUUID().substring(0, 8)}`;
+      await d1Run(
+        `INSERT INTO platform_roles (id, name, description, color, is_system, permissions_json, display_order)
+         VALUES (?, ?, ?, ?, 0, ?, ?)`,
+        [id, trimmedName, description.trim(), color, JSON.stringify(permissions), displayOrder],
+        d1,
+      );
+
+      await logPlatformAudit(
+        {
+          userId: user.id || user.$id,
+          action: 'PLATFORM_ROLE_CREATED',
+          targetType: 'PLATFORM_ROLE',
+          targetId: id,
+          details: { name: trimmedName, color, permissionsCount: permissions.length },
+        },
+        d1,
+      );
+
+      return ctx.json(
+        {
+          success: true,
+          data: {
+            id,
+            name: trimmedName,
+            description: description.trim(),
+            color,
+            isSystem: false,
+            permissions,
+            displayOrder,
+          },
+        },
+        201,
+      );
+    },
+  )
+
+  // Customize/Edit existing platform role
+  .patch(
+    '/roles/:id',
+    sessionMiddleware,
+    superAdminGuard,
+    zValidator(
+      'json',
+      z.object({
+        name: z.string().min(2).max(50).optional(),
+        description: z.string().max(255).optional(),
+        color: z.string().max(20).optional(),
+        permissions: z.array(z.string()).optional(),
+        displayOrder: z.number().int().optional(),
+      }),
+    ),
+    async (ctx) => {
+      const user = ctx.get('user');
+      const d1 = ctx.env?.DB || getD1Database();
+      const { id } = ctx.req.param();
+      const { name, description, color, permissions, displayOrder } = ctx.req.valid('json');
+
+      const existing = await d1First('SELECT * FROM platform_roles WHERE id = ?', [id], d1);
+      if (!existing) {
+        return ctx.json({ error: 'Platform role not found.' }, 404);
+      }
+
+      let nextName = existing.name;
+      if (name !== undefined) {
+        const trimmed = name.trim();
+        // If changing name, ensure uniqueness
+        if (trimmed.toLowerCase() !== existing.name.toLowerCase()) {
+          const duplicate = await d1First(
+            'SELECT id FROM platform_roles WHERE LOWER(name) = LOWER(?) AND id != ?',
+            [trimmed, id],
+            d1,
+          );
+          if (duplicate) {
+            return ctx.json({ error: `A role with the name "${trimmed}" already exists.` }, 400);
+          }
+        }
+        nextName = trimmed;
+      }
+
+      const nextDesc = description !== undefined ? description.trim() : existing.description;
+      const nextColor = color !== undefined ? color : existing.color;
+      const nextPerms = permissions !== undefined ? JSON.stringify(permissions) : existing.permissions_json;
+      const nextOrder = displayOrder !== undefined ? displayOrder : (existing.display_order ?? 0);
+
+      await d1Run(
+        `UPDATE platform_roles
+         SET name = ?, description = ?, color = ?, permissions_json = ?, display_order = ?, updated_at = CURRENT_TIMESTAMP
+         WHERE id = ?`,
+        [nextName, nextDesc, nextColor, nextPerms, nextOrder, id],
+        d1,
+      );
+
+      await logPlatformAudit(
+        {
+          userId: user.id || user.$id,
+          action: 'PLATFORM_ROLE_UPDATED',
+          targetType: 'PLATFORM_ROLE',
+          targetId: id,
+          details: { name: nextName, color: nextColor },
+        },
+        d1,
+      );
+
+      return ctx.json({
+        success: true,
+        message: `Platform role "${nextName}" customized successfully.`,
+        data: {
+          id,
+          name: nextName,
+          description: nextDesc,
+          color: nextColor,
+          isSystem: existing.is_system === 1 || existing.is_system === true,
+          permissions: permissions !== undefined ? permissions : JSON.parse(existing.permissions_json || '[]'),
+          displayOrder: nextOrder,
+        },
+      });
+    },
+  )
+
+  // Delete custom platform role (System default roles are protected)
+  .delete('/roles/:id', sessionMiddleware, superAdminGuard, async (ctx) => {
+    const user = ctx.get('user');
+    const d1 = ctx.env?.DB || getD1Database();
+    const { id } = ctx.req.param();
+
+    const existing = await d1First('SELECT * FROM platform_roles WHERE id = ?', [id], d1);
+    if (!existing) {
+      return ctx.json({ error: 'Platform role not found.' }, 404);
+    }
+
+    if (existing.is_system === 1 || existing.is_system === true) {
+      return ctx.json({ error: 'System default roles are core to the platform and cannot be deleted.' }, 400);
+    }
+
+    await d1Run('DELETE FROM platform_roles WHERE id = ?', [id], d1);
+
+    await logPlatformAudit(
+      {
+        userId: user.id || user.$id,
+        action: 'PLATFORM_ROLE_DELETED',
+        targetType: 'PLATFORM_ROLE',
+        targetId: id,
+        details: { name: existing.name },
+      },
+      d1,
+    );
+
+    return ctx.json({
+      success: true,
+      message: `Platform role "${existing.name}" removed successfully.`,
+    });
+  });
 
 export default app;
 

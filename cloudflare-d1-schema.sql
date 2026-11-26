@@ -945,3 +945,20 @@ CREATE INDEX IF NOT EXISTS idx_activities_ws ON activities(workspace_id);
 CREATE INDEX IF NOT EXISTS idx_user_favs ON user_favorites(user_id, workspace_id);
 CREATE INDEX IF NOT EXISTS idx_deployments_proj ON deployments(project_id, environment);
 CREATE INDEX IF NOT EXISTS idx_service_reqs_ws ON service_requests(workspace_id, status);
+
+-- =======================================================================
+-- 41. GLOBAL PLATFORM ROLES (SUPER ADMIN CONTROLLED)
+-- =======================================================================
+CREATE TABLE IF NOT EXISTS platform_roles (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL UNIQUE,
+  description TEXT DEFAULT '',
+  color TEXT DEFAULT '#2563eb',
+  is_system INTEGER DEFAULT 0,
+  permissions_json TEXT DEFAULT '[]',
+  display_order INTEGER DEFAULT 0,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_platform_roles_order ON platform_roles(display_order, name);
+

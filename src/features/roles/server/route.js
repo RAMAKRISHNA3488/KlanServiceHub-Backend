@@ -51,6 +51,20 @@ async function ensureRolesTables(d1, workspaceId = null) {
       )
     `, [], d1);
 
+    await d1Run(`
+      CREATE TABLE IF NOT EXISTS platform_roles (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL UNIQUE,
+        description TEXT DEFAULT '',
+        color TEXT DEFAULT '#2563eb',
+        is_system INTEGER DEFAULT 0,
+        permissions_json TEXT DEFAULT '[]',
+        display_order INTEGER DEFAULT 0,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `, [], d1);
+
     // Seed default enterprise roles if workspaceId given and has 0 roles
     if (workspaceId) {
       const existing = await d1First(`SELECT COUNT(*) as c FROM roles WHERE workspace_id = ?`, [workspaceId], d1);
@@ -180,6 +194,15 @@ const app = new Hono()
       ORDER BY is_system DESC, created_at ASC
     `, [workspaceId], d1);
 
+    // Merge global platform roles managed by Super Admin
+    let platformRoles = [];
+    try {
+      platformRoles = await d1All('SELECT * FROM platform_roles ORDER BY display_order ASC, created_at ASC', [], d1);
+    } catch (_) {}
+
+    const existingNames = new Set(roles.map(r => r.name.toLowerCase()));
+    const uninstantiated = platformRoles.filter(pr => !existingNames.has(pr.name.toLowerCase()));
+
     const rolesWithPerms = await Promise.all(
       roles.map(async (role) => {
         const perms = await d1All(`
@@ -197,6 +220,25 @@ const app = new Hono()
         };
       })
     );
+
+    // Append platform roles seamlessly
+    for (const pr of uninstantiated) {
+      let permissions = [];
+      try {
+        permissions = pr.permissions_json ? JSON.parse(pr.permissions_json) : [];
+      } catch (_) {}
+      rolesWithPerms.push({
+        id: pr.id,
+        workspaceId,
+        name: pr.name,
+        description: pr.description || '',
+        color: pr.color || '#2563eb',
+        is_system: pr.is_system ?? 0,
+        permissions,
+        userCount: 0,
+        isPlatformRole: true,
+      });
+    }
 
     // Group permissions by category
     const categoriesMap = {};
@@ -304,7 +346,7 @@ const app = new Hono()
   .post('/:workspaceId/assign-user', sessionMiddleware, async (ctx) => {
     const actor = ctx.get('user');
     const { workspaceId } = ctx.req.param();
-    const { userId, roleId } = await ctx.req.json();
+    let { userId, roleId } = await ctx.req.json();
     const d1 = ctx.env?.DB || getD1Database();
     await ensureRolesTables(d1, workspaceId);
 
@@ -312,7 +354,30 @@ const app = new Hono()
       return ctx.json({ error: 'userId and roleId are required.' }, 400);
     }
 
-    const role = await d1First(`SELECT name FROM roles WHERE id = ? AND workspace_id = ?`, [roleId, workspaceId], d1);
+    let role = await d1First(`SELECT name FROM roles WHERE id = ? AND workspace_id = ?`, [roleId, workspaceId], d1);
+    if (!role) {
+      // Check if role matches a global platform role
+      const platRole = await d1First(`SELECT * FROM platform_roles WHERE id = ? OR name = ?`, [roleId, roleId], d1);
+      if (platRole) {
+        // Instantiate mirror role in this workspace
+        const mirrorId = randomUUID();
+        await d1Run(`
+          INSERT INTO roles (id, workspace_id, name, description, is_system, color)
+          VALUES (?, ?, ?, ?, ?, ?)
+        `, [mirrorId, workspaceId, platRole.name, platRole.description || '', platRole.is_system || 0, platRole.color || '#2563eb'], d1);
+
+        let perms = [];
+        try {
+          perms = JSON.parse(platRole.permissions_json || '[]');
+        } catch (_) {}
+        for (const code of perms) {
+          await d1Run(`INSERT OR IGNORE INTO role_permissions (role_id, permission_code) VALUES (?, ?)`, [mirrorId, code], d1);
+        }
+
+        role = { id: mirrorId, name: platRole.name };
+        roleId = mirrorId;
+      }
+    }
     if (!role) return ctx.json({ error: 'Target role not found.' }, 404);
 
     // Remove existing role assignments in this workspace for this user
@@ -339,6 +404,15 @@ const app = new Hono()
       ORDER BY is_system DESC, created_at ASC
     `, [workspaceId], d1);
 
+    // Merge global platform roles managed by Super Admin
+    let platformRoles = [];
+    try {
+      platformRoles = await d1All('SELECT * FROM platform_roles ORDER BY display_order ASC, created_at ASC', [], d1);
+    } catch (_) {}
+
+    const existingNames = new Set(roles.map(r => r.name.toLowerCase()));
+    const uninstantiated = platformRoles.filter(pr => !existingNames.has(pr.name.toLowerCase()));
+
     const rolesWithPerms = await Promise.all(
       roles.map(async (role) => {
         const perms = await d1All(`
@@ -356,6 +430,25 @@ const app = new Hono()
         };
       })
     );
+
+    // Append platform roles seamlessly
+    for (const pr of uninstantiated) {
+      let permissions = [];
+      try {
+        permissions = pr.permissions_json ? JSON.parse(pr.permissions_json) : [];
+      } catch (_) {}
+      rolesWithPerms.push({
+        id: pr.id,
+        workspaceId,
+        name: pr.name,
+        description: pr.description || '',
+        color: pr.color || '#2563eb',
+        is_system: pr.is_system ?? 0,
+        permissions,
+        userCount: 0,
+        isPlatformRole: true,
+      });
+    }
 
     return ctx.json({
       data: {

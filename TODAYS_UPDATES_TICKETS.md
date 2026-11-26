@@ -2241,3 +2241,51 @@ Diagnosed and resolved critical transactional email delivery failures across the
 - [x] Email body adheres strictly to RFC 5321 / RFC 2045 maximum line length rules.
 - [x] Sockets await readiness and clean up timer promises without worker isolate memory leaks.
 - [x] Production deployment verified live against `smtp.gmail.com:465`.
+
+---
+
+### Ticket 34: Super Admin Platform Assigned Roles Governance & Universal Application Reflection
+- **Ticket ID**: `KLAN-34`
+- **Parent Ticket**: `Enhancing the Klanservichub V1`
+- **Issue Type**: `Sub-task`
+- **Summary**: `Subtask 34: Super Admin centralized Assigned Roles management, Cloudflare D1 platform_roles schema, and 100% dynamic application-wide reflection in invite modals, user directories, and RBAC matrix`
+- **Priority**: `P1 - High`
+- **Story Points**: `8`
+- **Component**: `Super Admin Control Plane, Platform Admin API, Roles & Permissions, Invite Modals, D1 Database`
+- **Labels**: `super-admin`, `rbac`, `platform-roles`, `invite-modal`, `multi-tenant`, `cloudflare-d1`
+
+#### Description
+Built a centralized **Assigned Roles** management interface under the Super Admin Control Plane (`/super-admin/roles`), backed by a new global `platform_roles` table in Cloudflare D1 (`klanservicehub_db`). Super Admins can create new platform-wide roles (with titles, descriptions, theme colors, display order, and baseline permissions), customize existing roles, and delete custom roles. Eliminated static role dropdowns and object parsing discrepancies across the application so that all roles added or customized by the Super Admin instantly reflect in the "Invite Employee or Member" modals, workspace user directories, and RBAC permission matrices.
+
+#### Scope of Work
+- **Cloudflare D1 Migration (`platform_roles`)**:
+  - Created `platform_roles` table with columns: `id`, `name`, `description`, `color`, `is_system`, `permissions_json`, `display_order`, `created_at`, `updated_at`.
+  - Migrated 6 initial system default roles: Developer, Product Manager, Company Admin, QA Engineer, DevOps & SRE, and Viewer.
+  - Updated both `backend/cloudflare-d1-schema.sql` and `backend/schema.sql`.
+- **Backend Platform Admin Roles CRUD (`backend/src/features/platform-admin/server/route.js`)**:
+  - `GET /api/platform-admin/roles`: Retrieves all active platform roles ordered by priority, with parsed permissions and metrics.
+  - `POST /api/platform-admin/roles`: Validates uniqueness, assigns UUID, inserts into D1, and logs platform audit trail.
+  - `PATCH /api/platform-admin/roles/:id`: Updates name, description, color, permissions, and display priority with audit trail.
+  - `DELETE /api/platform-admin/roles/:id`: Deletes custom platform roles while safeguarding system-protected default roles.
+- **Global Role Merging & Seamless Assignment (`backend/src/features/roles/server/route.js` & `backend/src/features/users/server/route.js`)**:
+  - Merged global `platform_roles` into workspace `GET /api/roles/:workspaceId` and `GET /api/roles/:workspaceId/matrix`.
+  - Auto-instantiates mirror roles in workspace `roles` when users are invited or assigned to platform roles.
+- **Super Admin Control Plane UI (`frontend/src/features/super-admin`)**:
+  - Added "Assigned Roles" navigation tab under `TENANT GOVERNANCE` in `super-admin-layout.jsx`.
+  - Added `/super-admin/roles` route to `App.jsx`.
+  - Implemented comprehensive `RolesView` in `super-admin-dashboard.jsx` with KPI cards, color previews, search & filter bars, "Create Platform Role" modal, "Customize Role" modal, and safety delete modals.
+- **Universal Application Reflection (`client.jsx` & `members-list.jsx`)**:
+  - Resolved `rolesData` object vs array shape parsing in `client.jsx` (`Array.isArray(rolesData) ? rolesData : rolesData?.roles`).
+  - Added dynamic role query and dropdown rendering in `members-list.jsx` to replace hardcoded static options.
+- **Deployment & Live Verification**:
+  - Backend deployed to Cloudflare Workers (`00aaccc1-04c6-4c8a-a3eb-fa4554eb9386`).
+  - Frontend compiled with Rolldown/Vite (9.04s) and deployed to Cloudflare Workers (`ae5d8ac9-adb0-4c28-a3d4-257b665ab250`).
+  - Remote D1 verified: `SELECT * FROM platform_roles` returned all 6 platform roles with zero errors.
+
+#### Acceptance Criteria
+- [x] Super Admin can view, create, customize, and delete platform-wide roles from `/super-admin/roles`.
+- [x] System core default roles are protected from deletion.
+- [x] All added/customized roles immediately reflect in the "Invite Employee or Member" modal dropdowns across all workspaces.
+- [x] Workspace user directories and RBAC permission matrices inherit and support platform roles.
+- [x] Both backend and frontend workers are deployed and verified live in production.
+

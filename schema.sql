@@ -977,3 +977,20 @@ CREATE INDEX IF NOT EXISTS idx_task_links_source ON task_links(source_task_id);
 CREATE INDEX IF NOT EXISTS idx_task_links_target ON task_links(target_task_id);
 CREATE INDEX IF NOT EXISTS idx_audit_logs_workspace ON audit_logs(workspace_id);
 CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_id, workspace_id);
+
+-- ==============================================================================
+-- 16. Platform Roles (Super Admin Controlled Global Roles)
+-- ==============================================================================
+CREATE TABLE IF NOT EXISTS platform_roles (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL UNIQUE,
+  description TEXT DEFAULT '',
+  color TEXT DEFAULT '#2563eb',
+  is_system INTEGER DEFAULT 0,
+  permissions_json TEXT DEFAULT '[]',
+  display_order INTEGER DEFAULT 0,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_platform_roles_order ON platform_roles(display_order, name);
+
