@@ -2343,3 +2343,45 @@ Implemented comprehensive ticket creator identity attribution and a high-fidelit
 - [x] Both backend and frontend workers are deployed and verified live in production.
 
 
+### 🔹 Sub-task 36: Embedded Stage Movement History & Transitions in Ticket Details
+- **Ticket ID**: `KLAN-36`
+- **Parent Ticket**: `Enhancing the Klanservichub V1`
+- **Issue Type**: `Sub-task`
+- **Summary**: `Subtask 36: Embed stage movement details directly in ticket details with Current Stage & Last Moved card, Stage Movement History sidebar audit trail, and visual Stage Progression Stepper across modal and standalone task page`
+- **Priority**: `P1 - High`
+- **Story Points**: `8`
+- **Component**: `Tasks Suite, Ticket Details Modal, Standalone Issue Page, Task History Engine, Cloudflare D1 Database`
+- **Labels**: `ticket-details`, `stage-history`, `stage-transitions`, `audit-trail`, `jira-parity`, `cloudflare-d1`
+
+#### Description
+Embedded complete stage movement attribution and transitions directly into the **Ticket Details** view (both `KlanserviceHubIssueDetailModal` and `TaskIdClient`). Users no longer need to switch away from the main view to an activity tab to discover who moved a ticket between workflow stages (e.g. `BACKLOG` to `TODO`, `TODO` to `IN_PROGRESS`, `IN_PROGRESS` to `DONE`). The ticket details now feature a prominent **Current Stage & Last Moved** card at the top of the Details column, a dedicated **Stage Movement History** audit trail under Dates & Timestamps, and an interactive horizontal **Workflow Stage Journey Stepper** right below the ticket summary.
+
+#### Scope of Work
+- **Backend Task Stage Attribution (`backend/src/features/tasks/server/route.js`)**:
+  - Enhanced `GET /api/tasks/:taskId` to compute and attach:
+    - `task.stageHistory`: Filtered array of all status moves and initial creation events with actor identities and timestamps.
+    - `task.lastStageMove`: The most recent `STATUS_TRANSITION` event detailing who moved the ticket into its current stage, the previous stage, and relative timestamp.
+- **Frontend Ticket Details Modal (`KlanserviceHubIssueDetailModal.jsx`)**:
+  - Added **Current Stage & Last Moved Attribution Card** at the top of the right Details column with status badge, actor avatar/initials, full name, previous stage pill, new stage pill, directional arrow, and relative timestamp.
+  - Added **Workflow Stage Journey Stepper** in the main column between the title metadata and description: visual horizontal flow line connecting all stages with actor badges and pulse indicator for current stage.
+  - Added **Stage Movement History** section in the right Details column under Dates & Timestamps with scrollable cards for all transitions.
+- **Frontend Standalone Issue Page (`TaskIdClient.jsx`)**:
+  - Parity implementation of **Current Stage & Last Moved Attribution Card** in the right sidebar.
+  - Parity implementation of **Workflow Stage Journey Stepper** in the main column.
+  - Parity implementation of **Stage Movement History** under Dates & Timestamps in the right sidebar.
+- **Build & Cloudflare Workers Deployment**:
+  - Backend syntax verified (`node -c backend/src/index.js` passed).
+  - Production build compiled with Rolldown/Vite in 5.27s (`dist/` generated).
+  - Deployed backend (`c75e6e47-c9d8-4102-9852-22e1ce349fee`) to Cloudflare Workers.
+  - Deployed frontend (`d2f3c360-1b20-4284-814e-3e9eaf369124`) to Cloudflare Workers.
+
+#### Acceptance Criteria
+- [x] Ticket details sidebar displays a "Current Stage & Last Moved" card showing who moved the ticket into its current stage, from which stage, and when.
+- [x] Ticket details sidebar displays a "Stage Movement History" section listing all past moves with actor avatar, name, and from/to status badges.
+- [x] Main view displays a visual "Workflow Stage Journey Stepper" illustrating the step-by-step progression across stages.
+- [x] Newly created tickets without moves cleanly show "Initial Stage: Created as [STATUS] by [CREATOR]".
+- [x] All stage movement features are fully synchronized across both the interactive modal and the standalone task page.
+- [x] Production builds pass without errors and are deployed live to Cloudflare Workers.
+
+
+

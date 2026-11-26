@@ -1154,6 +1154,8 @@ const app = new Hono()
 
     // Attach complete chronological status transition and modification history
     task.history = await getTaskHistoryData(taskId, d1);
+    task.stageHistory = (task.history || []).filter((h) => h.type === 'STATUS_TRANSITION' || h.type === 'CREATION');
+    task.lastStageMove = (task.stageHistory || []).find((h) => h.type === 'STATUS_TRANSITION') || null;
 
     return ctx.json({ data: task });
   })
