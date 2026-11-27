@@ -2429,3 +2429,46 @@ Cleaned up the main description column across both `KlanserviceHubIssueDetailMod
 - [x] Intermediate status transitions automatically pruned while initial creation event and author attribution are permanently preserved.
 - [x] Retention status and remaining countdown/expiration notices rendered clearly in Details sidebar and History tab.
 - [x] Production builds pass without errors and are deployed live to Cloudflare Workers.
+
+
+### 🔹 Sub-task 38: Default Table View Resolution & Clickable Ticket Titles in Table
+- **Ticket ID**: `KLAN-38`
+- **Parent Ticket**: `Enhancing the Klanservichub V1`
+- **Issue Type**: `Sub-task`
+- **Summary**: `Subtask 38: Fix empty state in Issues & Tasks by ensuring Table view is selected and active by default, resolving nuqs defaultValue parsing, and making ticket titles and keys clickable to open the issue detail modal`
+- **Priority**: `P1 - High`
+- **Story Points**: `5`
+- **Component**: `Tasks Suite, Task View Switcher, Data Table, Columns, Navigation, Cloudflare Workers`
+- **Labels**: `issues-tasks`, `table-view`, `default-view`, `clickable-title`, `issue-detail-modal`, `nuqs-fix`
+
+#### Description
+Resolved an issue on the **Issues & Tasks** page (`/workspaces/:workspaceId/tasks`) where opening the page showed no view tab selected and completely empty white space beneath the filter bar. Fixed the underlying `nuqs` query state shim to properly resolve default values when URL query parameters are absent, and explicitly defaulted `TaskViewSwitcher` to controlled `activeView = 'table'`. Enhanced the table view so both the ticket key badge (e.g. `KLAN-37`) and the ticket title are interactive, clickable links that trigger the rich `KlanserviceHubIssueDetailModal` right over the table (with stage history, assignees, reporters, comments, subtasks, worklog, and dates), while supporting Ctrl/Cmd+click to open the standalone task page in a new tab. All existing capabilities—including Kanban view with 9-factor filters and WIP limits, Calendar view, standard filters, search, and `+ New` creation—remain fully intact.
+
+#### Scope of Work
+- **`nuqs` Query State Default Value Fix (`frontend/src/shims/nuqs.jsx`)**:
+  - Enhanced `useQueryState` and `useQueryStates` to evaluate `parser.defaultValue` whenever `rawValue === null` and no custom `.parse` function is provided on an options object.
+  - Guarantees default state fallback across all query-state hooks throughout the application.
+- **Default Table View Enforcement (`frontend/src/features/tasks/components/task-view-switcher.jsx`)**:
+  - Computed `activeView = (view === 'kanban' || view === 'calendar') ? view : 'table'`.
+  - Bound `<Tabs>` with controlled `value={activeView}` and `defaultValue="table"`, ensuring the `Table` tab trigger is styled active by default and `<TabsContent value="table">` renders immediately.
+  - Connected `selectedDetailTaskId` state and mounted `<KlanserviceHubIssueDetailModal>` with query cache invalidation upon task edits.
+- **Table Integration & Meta Handlers (`frontend/src/features/tasks/components/data-table.jsx`)**:
+  - Passed `onOpenTask` via TanStack table `meta: { onOpenTask: (task) => onOpenTask?.(task) }`.
+  - Added smooth row hover transition (`hover:bg-neutral-50/70`).
+  - Added clean empty state with guidance message when no tasks match active filters.
+- **Clickable Ticket Titles & Keys (`frontend/src/features/tasks/components/columns.jsx`)**:
+  - Converted the ticket key badge into a clickable link/button with hover highlighting (`hover:bg-blue-100 hover:text-blue-800`).
+  - Converted the task name text into an interactive anchor with hover styling (`hover:text-blue-600 hover:underline`).
+  - Configured click handlers to open `KlanserviceHubIssueDetailModal` on standard click while preserving native browser new-tab navigation for Ctrl/Cmd+click and middle-click.
+- **Build & Cloudflare Workers Deployment**:
+  - Frontend compiled with Vite/Rolldown in 7.83s (`dist/` generated).
+  - Deployed live to Cloudflare Workers (`729265b0-acc6-4152-aced-78b48dc05d9b`).
+
+#### Acceptance Criteria
+- [x] Navigating to Issues & Tasks (`/tasks`) selects and highlights the "Table" tab by default.
+- [x] Table view immediately renders issues without requiring manual tab clicking; no blank white space.
+- [x] Ticket keys (e.g., `KLAN-37`) and ticket titles are clickable in the table view.
+- [x] Clicking any ticket title or key opens the rich `KlanserviceHubIssueDetailModal` in-place without page unload.
+- [x] Ctrl+click or middle-click opens the ticket in a new browser tab.
+- [x] All existing features preserved: Kanban view (9-factor filters, WIP limits), Calendar view, standard filters, search, and `+ New` button.
+- [x] Production builds pass without errors and are deployed live to Cloudflare Workers.

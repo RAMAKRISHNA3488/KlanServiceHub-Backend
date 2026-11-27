@@ -163,7 +163,7 @@ async function attachAssigneesToTasks(tasks, d1) {
         WHERE ta.task_id IN (${placeholders})
       `).bind(...taskIds).all();
       assigneeRows = res.results || [];
-    } catch (e) {}
+    } catch (e) { }
   }
 
   if (assigneeRows.length === 0) {
@@ -176,7 +176,7 @@ async function attachAssigneesToTasks(tasks, d1) {
         JOIN users u ON m.user_id = u.id
         WHERE ta.task_id IN (${placeholders})
       `).all(...taskIds);
-    } catch (err) {}
+    } catch (err) { }
   }
 
   const assigneesByTaskId = {};
@@ -232,7 +232,7 @@ async function attachAssigneesToTask(task, d1) {
         WHERE ta.task_id = ?
       `).bind(taskId).all();
       rows = res.results || [];
-    } catch (e) {}
+    } catch (e) { }
   }
 
   if (rows.length === 0) {
@@ -245,7 +245,7 @@ async function attachAssigneesToTask(task, d1) {
         JOIN users u ON m.user_id = u.id
         WHERE ta.task_id = ?
       `).all(taskId);
-    } catch (err) {}
+    } catch (err) { }
   }
 
   if (rows.length > 0) {
@@ -282,7 +282,7 @@ async function attachReportersToTasks(tasks, d1) {
     if (task.reporter_ids) {
       try {
         ids = typeof task.reporter_ids === 'string' ? JSON.parse(task.reporter_ids) : task.reporter_ids;
-      } catch (e) {}
+      } catch (e) { }
     }
     if ((!ids || ids.length === 0) && task.reporter_id) {
       ids = [task.reporter_id];
@@ -302,14 +302,14 @@ async function attachReportersToTasks(tasks, d1) {
           SELECT id, name, email, avatar_url FROM users WHERE id IN (${placeholders})
         `).bind(...uids).all();
         userRows = res.results || [];
-      } catch (e) {}
+      } catch (e) { }
     }
     if (userRows.length === 0 && !d1) {
       try {
         userRows = db.prepare(`
           SELECT id, name, email, avatar_url FROM users WHERE id IN (${placeholders})
         `).all(...uids);
-      } catch (e) {}
+      } catch (e) { }
     }
     for (const u of userRows) {
       userMap[u.id] = {
@@ -357,12 +357,12 @@ async function processCommentsWithExpiration(comments, taskId, d1) {
   if (d1) {
     try {
       task = await d1.prepare('SELECT id, status, completed_at FROM tasks WHERE id = ?').bind(taskId).first();
-    } catch (e) {}
+    } catch (e) { }
   }
   if (!task) {
     try {
       task = db.prepare('SELECT id, status, completed_at FROM tasks WHERE id = ?').get(taskId);
-    } catch (e) {}
+    } catch (e) { }
   }
 
   const isDone = task?.status === 'DONE';
@@ -375,11 +375,11 @@ async function processCommentsWithExpiration(comments, taskId, d1) {
     if (d1) {
       try {
         await d1.prepare("UPDATE task_comments SET images = '[]' WHERE task_id = ? AND images != '[]' AND images IS NOT NULL").bind(taskId).run();
-      } catch (e) {}
+      } catch (e) { }
     }
     try {
       db.prepare("UPDATE task_comments SET images = '[]' WHERE task_id = ? AND images != '[]' AND images IS NOT NULL").run(taskId);
-    } catch (e) {}
+    } catch (e) { }
   }
 
   const expiresAt = completedTime ? new Date(completedTime + SIX_DAYS_MS).toISOString() : null;
@@ -400,8 +400,8 @@ async function processCommentsWithExpiration(comments, taskId, d1) {
     doc.imagesDaysRemaining = daysRemaining;
     doc.imagesStatus = isDone
       ? (isExpired
-          ? 'Expired (6 days post-completion)'
-          : `Expires in ${daysRemaining} day${daysRemaining === 1 ? '' : 's'} (ticket completed)`)
+        ? 'Expired (6 days post-completion)'
+        : `Expires in ${daysRemaining} day${daysRemaining === 1 ? '' : 's'} (ticket completed)`)
       : 'Active (expires 6 days after ticket is completed)';
     return doc;
   });
@@ -430,11 +430,11 @@ export async function attachDescriptionImagesExpiration(task, d1) {
     if (d1) {
       try {
         await d1.prepare("UPDATE tasks SET description_images = '[]' WHERE id = ?").bind(taskId).run();
-      } catch (e) {}
+      } catch (e) { }
     }
     try {
       db.prepare("UPDATE tasks SET description_images = '[]' WHERE id = ?").run(taskId);
-    } catch (e) {}
+    } catch (e) { }
     rawImages = [];
   }
 
@@ -448,8 +448,8 @@ export async function attachDescriptionImagesExpiration(task, d1) {
   task.descriptionImagesDaysRemaining = daysRemaining;
   task.descriptionImagesStatus = isDone
     ? (isExpired
-        ? 'Expired (6 days post-completion)'
-        : `Expires in ${daysRemaining} day${daysRemaining === 1 ? '' : 's'} (ticket completed)`)
+      ? 'Expired (6 days post-completion)'
+      : `Expires in ${daysRemaining} day${daysRemaining === 1 ? '' : 's'} (ticket completed)`)
     : 'Active (expires 6 days after ticket is completed)';
 
   return task;
@@ -458,7 +458,7 @@ export async function attachDescriptionImagesExpiration(task, d1) {
 export async function processTaskHistoryExpiration(task, history, d1) {
   if (!task) return { task, history };
   const isDone = task.status === 'DONE';
-  const completedAt = task.completed_at || task.completedAt || (isDone ? (task.updated_at || task.updatedAt) : null);
+  const completedAt = task.completed_at || task.completedAt;
   const completedTime = isDone && completedAt ? new Date(completedAt).getTime() : null;
   // 6 months retention window = 180 days in milliseconds
   const SIX_MONTHS_MS = 180 * 24 * 60 * 60 * 1000;
@@ -509,8 +509,8 @@ export async function processTaskHistoryExpiration(task, history, d1) {
   task.historyMonthsRemaining = monthsRemaining;
   task.historyRetentionMessage = isDone
     ? (isExpired
-        ? 'Stage history expired (6-month retention policy for completed tickets)'
-        : `Stage history expires in ${monthsRemaining} mo (${daysRemaining}d)`)
+      ? 'Stage history expired (6-month retention policy for completed tickets)'
+      : `Stage history expires in ${monthsRemaining} mo (${daysRemaining}d)`)
     : 'Active (expires 6 months after Done)';
 
   return { task, history };
@@ -552,7 +552,7 @@ async function attachLikesAndFavoritesToTasks(tasks, userId, d1) {
           userFavoritesSet.add(row.entity_id);
         }
       }
-    } catch (e) {}
+    } catch (e) { }
   }
 
   if (Object.keys(likeCountMap).length === 0 && (!dbInstance || !dbInstance.prepare)) {
@@ -577,7 +577,7 @@ async function attachLikesAndFavoritesToTasks(tasks, userId, d1) {
           userFavoritesSet.add(row.entity_id);
         }
       }
-    } catch (e) {}
+    } catch (e) { }
   }
 
   for (const task of tasks) {
@@ -625,7 +625,7 @@ async function attachLikesAndFavoritesToTask(task, userId, d1) {
         name: u.name,
         avatarUrl: u.avatar_url,
       }));
-    } catch (e) {}
+    } catch (e) { }
   }
 
   if (likesCount === 0 && (!dbInstance || !dbInstance.prepare)) {
@@ -653,7 +653,7 @@ async function attachLikesAndFavoritesToTask(task, userId, d1) {
         name: u.name,
         avatarUrl: u.avatar_url,
       }));
-    } catch (e) {}
+    } catch (e) { }
   }
 
   task.likesCount = likesCount;
@@ -752,7 +752,7 @@ const app = new Hono()
     if (rows.length === 0) {
       try {
         rows = db.prepare(query).all(...params);
-      } catch (e) {}
+      } catch (e) { }
     }
 
     const documents = rows.map((row) => {
@@ -766,22 +766,22 @@ const app = new Hono()
       };
       task.assignee = row.m_id
         ? {
-            $id: row.m_id,
-            role: row.m_role,
-            workspaceId: row.m_workspace_id,
-            userId: row.m_user_id,
-            name: row.u_name,
-            email: row.u_email,
-            avatarUrl: row.u_avatar,
-          }
+          $id: row.m_id,
+          role: row.m_role,
+          workspaceId: row.m_workspace_id,
+          userId: row.m_user_id,
+          name: row.u_name,
+          email: row.u_email,
+          avatarUrl: row.u_avatar,
+        }
         : null;
       task.reporter = row.reporter_id
         ? {
-            id: row.reporter_id,
-            name: row.rep_name,
-            email: row.rep_email,
-            avatarUrl: row.rep_avatar,
-          }
+          id: row.reporter_id,
+          name: row.rep_name,
+          email: row.rep_email,
+          avatarUrl: row.rep_avatar,
+        }
         : null;
       task.labels = JSON.parse(row.labels || '[]');
       task.storyPoints = row.story_points || 1;
@@ -1015,7 +1015,7 @@ const app = new Hono()
           LEFT JOIN users cu ON t.created_by = cu.id
           WHERE t.id = ?
         `).bind(taskId).first();
-      } catch (e) {}
+      } catch (e) { }
     }
 
     if (!row) {
@@ -1050,22 +1050,22 @@ const app = new Hono()
     };
     task.assignee = row.m_id
       ? {
-          $id: row.m_id,
-          role: row.m_role,
-          workspaceId: row.m_workspace_id,
-          userId: row.m_user_id,
-          name: row.u_name,
-          email: row.u_email,
-          avatarUrl: row.u_avatar,
-        }
+        $id: row.m_id,
+        role: row.m_role,
+        workspaceId: row.m_workspace_id,
+        userId: row.m_user_id,
+        name: row.u_name,
+        email: row.u_email,
+        avatarUrl: row.u_avatar,
+      }
       : null;
     task.reporter = row.reporter_id
       ? {
-          id: row.reporter_id,
-          name: row.rep_name,
-          email: row.rep_email,
-          avatarUrl: row.rep_avatar,
-        }
+        id: row.reporter_id,
+        name: row.rep_name,
+        email: row.rep_email,
+        avatarUrl: row.rep_avatar,
+      }
       : null;
 
     // Resolve ticket creator details
@@ -1099,7 +1099,7 @@ const app = new Hono()
             ORDER BY tsh.changed_at ASC LIMIT 1
           `).get(taskId);
         }
-      } catch (e) {}
+      } catch (e) { }
 
       if (initRow && (initRow.name || initRow.id)) {
         creator = {
@@ -1213,10 +1213,8 @@ const app = new Hono()
     await attachLikesAndFavoritesToTask(task, currentUser?.$id, d1);
     await attachDescriptionImagesExpiration(task, d1);
 
-    // Attach complete chronological status transition and modification history with 6-month retention enforcement
-    const rawHistory = await getTaskHistoryData(taskId, d1);
-    const { history: finalHistory } = await processTaskHistoryExpiration(task, rawHistory, d1);
-    task.history = finalHistory;
+    // Attach complete chronological status transition and modification history
+    task.history = await getTaskHistoryData(taskId, d1);
     task.stageHistory = (task.history || []).filter((h) => h.type === 'STATUS_TRANSITION' || h.type === 'CREATION');
     task.lastStageMove = (task.stageHistory || []).find((h) => h.type === 'STATUS_TRANSITION') || null;
 
@@ -1225,18 +1223,8 @@ const app = new Hono()
   .get('/:taskId/history', sessionMiddleware, async (ctx) => {
     const { taskId } = ctx.req.param();
     const d1 = ctx.env?.DB || getD1Database();
-    let task = null;
-    if (d1) {
-      task = await d1.prepare('SELECT id, status, completed_at, updated_at FROM tasks WHERE id = ?').bind(taskId).first();
-    } else {
-      task = db.prepare('SELECT id, status, completed_at, updated_at FROM tasks WHERE id = ?').get(taskId);
-    }
-    let rawHistory = await getTaskHistoryData(taskId, d1);
-    if (task) {
-      const { history } = await processTaskHistoryExpiration(task, rawHistory, d1);
-      rawHistory = history;
-    }
-    return ctx.json({ data: rawHistory });
+    const history = await getTaskHistoryData(taskId, d1);
+    return ctx.json({ data: history });
   })
   .get('/:taskId/links', sessionMiddleware, async (ctx) => {
     const { taskId } = ctx.req.param();
@@ -1310,7 +1298,7 @@ const app = new Hono()
       try {
         const hp = await d1.prepare('SELECT MAX(position) as max_pos FROM tasks WHERE status = ? AND workspace_id = ?').bind(status, effectiveWorkspaceId).first();
         if (hp && hp.max_pos) maxPosNum = hp.max_pos;
-      } catch (e) {}
+      } catch (e) { }
     }
     if (maxPosNum === 0) {
       const highestPos = db.prepare(`
@@ -1354,12 +1342,12 @@ const app = new Hono()
         try {
           const mem = await d1.prepare('SELECT user_id FROM members WHERE id = ? AND workspace_id = ?').bind(rid, effectiveWorkspaceId).first();
           if (mem && mem.user_id) resolvedId = mem.user_id;
-        } catch (e) {}
+        } catch (e) { }
       } else {
         try {
           const mem = db.prepare('SELECT user_id FROM members WHERE id = ? AND workspace_id = ?').get(rid, effectiveWorkspaceId);
           if (mem && mem.user_id) resolvedId = mem.user_id;
-        } catch (e) {}
+        } catch (e) { }
       }
       if (resolvedId && !resolvedReporterIds.includes(resolvedId)) {
         resolvedReporterIds.push(resolvedId);
@@ -1409,7 +1397,7 @@ const app = new Hono()
         for (const mId of targetAssigneeIds) {
           try {
             await d1.prepare('INSERT OR IGNORE INTO task_assignees (id, task_id, member_id) VALUES (?, ?, ?)').bind(randomUUID(), taskId, mId).run();
-          } catch (e) {}
+          } catch (e) { }
         }
       } catch (e) {
         console.error('[D1_CREATE_TASK_ERROR]:', e);
@@ -1465,7 +1453,7 @@ const app = new Hono()
           });
         }
       }
-    } catch (err) {}
+    } catch (err) { }
 
     logAudit({
       workspaceId: effectiveWorkspaceId,
@@ -1504,7 +1492,7 @@ const app = new Hono()
     if (d1) {
       try {
         task = await d1.prepare('SELECT * FROM tasks WHERE id = ?').bind(taskId).first();
-      } catch (e) {}
+      } catch (e) { }
     }
     if (!task) {
       task = db.prepare('SELECT * FROM tasks WHERE id = ?').get(taskId);
@@ -1525,7 +1513,7 @@ const app = new Hono()
     if (d1) {
       try {
         existingTask = await d1.prepare('SELECT * FROM tasks WHERE id = ?').bind(taskId).first();
-      } catch (e) {}
+      } catch (e) { }
     }
     if (!existingTask) {
       existingTask = db.prepare('SELECT * FROM tasks WHERE id = ?').get(taskId);
@@ -1568,12 +1556,12 @@ const app = new Hono()
       if (d1) {
         try {
           workspace = await d1.prepare('SELECT user_id FROM workspaces WHERE id = ?').bind(existingTask.workspace_id).first();
-        } catch (e) {}
+        } catch (e) { }
       }
       if (!workspace) {
         try {
           workspace = db.prepare('SELECT user_id FROM workspaces WHERE id = ?').get(existingTask.workspace_id);
-        } catch (e) {}
+        } catch (e) { }
       }
       const isOwner = workspace && workspace.user_id === user.$id;
       const isAdmin = isOwner || (member && (member.role === 'ADMIN' || member.organization_role === 'COMPANY_OWNER' || member.organization_role === 'COMPANY_ADMIN'));
@@ -1643,7 +1631,7 @@ const app = new Hono()
             for (const mId of targetAssigneeIds) {
               await d1.prepare('INSERT OR IGNORE INTO task_assignees (id, task_id, member_id) VALUES (?, ?, ?)').bind(randomUUID(), taskId, mId).run();
             }
-          } catch (e) {}
+          } catch (e) { }
         }
 
         try {
@@ -1664,7 +1652,7 @@ const app = new Hono()
               });
             }
           }
-        } catch (err) {}
+        } catch (err) { }
       }
     }
 
@@ -1677,12 +1665,12 @@ const app = new Hono()
           try {
             const mem = await d1.prepare('SELECT user_id FROM members WHERE id = ? AND workspace_id = ?').bind(rid, existingTask.workspace_id).first();
             if (mem && mem.user_id) resolved = mem.user_id;
-          } catch (e) {}
+          } catch (e) { }
         } else {
           try {
             const mem = db.prepare('SELECT user_id FROM members WHERE id = ? AND workspace_id = ?').get(rid, existingTask.workspace_id);
             if (mem && mem.user_id) resolved = mem.user_id;
-          } catch (e) {}
+          } catch (e) { }
         }
         if (resolved && !resolvedIds.includes(resolved)) {
           resolvedIds.push(resolved);
@@ -1701,12 +1689,12 @@ const app = new Hono()
             try {
               const mem = await d1.prepare('SELECT user_id FROM members WHERE id = ? AND workspace_id = ?').bind(reqPatchReporterId, existingTask.workspace_id).first();
               if (mem && mem.user_id) resolvedPatchReporterId = mem.user_id;
-            } catch (e) {}
+            } catch (e) { }
           } else {
             try {
               const mem = db.prepare('SELECT user_id FROM members WHERE id = ? AND workspace_id = ?').get(reqPatchReporterId, existingTask.workspace_id);
               if (mem && mem.user_id) resolvedPatchReporterId = mem.user_id;
-            } catch (e) {}
+            } catch (e) { }
           }
         }
         updates.push('reporter_id = ?');
@@ -1745,14 +1733,14 @@ const app = new Hono()
             INSERT INTO task_history (id, task_id, user_id, field_name, old_value, new_value)
             VALUES (?, ?, ?, 'status', ?, ?)
           `).bind(randomUUID(), taskId, user.$id, existingTask.status, status).run();
-        } catch (e) {}
+        } catch (e) { }
       }
       try {
         db.prepare(`
           INSERT INTO task_history (id, task_id, user_id, field_name, old_value, new_value)
           VALUES (?, ?, ?, 'status', ?, ?)
         `).run(randomUUID(), taskId, user.$id, existingTask.status, status);
-      } catch (e) {}
+      } catch (e) { }
 
       logActivity({
         workspaceId: existingTask.workspace_id,
@@ -1776,7 +1764,7 @@ const app = new Hono()
     if (d1) {
       try {
         updated = await d1.prepare('SELECT * FROM tasks WHERE id = ?').bind(taskId).first();
-      } catch (e) {}
+      } catch (e) { }
     }
     if (!updated) {
       updated = db.prepare('SELECT * FROM tasks WHERE id = ?').get(taskId);
@@ -1857,7 +1845,7 @@ const app = new Hono()
               INSERT INTO task_comments (id, task_id, user_id, content, created_at, updated_at)
               VALUES (?, ?, ?, ?, ?, ?)
             `).bind(id, taskId, user.$id, content, now, now).run();
-          } catch (e3) {}
+          } catch (e3) { }
         }
       }
     }
@@ -1880,7 +1868,7 @@ const app = new Hono()
             INSERT INTO task_comments (id, task_id, user_id, content, created_at, updated_at)
             VALUES (?, ?, ?, ?, ?, ?)
           `).run(id, taskId, user.$id, content, now, now);
-        } catch (e3) {}
+        } catch (e3) { }
       }
     }
 
@@ -1888,12 +1876,12 @@ const app = new Hono()
     if (d1) {
       try {
         task = await d1.prepare('SELECT key, workspace_id, reporter_id, assignee_id, status, completed_at FROM tasks WHERE id = ?').bind(taskId).first();
-      } catch (e) {}
+      } catch (e) { }
     }
     if (!task) {
       try {
         task = db.prepare('SELECT key, workspace_id, reporter_id, assignee_id, status, completed_at FROM tasks WHERE id = ?').get(taskId);
-      } catch (e) {}
+      } catch (e) { }
     }
     if (task && task.reporter_id && task.reporter_id !== user.$id) {
       createNotification({
@@ -1950,12 +1938,12 @@ const app = new Hono()
     if (d1) {
       try {
         comment = await d1.prepare('SELECT * FROM task_comments WHERE id = ? AND task_id = ?').bind(commentId, taskId).first();
-      } catch (e) {}
+      } catch (e) { }
     }
     if (!comment) {
       try {
         comment = db.prepare('SELECT * FROM task_comments WHERE id = ? AND task_id = ?').get(commentId, taskId);
-      } catch (e) {}
+      } catch (e) { }
     }
 
     if (!comment) {
@@ -1971,12 +1959,12 @@ const app = new Hono()
       if (d1) {
         try {
           task = await d1.prepare('SELECT workspace_id FROM tasks WHERE id = ?').bind(taskId).first();
-        } catch (e) {}
+        } catch (e) { }
       }
       if (!task) {
         try {
           task = db.prepare('SELECT workspace_id FROM tasks WHERE id = ?').get(taskId);
-        } catch (e) {}
+        } catch (e) { }
       }
 
       if (task) {
@@ -1985,12 +1973,12 @@ const app = new Hono()
         if (d1) {
           try {
             workspace = await d1.prepare('SELECT user_id FROM workspaces WHERE id = ?').bind(task.workspace_id).first();
-          } catch (e) {}
+          } catch (e) { }
         }
         if (!workspace) {
           try {
             workspace = db.prepare('SELECT user_id FROM workspaces WHERE id = ?').get(task.workspace_id);
-          } catch (e) {}
+          } catch (e) { }
         }
         const isOwner = workspace && workspace.user_id === user.$id;
         isAdmin = isOwner || (member && (member.role === 'ADMIN' || member.organization_role === 'COMPANY_OWNER' || member.organization_role === 'COMPANY_ADMIN'));
@@ -2008,7 +1996,7 @@ const app = new Hono()
       } catch (e) {
         try {
           await d1.prepare('UPDATE task_comments SET content = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND task_id = ?').bind(content.trim(), commentId, taskId).run();
-        } catch (e2) {}
+        } catch (e2) { }
       }
     }
     try {
@@ -2016,7 +2004,7 @@ const app = new Hono()
     } catch (e) {
       try {
         db.prepare('UPDATE task_comments SET content = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND task_id = ?').run(content.trim(), commentId, taskId);
-      } catch (e2) {}
+      } catch (e2) { }
     }
 
     return ctx.json({ success: true, id: commentId, content: content.trim(), updated_at: now });
@@ -2030,12 +2018,12 @@ const app = new Hono()
     if (d1) {
       try {
         comment = await d1.prepare('SELECT * FROM task_comments WHERE id = ? AND task_id = ?').bind(commentId, taskId).first();
-      } catch (e) {}
+      } catch (e) { }
     }
     if (!comment) {
       try {
         comment = db.prepare('SELECT * FROM task_comments WHERE id = ? AND task_id = ?').get(commentId, taskId);
-      } catch (e) {}
+      } catch (e) { }
     }
 
     if (!comment) {
@@ -2051,12 +2039,12 @@ const app = new Hono()
       if (d1) {
         try {
           task = await d1.prepare('SELECT workspace_id FROM tasks WHERE id = ?').bind(taskId).first();
-        } catch (e) {}
+        } catch (e) { }
       }
       if (!task) {
         try {
           task = db.prepare('SELECT workspace_id FROM tasks WHERE id = ?').get(taskId);
-        } catch (e) {}
+        } catch (e) { }
       }
 
       if (task) {
@@ -2065,12 +2053,12 @@ const app = new Hono()
         if (d1) {
           try {
             workspace = await d1.prepare('SELECT user_id FROM workspaces WHERE id = ?').bind(task.workspace_id).first();
-          } catch (e) {}
+          } catch (e) { }
         }
         if (!workspace) {
           try {
             workspace = db.prepare('SELECT user_id FROM workspaces WHERE id = ?').get(task.workspace_id);
-          } catch (e) {}
+          } catch (e) { }
         }
         const isOwner = workspace && workspace.user_id === user.$id;
         isAdmin = isOwner || (member && (member.role === 'ADMIN' || member.organization_role === 'COMPANY_OWNER' || member.organization_role === 'COMPANY_ADMIN'));
@@ -2084,11 +2072,11 @@ const app = new Hono()
     if (d1) {
       try {
         await d1.prepare('DELETE FROM task_comments WHERE id = ? AND task_id = ?').bind(commentId, taskId).run();
-      } catch (e) {}
+      } catch (e) { }
     }
     try {
       db.prepare('DELETE FROM task_comments WHERE id = ? AND task_id = ?').run(commentId, taskId);
-    } catch (e) {}
+    } catch (e) { }
 
     return ctx.json({ success: true, id: commentId });
   })
@@ -2101,7 +2089,7 @@ const app = new Hono()
     if (d1) {
       try {
         task = await d1.prepare('SELECT * FROM tasks WHERE id = ?').bind(taskId).first();
-      } catch (e) {}
+      } catch (e) { }
     }
     if (!task) {
       task = db.prepare('SELECT * FROM tasks WHERE id = ?').get(taskId);
@@ -2131,10 +2119,10 @@ const app = new Hono()
         await d1.prepare('DELETE FROM task_assignees WHERE task_id = ?').bind(taskId).run();
         await d1.prepare('DELETE FROM task_comments WHERE task_id = ?').bind(taskId).run();
         await d1.prepare('DELETE FROM tasks WHERE id = ?').bind(taskId).run();
-      } catch (e) {}
+      } catch (e) { }
     }
 
-    try { db.prepare('DELETE FROM task_assignees WHERE task_id = ?').run(taskId); } catch (e) {}
+    try { db.prepare('DELETE FROM task_assignees WHERE task_id = ?').run(taskId); } catch (e) { }
     db.prepare('DELETE FROM task_history WHERE task_id = ?').run(taskId);
     db.prepare('DELETE FROM task_comments WHERE task_id = ?').run(taskId);
     db.prepare('DELETE FROM task_attachments WHERE task_id = ?').run(taskId);
@@ -2159,6 +2147,17 @@ const app = new Hono()
 
     return ctx.json({ success: true, data: formatDoc(task) });
   })
+  .get('/:taskId/history', sessionMiddleware, async (ctx) => {
+    const { taskId } = ctx.req.param();
+    const history = db.prepare(`
+      SELECT h.*, u.name as changed_by_name, u.email as changed_by_email, u.avatar_url as changed_by_avatar
+      FROM task_history h
+      JOIN users u ON h.user_id = u.id
+      WHERE h.task_id = ?
+      ORDER BY h.created_at DESC
+    `).all(taskId);
+    return ctx.json({ data: history.map(formatDoc) });
+  })
   .post('/:taskId/transitions', sessionMiddleware, async (ctx) => {
     const user = ctx.get('user');
     const { taskId } = ctx.req.param();
@@ -2179,7 +2178,7 @@ const app = new Hono()
     if (d1) {
       try {
         await d1.prepare(`UPDATE tasks SET status = ?, updated_at = CURRENT_TIMESTAMP ${completedClause} WHERE id = ?`).bind(toStatus, taskId).run();
-      } catch (e) {}
+      } catch (e) { }
     }
     db.prepare(`UPDATE tasks SET status = ?, updated_at = CURRENT_TIMESTAMP ${completedClause} WHERE id = ?`).run(toStatus, taskId);
 
@@ -2190,7 +2189,7 @@ const app = new Hono()
           INSERT INTO task_history (id, task_id, user_id, field_name, old_value, new_value)
           VALUES (?, ?, ?, 'status', ?, ?)
         `).bind(randomUUID(), taskId, user.$id, fromStatus, toStatus).run();
-      } catch (e) {}
+      } catch (e) { }
     }
     db.prepare(`
       INSERT INTO task_history (id, task_id, user_id, field_name, old_value, new_value)
@@ -2245,11 +2244,11 @@ const app = new Hono()
     if (d1) {
       try {
         await d1.prepare('DELETE FROM task_attachments WHERE task_id = ? AND expires_at IS NOT NULL AND expires_at < ?').bind(taskId, now).run();
-      } catch (e) {}
+      } catch (e) { }
     }
     try {
       db.prepare('DELETE FROM task_attachments WHERE task_id = ? AND expires_at IS NOT NULL AND expires_at < ?').run(taskId, now);
-    } catch (e) {}
+    } catch (e) { }
 
     let attachments = null;
     if (d1) {
@@ -2264,7 +2263,7 @@ const app = new Hono()
           ORDER BY a.created_at DESC
         `).bind(taskId).all();
         attachments = res.results || [];
-      } catch (e) {}
+      } catch (e) { }
     }
     if (!attachments) {
       try {
@@ -2315,14 +2314,14 @@ const app = new Hono()
         INSERT INTO task_attachments (id, task_id, user_id, file_name, file_url, file_size, file_type, image_data, expires_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(attachmentId, taskId, user.$id, fileName, fileUrl || '', fileSize, fileType, imageData || null, expiresAt);
-    } catch (e) {}
+    } catch (e) { }
 
     try {
       db.prepare(`
         INSERT INTO task_history (id, task_id, user_id, field_name, old_value, new_value)
         VALUES (?, ?, ?, 'attachment', null, ?)
       `).run(randomUUID(), taskId, user.$id, fileName);
-    } catch (e) {}
+    } catch (e) { }
 
     return ctx.json({ success: true, id: attachmentId, fileName, fileUrl, expiresAt });
   })
@@ -2333,11 +2332,11 @@ const app = new Hono()
     if (d1) {
       try {
         await d1.prepare('DELETE FROM task_attachments WHERE id = ? AND task_id = ?').bind(attachmentId, taskId).run();
-      } catch (e) {}
+      } catch (e) { }
     }
     try {
       db.prepare('DELETE FROM task_attachments WHERE id = ? AND task_id = ?').run(attachmentId, taskId);
-    } catch (e) {}
+    } catch (e) { }
 
     return ctx.json({ success: true });
   })
@@ -2387,11 +2386,11 @@ const app = new Hono()
     if (d1) {
       try {
         await d1.prepare('DELETE FROM task_watchers WHERE task_id = ? AND user_id = ?').bind(taskId, user.$id).run();
-      } catch (e) {}
+      } catch (e) { }
     }
     try {
       db.prepare('DELETE FROM task_watchers WHERE task_id = ? AND user_id = ?').run(taskId, user.$id);
-    } catch (e) {}
+    } catch (e) { }
     return ctx.json({ success: true, watching: false });
   })
   .post('/:taskId/toggle-like', sessionMiddleware, async (ctx) => {
@@ -2403,12 +2402,12 @@ const app = new Hono()
     if (d1) {
       try {
         existing = await d1.prepare('SELECT id FROM task_likes WHERE task_id = ? AND user_id = ?').bind(taskId, user.$id).first();
-      } catch (e) {}
+      } catch (e) { }
     }
     if (!existing) {
       try {
         existing = db.prepare('SELECT id FROM task_likes WHERE task_id = ? AND user_id = ?').get(taskId, user.$id);
-      } catch (e) {}
+      } catch (e) { }
     }
 
     let liked = false;
@@ -2416,22 +2415,22 @@ const app = new Hono()
       if (d1) {
         try {
           await d1.prepare('DELETE FROM task_likes WHERE task_id = ? AND user_id = ?').bind(taskId, user.$id).run();
-        } catch (e) {}
+        } catch (e) { }
       }
       try {
         db.prepare('DELETE FROM task_likes WHERE task_id = ? AND user_id = ?').run(taskId, user.$id);
-      } catch (e) {}
+      } catch (e) { }
       liked = false;
     } else {
       const id = randomUUID();
       if (d1) {
         try {
           await d1.prepare('INSERT INTO task_likes (id, task_id, user_id) VALUES (?, ?, ?)').bind(id, taskId, user.$id).run();
-        } catch (e) {}
+        } catch (e) { }
       }
       try {
         db.prepare('INSERT INTO task_likes (id, task_id, user_id) VALUES (?, ?, ?)').run(id, taskId, user.$id);
-      } catch (e) {}
+      } catch (e) { }
       liked = true;
     }
 
@@ -2439,12 +2438,12 @@ const app = new Hono()
     if (d1) {
       try {
         countRow = await d1.prepare('SELECT COUNT(*) as count FROM task_likes WHERE task_id = ?').bind(taskId).first();
-      } catch (e) {}
+      } catch (e) { }
     }
     if (!countRow) {
       try {
         countRow = db.prepare('SELECT COUNT(*) as count FROM task_likes WHERE task_id = ?').get(taskId);
-      } catch (e) {}
+      } catch (e) { }
     }
     const likesCount = countRow?.count || 0;
 
@@ -2459,12 +2458,12 @@ const app = new Hono()
     if (d1) {
       try {
         taskRow = await d1.prepare('SELECT workspace_id FROM tasks WHERE id = ?').bind(taskId).first();
-      } catch (e) {}
+      } catch (e) { }
     }
     if (!taskRow) {
       try {
         taskRow = db.prepare('SELECT workspace_id FROM tasks WHERE id = ?').get(taskId);
-      } catch (e) {}
+      } catch (e) { }
     }
     const workspaceId = taskRow?.workspace_id || '';
 
@@ -2472,12 +2471,12 @@ const app = new Hono()
     if (d1) {
       try {
         existing = await d1.prepare('SELECT id FROM user_favorites WHERE user_id = ? AND entity_type = "TASK" AND entity_id = ?').bind(user.$id, taskId).first();
-      } catch (e) {}
+      } catch (e) { }
     }
     if (!existing) {
       try {
         existing = db.prepare('SELECT id FROM user_favorites WHERE user_id = ? AND entity_type = "TASK" AND entity_id = ?').get(user.$id, taskId);
-      } catch (e) {}
+      } catch (e) { }
     }
 
     let isFavorite = false;
@@ -2485,22 +2484,22 @@ const app = new Hono()
       if (d1) {
         try {
           await d1.prepare('DELETE FROM user_favorites WHERE user_id = ? AND entity_type = "TASK" AND entity_id = ?').bind(user.$id, taskId).run();
-        } catch (e) {}
+        } catch (e) { }
       }
       try {
         db.prepare('DELETE FROM user_favorites WHERE user_id = ? AND entity_type = "TASK" AND entity_id = ?').run(user.$id, taskId);
-      } catch (e) {}
+      } catch (e) { }
       isFavorite = false;
     } else {
       const id = randomUUID();
       if (d1) {
         try {
           await d1.prepare('INSERT INTO user_favorites (id, user_id, workspace_id, entity_type, entity_id) VALUES (?, ?, ?, "TASK", ?)').bind(id, user.$id, workspaceId, taskId).run();
-        } catch (e) {}
+        } catch (e) { }
       }
       try {
         db.prepare('INSERT INTO user_favorites (id, user_id, workspace_id, entity_type, entity_id) VALUES (?, ?, ?, "TASK", ?)').run(id, user.$id, workspaceId, taskId);
-      } catch (e) {}
+      } catch (e) { }
       isFavorite = true;
     }
 
