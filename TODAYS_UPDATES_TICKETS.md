@@ -2655,3 +2655,53 @@ The application now actively tracks and preserves the user's route in `sessionSt
 - [x] Closing the modal cleanly removes `?taskId` from the URL.
 - [x] Logging out cleans up both auth token and saved route from storage.
 - [x] Production builds pass without errors and are deployed live to Cloudflare Workers.
+
+
+### 🔹 Sub-task 43: Teams Management People & Projects Assignment & Advanced Squad Capabilities
+- **Ticket ID**: `KLAN-43`
+- **Parent Ticket**: `Enhancing the Klanservichub V1`
+- **Issue Type**: `Sub-task`
+- **Summary**: `Subtask 43: Enable full people (members) and projects assignment in Teams Management with searchable multi-selectors, team lead attribution, KPI summary cards, and instant team search filtering`
+- **Priority**: `P1 - High`
+- **Story Points**: `8`
+- **Component**: `Teams Management, Squad Administration, Members Assignment, Project Alignment, Cloudflare Workers`
+- **Labels**: `teams-management`, `squad-roster`, `people-assignment`, `project-assignment`, `team-lead`, `kpi-metrics`
+
+#### Description
+Resolved an issue where users were unable to assign people (members) or projects to squads in **Teams Management** (`/workspaces/:workspaceId/teams-admin`). Overhauled the squad administration suite with comprehensive multi-tab configuration modals, searchable people pickers with instant filtering and avatar chips, searchable project pickers with project key badges and category tags, designated Team Lead attribution, a top-level squad KPI metrics bar, and real-time team search.
+
+Squad cards now prominently showcase team lead details with crown badges, member avatar stacks with counter badges, and assigned project pills that link directly to the respective project dashboards (`/workspaces/:workspaceId/projects/:projectId`).
+
+#### Scope of Work
+- **Backend Teams API Enhancement (`backend/src/features/teams/server/route.js`)**:
+  - Enriched `GET /api/teams/:workspaceId` to include project `key`, `category`, and `image_url` for every assigned project.
+  - Updated `PATCH /api/teams/:workspaceId/:teamId` to support nullable/clearing team lead updates (`leadId = '' | null`).
+  - Preserved batch assignments for `team_members` and `team_projects` with audit logging.
+- **Frontend Teams View Overhaul (`frontend/src/features/company/components/teams-admin-view.jsx`)**:
+  - Implemented parallel data fetching for teams, workspace users, and workspace projects.
+  - Built a 3-tab creation and editing modal:
+    1. **General Info**: Team Name, Description, and designated Team Lead selector.
+    2. **Assign People**: Searchable member picker with instant name/email/role filtering, multi-select checkboxes, Select All / Clear All utilities, selected member chips tray with quick-remove, and direct "Set Lead" crown toggles.
+    3. **Assign Projects**: Searchable project picker with project keys, categories, multi-select checkboxes, Select All / Clear All utilities, and selected project chips tray.
+  - Added **Workspace Squad KPI Bar**: 4 metric cards tracking *Total Squads*, *Assigned Members*, *Connected Projects*, and *Squad Coverage %*.
+  - Added **Real-time Team Search Bar**: Filters team cards instantly by squad name, description, member names, team lead, or project keys/names.
+  - Upgraded **Squad Cards**:
+    - Squad avatar gradient with initials and member/project counters.
+    - Prominent Team Lead card with crown icon, name, and email.
+    - Member avatar stack with tooltips, `+N more` pill, and "+ Assign people" quick action if empty.
+    - Assigned projects section with project key badges and one-click navigation links to `/projects/:projectId`.
+    - Edit and Delete squad actions with `useConfirm` impact dialog.
+- **Build & Cloudflare Workers Deployment**:
+  - Backend deployed to Cloudflare Workers (Version ID: `76aba4a6-6cf3-4ff0-833b-600c3d433a29`).
+  - Frontend compiled in 3.63s and deployed to Cloudflare Workers (Version ID: `c2949858-6445-4d40-b0e9-876e623779fa`).
+
+#### Acceptance Criteria
+- [x] Users can search and assign multiple workspace members to squads during creation or editing.
+- [x] Users can search and assign multiple projects to squads during creation or editing.
+- [x] Users can designate a Team Lead with prominent crown badge attribution.
+- [x] Selected members and projects appear as removable chips in the configuration modal.
+- [x] Squad cards display member avatar stacks with tooltips and count badges.
+- [x] Squad cards display assigned project pills with project keys and direct clickable navigation links to project dashboards.
+- [x] Top KPI metrics bar accurately displays Total Squads, Assigned Members, Connected Projects, and Squad Coverage.
+- [x] Real-time search bar filters squad cards by team name, description, lead, member, or project.
+- [x] Production builds pass without errors and are deployed live to Cloudflare Workers.

@@ -30,7 +30,7 @@ const app = new Hono()
         `, [team.id]);
 
         const projects = await d1All(`
-          SELECT p.id, p.name, p.image_url
+          SELECT p.id, p.name, p.key, p.image_url, p.category
           FROM team_projects tp
           JOIN projects p ON tp.project_id = p.id
           WHERE tp.team_id = ?
@@ -110,14 +110,15 @@ const app = new Hono()
       return ctx.json({ error: 'Team not found.' }, 404);
     }
 
+    const hasLeadUpdate = leadId !== undefined;
     await d1Run(`
       UPDATE teams 
       SET name = COALESCE(?, name),
           description = COALESCE(?, description),
-          lead_id = COALESCE(?, lead_id),
+          lead_id = CASE WHEN ? = 1 THEN ? ELSE lead_id END,
           updated_at = CURRENT_TIMESTAMP
       WHERE id = ?
-    `, [name ?? null, description ?? null, leadId ?? null, teamId]);
+    `, [name ?? null, description ?? null, hasLeadUpdate ? 1 : 0, leadId || null, teamId]);
 
     if (Array.isArray(memberIds)) {
       await d1Run('DELETE FROM team_members WHERE team_id = ?', [teamId]);
