@@ -34,7 +34,7 @@ Comprehensive platform stabilization and feature enhancements for **KlanServiceH
 
 ---
 
-# 📋 38 SUB-TASKS UNDER THIS TICKET
+# 📋 39 SUB-TASKS UNDER THIS TICKET
 
 ---
 
@@ -2471,4 +2471,50 @@ Resolved an issue on the **Issues & Tasks** page (`/workspaces/:workspaceId/task
 - [x] Clicking any ticket title or key opens the rich `KlanserviceHubIssueDetailModal` in-place without page unload.
 - [x] Ctrl+click or middle-click opens the ticket in a new browser tab.
 - [x] All existing features preserved: Kanban view (9-factor filters, WIP limits), Calendar view, standard filters, search, and `+ New` button.
+- [x] Production builds pass without errors and are deployed live to Cloudflare Workers.
+
+
+### 🔹 Sub-task 39: Remove Title Hover Underline, Add Searchable Assignees/Reporters & Modal Window Controls
+- **Ticket ID**: `KLAN-39`
+- **Parent Ticket**: `Enhancing the Klanservichub V1`
+- **Issue Type**: `Sub-task`
+- **Summary**: `Subtask 39: Remove cursor hover underline in Table view, add instant search filtering for Assignees and Reporters in ticket details, and introduce minimize-to-tray and maximize-to-fullscreen window controls for the ticket popup modal`
+- **Priority**: `P1 - High`
+- **Story Points**: `5`
+- **Component**: `Tasks Suite, Data Table, Columns, Issue Detail Modal, Window Controls, Member Pickers, Cloudflare Workers`
+- **Labels**: `issues-tasks`, `table-view`, `ui-polish`, `searchable-members`, `modal-controls`, `minimize-maximize`
+
+#### Description
+Addressed three targeted UI and productivity improvements across the Tasks Suite:
+1. **Cursor Hover Underline Removal**: Removed the `hover:underline` styling from task titles in the Table view (`columns.jsx`), ensuring a sleek, distraction-free visual experience when moving the cursor across task rows while retaining subtle blue color highlighting.
+2. **Searchable Assignees & Reporters**: Upgraded the static `<select>` dropdowns in `KlanserviceHubIssueDetailModal` to dynamic, searchable member pickers with real-time text input filtering (by name, email, and role), individual clear buttons, avatar chips, and user indicators matching the Jira/Linear enterprise standard.
+3. **Modal Minimize & Maximize Window Controls**: Introduced standard desktop window management controls (`Minimize`, `Maximize`/`Restore`, `Close`) in the top-right header of `KlanserviceHubIssueDetailModal`:
+   - **Minimize (`-`)**: Collapses the modal into a compact, floating dock tray pinned to the bottom-right corner of the viewport (`fixed bottom-4 right-6 z-50`). Shows issue type icon, ticket key, truncated summary, status badge, restore button, and close button, enabling seamless background interaction with boards and tables.
+   - **Maximize / Restore (`□` / `Minimize2`)**: Toggles the modal between standard centered dialog (`max-w-5xl`, `max-h-[92vh]`) and edge-to-edge full-viewport view (`100vw x 100vh`).
+   - Strictly scoped to the ticket popup modal, preserving the standalone full task page (`/tasks/:taskId`) unchanged.
+
+#### Scope of Work
+- **Hover Underline Removal (`frontend/src/features/tasks/components/columns.jsx`)**:
+  - Replaced `hover:text-blue-600 hover:underline` with `hover:text-blue-600 no-underline hover:no-underline` on the task name anchor element.
+- **Searchable Member Pickers (`frontend/src/features/tasks/components/klanservicehub-issue-detail-modal.jsx`)**:
+  - Replaced native Assignee `<select>` with an expandable picker featuring instant search input (`Search className="size-3"`), real-time name/email/role filtering, and quick member assignment/removal.
+  - Replaced native Reporter `<select>` with an expandable picker featuring search input, member filtering, avatar badges, and `(You)` attribution tags.
+- **Window Controls & Docking Tray (`frontend/src/features/tasks/components/klanservicehub-issue-detail-modal.jsx`)**:
+  - Added `isMaximized` and `isMinimized` reactive state hooks.
+  - Implemented top-right header action group with Minimize (`Minus`), Maximize/Restore (`Maximize2`/`Minimize2`), and Close (`X`) buttons.
+  - Rendered a floating bottom-right dock tray when `isMinimized === true`, allowing users to resume viewing tickets with a single click.
+  - Implemented full-viewport expansion (`fixed inset-0 w-screen h-screen max-w-none rounded-none`) when `isMaximized === true`.
+- **Build & Cloudflare Workers Deployment**:
+  - Frontend compiled with Vite/Rolldown in 39.78s (`dist/assets/index-B3nGo0_2.js` generated).
+  - Deployed live to Cloudflare Workers (`d3ee5a41-4e22-4259-bab2-d5939de89a1a`).
+
+#### Acceptance Criteria
+- [x] Moving cursor over task titles in Table view does not display an underline bar.
+- [x] Assignees section in ticket popup details provides an instant search input to filter members by name, email, or role.
+- [x] Reporters section in ticket popup details provides an instant search input to filter members.
+- [x] Ticket details modal features Minimize (`-`) button in header that docks the ticket into a floating bottom-right tray.
+- [x] Minimized tray allows restoring the modal back to its active state with one click.
+- [x] Ticket details modal features Maximize (`□`) button in header that expands the popup to full screen.
+- [x] Maximize button toggles to Restore (`Minimize2`) button when maximized.
+- [x] Standalone full-page task route (`/tasks/:taskId`) remains unaffected ("only for ticket pop").
 - [x] Production builds pass without errors and are deployed live to Cloudflare Workers.
