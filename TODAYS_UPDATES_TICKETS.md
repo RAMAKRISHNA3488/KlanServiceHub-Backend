@@ -34,7 +34,7 @@ Comprehensive platform stabilization and feature enhancements for **KlanServiceH
 
 ---
 
-# 📋 39 SUB-TASKS UNDER THIS TICKET
+# 📋 40 SUB-TASKS UNDER THIS TICKET
 
 ---
 
@@ -2517,4 +2517,52 @@ Addressed three targeted UI and productivity improvements across the Tasks Suite
 - [x] Ticket details modal features Maximize (`□`) button in header that expands the popup to full screen.
 - [x] Maximize button toggles to Restore (`Minimize2`) button when maximized.
 - [x] Standalone full-page task route (`/tasks/:taskId`) remains unaffected ("only for ticket pop").
+- [x] Production builds pass without errors and are deployed live to Cloudflare Workers.
+
+
+### 🔹 Sub-task 40: Overhaul Ticket Modal Maximized Viewport & Proportional Layout
+- **Ticket ID**: `KLAN-40`
+- **Parent Ticket**: `Enhancing the Klanservichub V1`
+- **Issue Type**: `Sub-task`
+- **Summary**: `Subtask 40: Overhaul maximized ticket details modal view by replacing static 12-column grid stretching with an enterprise proportional split layout (pinned 320-384px properties sidebar and centered readable content container), eliminating w-screen scrollbar jitter, and scaling typography for fullscreen`
+- **Priority**: `P1 - High`
+- **Story Points**: `5`
+- **Component**: `Tasks Suite, Issue Detail Modal, Window Controls, Layout Architecture, Cloudflare Workers`
+- **Labels**: `issues-tasks`, `modal-controls`, `maximize-view`, `layout-proportions`, `ui-polish`, `dual-pane`
+
+#### Description
+Addressed user feedback regarding the maximized ticket modal view ("when i click on Maximize. it's view is not good. fix that"). Transformed the fullscreen mode of `KlanserviceHubIssueDetailModal` into an enterprise-grade desktop workspace modeled after Jira Cloud and Linear:
+1. **Eliminated `w-screen` Scrollbar Jitter**: Removed outer black backdrop and replaced `w-screen` with a clean, 100% full-viewport root (`fixed inset-0 z-50 bg-white flex flex-col overflow-hidden`), preventing horizontal scrollbar flashes and layout shifts.
+2. **Enterprise Proportional Split Layout**: Replaced the rigid `grid-cols-12` stretching with a responsive flex dual-pane layout:
+   - **Right Properties Sidebar**: Pinned to a fixed, optimal width (`w-full lg:w-80 xl:w-96 shrink-0` / 320px–384px) with independent vertical scroll. All controls (Current Stage attribution card, Assignees search picker, Reporters search picker, Issue Type, Priority, Story Points, Due Date) remain compact, elegant, and perfectly proportioned without sprawling across widescreen displays.
+   - **Left Main Content Area**: Takes `flex-1 min-w-0` with independent vertical scrolling. Enclosed inside a centered reading container (`max-w-4xl xl:max-w-5xl mx-auto w-full space-y-6`), ensuring lines of text in the description, acceptance criteria, image gallery, and comment feeds remain comfortable to read.
+3. **Scaled Fullscreen Typography & Canvas**:
+   - Issue summary title scales to `text-xl sm:text-2xl font-bold` in maximized mode.
+   - Description editor expands to `rows={6} min-h-[160px]` with generous editing canvas.
+   - Header padding expands to `px-5 sm:px-8 py-2.5` with clean separation of breadcrumbs and window controls.
+4. **Preserved Standard Modal**: When restored (`Minimize2`), seamlessly returns to the compact `max-w-5xl` centered dialog.
+
+#### Scope of Work
+- **Modal Shell & Viewport Normalization (`frontend/src/features/tasks/components/klanservicehub-issue-detail-modal.jsx`)**:
+  - Replaced `w-screen h-screen` and `bg-black/60` with clean edge-to-edge window shell.
+- **Proportional Flex Split Layout (`frontend/src/features/tasks/components/klanservicehub-issue-detail-modal.jsx`)**:
+  - Bound main content container to `flex flex-col lg:flex-row` when maximized.
+  - Pinned sidebar to `w-full lg:w-80 xl:w-96 shrink-0` with `overflow-y-auto h-full border-l border-neutral-200`.
+  - Added centered `max-w-4xl xl:max-w-5xl mx-auto` reading container in the left details column.
+- **Responsive Typography & Editor Sizing (`frontend/src/features/tasks/components/klanservicehub-issue-detail-modal.jsx`)**:
+  - Dynamically sized issue title (`text-xl sm:text-2xl`), description rows (6 vs 4), and header padding.
+- **Build & Cloudflare Workers Deployment**:
+  - Frontend compiled with Vite/Rolldown in 5.80s.
+  - Deployed live to Cloudflare Workers (`https://klanservicehub-frontend.klanservicehub.workers.dev`).
+
+#### Acceptance Criteria
+- [x] Clicking Maximize (`□`) smoothly transitions the modal into full-screen without page reload or layout shift.
+- [x] No horizontal scrollbars or window jitter appear on Windows/Chromium browsers.
+- [x] In maximized mode, right properties sidebar is pinned to a fixed width (320px–384px), preventing inputs and cards from stretching.
+- [x] In maximized mode, left content area is centered and proportioned (max-w-4xl / max-w-5xl), ensuring readability for descriptions and comments.
+- [x] Left details and right properties panes scroll independently without clipping.
+- [x] Issue title scales to an authoritative text-xl / text-2xl heading in maximized mode.
+- [x] Description editor expands with comfortable editing canvas (min-h-[160px]).
+- [x] Clicking Restore (`Minimize2`) seamlessly returns modal to the centered max-w-5xl dialog.
+- [x] Minimize to bottom-right floating tray (`Minus`) continues to work seamlessly.
 - [x] Production builds pass without errors and are deployed live to Cloudflare Workers.
