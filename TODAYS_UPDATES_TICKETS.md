@@ -2611,3 +2611,47 @@ Addressed user feedback regarding the breadcrumb header in the ticket details po
 - [x] Clicking parent ticket switches modal to that ticket.
 - [x] Clicking Current Ticket Key redirects to standalone task page `/workspaces/:workspaceId/tasks/:taskId`.
 - [x] Production builds pass without errors and are deployed live to Cloudflare Workers.
+
+
+### 🔹 Sub-task 42: Browser Reload Route Preservation & Active State Persistence
+- **Ticket ID**: `KLAN-42`
+- **Parent Ticket**: `Enhancing the Klanservichub V1`
+- **Issue Type**: `Sub-task`
+- **Summary**: `Subtask 42: Preserve exact sub-route URLs (Tasks, Projects, Boards, Sprints, Settings) and active ticket details modal state across browser reloads via sessionStorage route tracking and URL query synchronization`
+- **Priority**: `P1 - High`
+- **Story Points**: `5`
+- **Component**: `Routing Engine, App.jsx Route Guards, Auth Session State, Task View Switcher, Cloudflare Workers`
+- **Labels**: `route-preservation`, `reload-state`, `auth-guards`, `task-view-switcher`, `session-storage`, `spa-routing`
+
+#### Description
+Resolved an issue where refreshing or reloading any deep workspace sub-page (e.g. `/workspaces/:workspaceId/tasks`, `/boards`, `/sprints`, `/projects/:projectId`, `/settings`) inadvertently bounced the user to the workspace home dashboard (`/workspaces/:workspaceId` or `/`), stripping the active path. In addition, when viewing an issue details modal on the Table or Kanban view, reloading dropped the modal state back to the default table.
+
+The application now actively tracks and preserves the user's route in `sessionStorage` (`klan_last_active_route`), guards against premature unauthenticated redirects during token resolution, and synchronizes the open ticket details modal with the URL search parameters (`?taskId=<id>`), ensuring users always remain exactly where they were upon refreshing.
+
+#### Scope of Work
+- **Route Guards & Session State Tracking (`frontend/src/App.jsx`)**:
+  - In `ProtectedRoute`, continuously record active workspace routes (`location.pathname + location.search`) in `sessionStorage.setItem('klan_last_active_route', ...)`.
+  - Prevent premature redirects to `/sign-in`: if `localStorage.getItem('klan_auth_token')` is present while the query is in-flight or fetching, render `<PageLoader />` rather than immediately redirecting.
+  - Supplied `state={{ from: location }}` when unauthenticated so return navigation is preserved.
+  - In `PublicRoute`, restore users to `location.state?.from` or `sessionStorage.getItem('klan_last_active_route')` if a saved `/workspaces/` route exists.
+  - In `HomePage` (`/`), redirect authenticated users back to their previously active sub-route rather than defaulting to the main workspace summary dashboard.
+- **Auth Query Resilience & Logout Cleanup (`frontend/src/features/auth/api/use-current.js`, `frontend/src/lib/api-client.js`)**:
+  - Added token check in `useCurrent`: enables `retry: 1` when `klan_auth_token` exists in `localStorage` to avoid transient false-null session drops.
+  - In `authApi.logout`, clean up `klan_last_active_route` from `sessionStorage` alongside `klan_auth_token`.
+- **URL Query Synchronization for Ticket Modal (`frontend/src/features/tasks/components/task-view-switcher.jsx`, `data-kanban.jsx`, `boards-view.jsx`)**:
+  - Bound `selectedDetailTaskId` to URL query state `taskId` via `useQueryState('taskId')` in `TaskViewSwitcher` and `BoardsView`.
+  - Opening a task (from table row, title click, or Kanban double-click) sets `?taskId=<id>` in the URL.
+  - Closing the modal deletes `taskId` from the query string.
+  - Hard reloading the page with `?taskId=<id>` in the URL automatically re-opens the issue detail modal without user intervention.
+- **Build & Cloudflare Workers Deployment**:
+  - Frontend compiled with Vite/Rolldown in 8.03s.
+  - Deployed live to Cloudflare Workers (`https://klanservicehub-frontend.klanservicehub.workers.dev`, Version ID: `602a371c-ce6a-4ade-a35e-16adf17779d6`).
+
+#### Acceptance Criteria
+- [x] Hard refreshing or reloading on `/workspaces/:workspaceId/tasks` preserves the route and keeps user on Tasks without redirecting to the main dashboard.
+- [x] Hard refreshing or reloading on any workspace sub-route (`/boards`, `/sprints`, `/projects/:projectId`, `/settings`) preserves the exact route.
+- [x] Opening a ticket details modal synchronizes `?taskId=<id>` into the URL query string.
+- [x] Hard refreshing or reloading with a ticket details modal open automatically re-opens the modal with all ticket data intact.
+- [x] Closing the modal cleanly removes `?taskId` from the URL.
+- [x] Logging out cleans up both auth token and saved route from storage.
+- [x] Production builds pass without errors and are deployed live to Cloudflare Workers.
