@@ -34,7 +34,7 @@ Comprehensive platform stabilization and feature enhancements for **KlanServiceH
 
 ---
 
-# 📋 40 SUB-TASKS UNDER THIS TICKET
+# 📋 41 SUB-TASKS UNDER THIS TICKET
 
 ---
 
@@ -2565,4 +2565,49 @@ Addressed user feedback regarding the maximized ticket modal view ("when i click
 - [x] Description editor expands with comfortable editing canvas (min-h-[160px]).
 - [x] Clicking Restore (`Minimize2`) seamlessly returns modal to the centered max-w-5xl dialog.
 - [x] Minimize to bottom-right floating tray (`Minus`) continues to work seamlessly.
+- [x] Production builds pass without errors and are deployed live to Cloudflare Workers.
+
+
+### 🔹 Sub-task 41: Ticket Modal Breadcrumb Hierarchy Refinement & Redirection
+- **Ticket ID**: `KLAN-41`
+- **Parent Ticket**: `Enhancing the Klanservichub V1`
+- **Issue Type**: `Sub-task`
+- **Summary**: `Subtask 41: Remove issue type icon from ticket modal breadcrumbs, restructure hierarchy sequence to Project Name -> Parent Tickets -> Current Ticket Key -> Type Badge, and add one-click redirection to project and standalone task views`
+- **Priority**: `P1 - High`
+- **Story Points**: `3`
+- **Component**: `Tasks Suite, Issue Detail Modal, Breadcrumb Navigation, Project Routing, Cloudflare Workers`
+- **Labels**: `issues-tasks`, `breadcrumb-flow`, `project-redirect`, `modal-header`, `ui-polish`
+
+#### Description
+Addressed user feedback regarding the breadcrumb header in the ticket details popup (`KlanserviceHubIssueDetailModal`):
+1. **Removed Issue Type Icon**: Completely removed the `<TypeIcon />` (e.g. purple lightning bolt for Epic) from the top breadcrumb trail, providing a clean, distraction-free text path.
+2. **Re-sequenced Breadcrumb Flow**: Reordered the elements so the **Project Name** appears first, followed by `/`, then any parent/subtask history sequence, and ending with the **Current Ticket Key** and **Issue Type Badge**:
+   - `[Project Name] / [Current Ticket Key] [Type Badge]` (e.g. `Klan Space Hub / KSH-1 [Epic]`)
+   - Or when navigating subtasks: `[Project Name] / [Parent Key] / [Sub-task Key] [Type Badge]`
+3. **Interactive Click Redirection**:
+   - Clicking the **Project Name** redirects directly to that project's dashboard/board (`/workspaces/${workspaceId}/projects/${projectId}`) via `router.push()` and closes the modal.
+   - Clicking any **Parent Ticket** in the breadcrumb sequence switches the modal to that ticket (`handleBackToParent`).
+   - Clicking the **Current Ticket Key** redirects to the dedicated standalone task page (`/workspaces/${workspaceId}/tasks/${taskId}`).
+
+#### Scope of Work
+- **Router Integration & Icon Removal (`frontend/src/features/tasks/components/klanservicehub-issue-detail-modal.jsx`)**:
+  - Imported `useRouter` from `next/navigation`.
+  - Removed `<TypeIcon />` from the breadcrumb layout.
+- **Hierarchical Breadcrumb Sequence (`frontend/src/features/tasks/components/klanservicehub-issue-detail-modal.jsx`)**:
+  - Placed Project Name button first with truncate, hover underline, and click redirection to `/projects/:projectId`.
+  - Rendered `historyStack` / `parentTask` buttons sequentially with `/` delimiters.
+  - Rendered Current Ticket Key button with hover underline and click redirection to `/tasks/:taskId`.
+  - Placed issue type badge (e.g. `Epic`, `Story`) at the end of the breadcrumb trail.
+- **Build & Cloudflare Workers Deployment**:
+  - Frontend compiled with Vite/Rolldown in 4.90s.
+  - Deployed live to Cloudflare Workers.
+
+#### Acceptance Criteria
+- [x] Issue type icon (`⚡` / `<TypeIcon />`) is removed from top breadcrumb trail.
+- [x] Breadcrumb sequence starts with the Project Name followed by `/`.
+- [x] Parent tickets or opened sequence follow sequentially after Project Name.
+- [x] Current ticket key appears at the end of the sequence followed by the issue type badge.
+- [x] Clicking Project Name redirects to `/workspaces/:workspaceId/projects/:projectId` and closes modal.
+- [x] Clicking parent ticket switches modal to that ticket.
+- [x] Clicking Current Ticket Key redirects to standalone task page `/workspaces/:workspaceId/tasks/:taskId`.
 - [x] Production builds pass without errors and are deployed live to Cloudflare Workers.
